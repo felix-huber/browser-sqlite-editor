@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { Sidebar } from '../Sidebar';
 import type { DatabaseEntry } from '../../../types';
 
@@ -85,7 +85,7 @@ describe('Sidebar', () => {
     expect(screen.getByTestId('db-tree-another-db')).toBeInTheDocument();
   });
 
-  it('filters databases by search input', () => {
+  it('filters databases by search input', async () => {
     mockState.databases = mockDatabases;
     mockUseDatabases.mockReturnValue(mockDatabases);
     render(<Sidebar />);
@@ -93,11 +93,14 @@ describe('Sidebar', () => {
     const searchInput = screen.getByTestId('search-input');
     fireEvent.change(searchInput, { target: { value: 'test' } });
 
-    expect(screen.getByTestId('db-tree-test-db')).toBeInTheDocument();
-    expect(screen.queryByTestId('db-tree-another-db')).not.toBeInTheDocument();
+    // Wait for debounce (150ms) + buffer
+    await waitFor(() => {
+      expect(screen.getByTestId('db-tree-test-db')).toBeInTheDocument();
+      expect(screen.queryByTestId('db-tree-another-db')).not.toBeInTheDocument();
+    }, { timeout: 300 });
   });
 
-  it('shows "No matching results" when search filter has no matches', () => {
+  it('shows "No matching results" when search filter has no matches', async () => {
     mockState.databases = mockDatabases;
     mockUseDatabases.mockReturnValue(mockDatabases);
     render(<Sidebar />);
@@ -105,9 +108,12 @@ describe('Sidebar', () => {
     const searchInput = screen.getByTestId('search-input');
     fireEvent.change(searchInput, { target: { value: 'nonexistent' } });
 
-    expect(screen.getByTestId('empty-state')).toHaveTextContent(
-      'No matching results'
-    );
+    // Wait for debounce
+    await waitFor(() => {
+      expect(screen.getByTestId('empty-state')).toHaveTextContent(
+        'No matches for'
+      );
+    }, { timeout: 300 });
   });
 
   it('expands database when clicked', () => {
@@ -200,5 +206,255 @@ describe('Sidebar', () => {
     expect(
       screen.getByLabelText('Search databases and tables')
     ).toBeInTheDocument();
+  });
+
+  describe('Search/Filter functionality', () => {
+    it('has correct placeholder text', () => {
+      render(<Sidebar />);
+      const searchInput = screen.getByTestId('search-input');
+      expect(searchInput).toHaveAttribute('placeholder', 'Search tables, views...');
+    });
+
+    it('shows clear button when search has text', () => {
+      render(<Sidebar />);
+      const searchInput = screen.getByTestId('search-input');
+
+      expect(screen.queryByTestId('clear-search-button')).not.toBeInTheDocument();
+
+      fireEvent.change(searchInput, { target: { value: 'test' } });
+
+      expect(screen.getByTestId('clear-search-button')).toBeInTheDocument();
+    });
+
+    it('clears search when clear button is clicked', () => {
+      render(<Sidebar />);
+      const searchInput = screen.getByTestId('search-input');
+
+      fireEvent.change(searchInput, { target: { value: 'test' } });
+      expect(searchInput).toHaveValue('test');
+
+      const clearButton = screen.getByTestId('clear-search-button');
+      fireEvent.click(clearButton);
+
+      expect(searchInput).toHaveValue('');
+    });
+
+    it('clears search on Escape key press', () => {
+      render(<Sidebar />);
+      const searchInput = screen.getByTestId('search-input');
+
+      fireEvent.change(searchInput, { target: { value: 'test' } });
+      expect(searchInput).toHaveValue('test');
+
+      fireEvent.keyDown(searchInput, { key: 'Escape' });
+
+      expect(searchInput).toHaveValue('');
+    });
+
+    it('shows query text in empty state when no matches', async () => {
+      mockState.databases = mockDatabases;
+      mockUseDatabases.mockReturnValue(mockDatabases);
+      render(<Sidebar />);
+
+      const searchInput = screen.getByTestId('search-input');
+      fireEvent.change(searchInput, { target: { value: 'nonexistent' } });
+
+      // Wait for debounce
+      await waitFor(() => {
+        expect(screen.getByTestId('empty-state')).toHaveTextContent('No matches for "nonexistent"');
+      }, { timeout: 300 });
+    });
+
+    it('shows clear search button in empty state', async () => {
+      mockState.databases = mockDatabases;
+      mockUseDatabases.mockReturnValue(mockDatabases);
+      render(<Sidebar />);
+
+      const searchInput = screen.getByTestId('search-input');
+      fireEvent.change(searchInput, { target: { value: 'nonexistent' } });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('empty-state-clear-button')).toBeInTheDocument();
+      }, { timeout: 300 });
+    });
+
+    it('clears search from empty state clear button', async () => {
+      mockState.databases = mockDatabases;
+      mockUseDatabases.mockReturnValue(mockDatabases);
+      render(<Sidebar />);
+
+      const searchInput = screen.getByTestId('search-input');
+      fireEvent.change(searchInput, { target: { value: 'nonexistent' } });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('empty-state-clear-button')).toBeInTheDocument();
+      }, { timeout: 300 });
+
+      fireEvent.click(screen.getByTestId('empty-state-clear-button'));
+
+      expect(searchInput).toHaveValue('');
+    });
+
+    it('debounces search input (150ms delay)', async () => {
+      mockState.databases = mockDatabases;
+      mockUseDatabases.mockReturnValue(mockDatabases);
+
+      vi.useFakeTimers();
+
+      try {
+        render(<Sidebar />);
+
+        const searchInput = screen.getByTestId('search-input');
+
+        // Type quickly
+        await act(async () => {
+          fireEvent.change(searchInput, { target: { value: 't' } });
+        });
+        await act(async () => {
+          fireEvent.change(searchInput, { target: { value: 'te' } });
+        });
+        await act(async () => {
+          fireEvent.change(searchInput, { target: { value: 'tes' } });
+        });
+        await act(async () => {
+          fireEvent.change(searchInput, { target: { value: 'test' } });
+        });
+
+        // Filter should not be applied yet (still shows all databases)
+        expect(screen.getByTestId('db-tree-test-db')).toBeInTheDocument();
+        expect(screen.getByTestId('db-tree-another-db')).toBeInTheDocument();
+
+        // Advance timer past debounce
+        await act(async () => {
+          vi.advanceTimersByTime(200);
+        });
+
+        // Now filter should be applied
+        expect(screen.getByTestId('db-tree-test-db')).toBeInTheDocument();
+        expect(screen.queryByTestId('db-tree-another-db')).not.toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('requires minimum 2 characters to filter', async () => {
+      mockState.databases = mockDatabases;
+      mockUseDatabases.mockReturnValue(mockDatabases);
+
+      vi.useFakeTimers();
+
+      try {
+        render(<Sidebar />);
+
+        const searchInput = screen.getByTestId('search-input');
+
+        // Type single character
+        await act(async () => {
+          fireEvent.change(searchInput, { target: { value: 't' } });
+        });
+
+        // Advance timer past debounce
+        await act(async () => {
+          vi.advanceTimersByTime(200);
+        });
+
+        // Should still show all databases (1 char doesn't filter)
+        expect(screen.getByTestId('db-tree-test-db')).toBeInTheDocument();
+        expect(screen.getByTestId('db-tree-another-db')).toBeInTheDocument();
+
+        // Now type 2 chars
+        await act(async () => {
+          fireEvent.change(searchInput, { target: { value: 'te' } });
+        });
+
+        await act(async () => {
+          vi.advanceTimersByTime(200);
+        });
+
+        // Now filter should be applied
+        expect(screen.getByTestId('db-tree-test-db')).toBeInTheDocument();
+        expect(screen.queryByTestId('db-tree-another-db')).not.toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('is case insensitive', async () => {
+      mockState.databases = mockDatabases;
+      mockUseDatabases.mockReturnValue(mockDatabases);
+
+      vi.useFakeTimers();
+
+      try {
+        render(<Sidebar />);
+
+        const searchInput = screen.getByTestId('search-input');
+        await act(async () => {
+          fireEvent.change(searchInput, { target: { value: 'TEST' } });
+        });
+
+        await act(async () => {
+          vi.advanceTimersByTime(200);
+        });
+
+        expect(screen.getByTestId('db-tree-test-db')).toBeInTheDocument();
+        expect(screen.queryByTestId('db-tree-another-db')).not.toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('auto-expands databases when searching', async () => {
+      mockState = {
+        activeDbId: 'test-db',
+        schema: {
+          tables: ['users', 'orders'],
+          views: [],
+          indexes: [],
+        },
+        databases: mockDatabases,
+        isReadOnly: false,
+        lockHolder: null,
+        storageStatus: 'ok' as const,
+        storageMode: null,
+      };
+      mockUseDatabases.mockReturnValue(mockDatabases);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockUseDatabaseStore.mockImplementation((selector: (state: any) => unknown) => selector(mockState));
+
+      vi.useFakeTimers();
+
+      try {
+        render(<Sidebar />);
+
+        // Initially database is collapsed
+        expect(screen.queryByTestId('db-contents-test-db')).not.toBeInTheDocument();
+
+        const searchInput = screen.getByTestId('search-input');
+        // Search for "test" which matches "test-db" database name
+        await act(async () => {
+          fireEvent.change(searchInput, { target: { value: 'test' } });
+        });
+
+        // Wait for debounce and auto-expand
+        await act(async () => {
+          vi.advanceTimersByTime(200);
+        });
+
+        // Database should be auto-expanded
+        expect(screen.getByTestId('db-contents-test-db')).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('shows empty search shows all items', () => {
+      mockState.databases = mockDatabases;
+      mockUseDatabases.mockReturnValue(mockDatabases);
+      render(<Sidebar />);
+
+      expect(screen.getByTestId('db-tree-test-db')).toBeInTheDocument();
+      expect(screen.getByTestId('db-tree-another-db')).toBeInTheDocument();
+    });
   });
 });

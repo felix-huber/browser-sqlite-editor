@@ -13,5 +13,5 @@ export type { SidebarProps } from './Sidebar';
 export { DBTree } from './DBTree';
 export type { DBTreeProps, DBTreeSchema } from './DBTree';
 
-export { TableItem } from './TableItem';
+export { TableItem, HighlightedText } from './TableItem';
 export type { TableItemProps, SchemaItemType } from './TableItem';

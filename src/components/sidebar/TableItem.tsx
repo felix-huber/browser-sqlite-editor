@@ -24,6 +24,8 @@ export interface TableItemProps {
   rowCount?: number;
   /** Optional target table name for indexes */
   targetTable?: string;
+  /** Optional search filter for highlighting */
+  searchFilter?: string;
   /** Click handler */
   onClick?: () => void;
 }
@@ -34,6 +36,7 @@ export function TableItem({
   isSelected = false,
   rowCount,
   targetTable,
+  searchFilter,
   onClick,
 }: TableItemProps) {
   const handleKeyDown = useCallback(
@@ -64,7 +67,9 @@ export function TableItem({
       <ItemIcon type={type} />
 
       {/* Item Name */}
-      <span className="truncate flex-1">{name}</span>
+      <span className="truncate flex-1">
+        <HighlightedText text={name} highlight={searchFilter} />
+      </span>
 
       {/* Optional Badge */}
       {type === 'table' && rowCount !== undefined && (
@@ -154,6 +159,47 @@ function formatRowCount(count: number): string {
     return `${(count / 1000).toFixed(1)}K`;
   }
   return count.toLocaleString();
+}
+
+interface HighlightedTextProps {
+  text: string;
+  highlight?: string;
+}
+
+/**
+ * Renders text with highlighted search matches
+ * Uses amber-200 background for matches
+ */
+export function HighlightedText({ text, highlight }: HighlightedTextProps) {
+  if (!highlight || !highlight.trim()) {
+    return <>{text}</>;
+  }
+
+  const lowerText = text.toLowerCase();
+  const lowerHighlight = highlight.toLowerCase().trim();
+  const startIndex = lowerText.indexOf(lowerHighlight);
+
+  if (startIndex === -1) {
+    return <>{text}</>;
+  }
+
+  const endIndex = startIndex + lowerHighlight.length;
+  const before = text.slice(0, startIndex);
+  const match = text.slice(startIndex, endIndex);
+  const after = text.slice(endIndex);
+
+  return (
+    <>
+      {before}
+      <mark
+        className="bg-amber-200 text-inherit rounded-sm px-0.5"
+        data-testid="highlight-match"
+      >
+        {match}
+      </mark>
+      {after}
+    </>
+  );
 }
 
 export default TableItem;

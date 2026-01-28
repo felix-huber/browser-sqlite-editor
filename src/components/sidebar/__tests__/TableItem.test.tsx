@@ -126,4 +126,62 @@ describe('TableItem', () => {
     const item = screen.getByRole('treeitem');
     expect(item).toHaveAttribute('aria-selected', 'false');
   });
+
+  describe('Search highlighting', () => {
+    it('highlights matching substring', () => {
+      render(<TableItem {...defaultProps} searchFilter="user" />);
+
+      const highlight = screen.getByTestId('highlight-match');
+      expect(highlight).toBeInTheDocument();
+      expect(highlight).toHaveTextContent('user');
+      expect(highlight.tagName).toBe('MARK');
+    });
+
+    it('uses amber-200 background for highlighting', () => {
+      render(<TableItem {...defaultProps} searchFilter="user" />);
+
+      const highlight = screen.getByTestId('highlight-match');
+      expect(highlight).toHaveClass('bg-amber-200');
+    });
+
+    it('preserves case of original name in highlight', () => {
+      render(<TableItem name="Users" type="table" searchFilter="user" />);
+
+      const highlight = screen.getByTestId('highlight-match');
+      expect(highlight).toHaveTextContent('User'); // "User" from "Users"
+    });
+
+    it('is case insensitive when finding matches', () => {
+      render(<TableItem {...defaultProps} searchFilter="USER" />);
+
+      const highlight = screen.getByTestId('highlight-match');
+      expect(highlight).toBeInTheDocument();
+      expect(highlight).toHaveTextContent('user');
+    });
+
+    it('does not highlight when no match', () => {
+      render(<TableItem {...defaultProps} searchFilter="xyz" />);
+
+      expect(screen.queryByTestId('highlight-match')).not.toBeInTheDocument();
+    });
+
+    it('does not highlight when searchFilter is empty', () => {
+      render(<TableItem {...defaultProps} searchFilter="" />);
+
+      expect(screen.queryByTestId('highlight-match')).not.toBeInTheDocument();
+    });
+
+    it('does not highlight when searchFilter is undefined', () => {
+      render(<TableItem {...defaultProps} />);
+
+      expect(screen.queryByTestId('highlight-match')).not.toBeInTheDocument();
+    });
+
+    it('highlights partial matches correctly', () => {
+      render(<TableItem name="user_accounts" type="table" searchFilter="account" />);
+
+      const highlight = screen.getByTestId('highlight-match');
+      expect(highlight).toHaveTextContent('account');
+    });
+  });
 });

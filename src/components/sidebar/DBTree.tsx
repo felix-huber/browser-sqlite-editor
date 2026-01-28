@@ -192,10 +192,10 @@ export function DBTree({
               {filteredTables.length > 0 && (
                 <SchemaSection
                   title="Tables"
-                  icon="table"
                   items={filteredTables}
                   type="table"
                   selectedItem={selectedItem}
+                  searchFilter={searchFilter}
                   onItemClick={handleItemClick}
                 />
               )}
@@ -204,10 +204,10 @@ export function DBTree({
               {filteredViews.length > 0 && (
                 <SchemaSection
                   title="Views"
-                  icon="view"
                   items={filteredViews}
                   type="view"
                   selectedItem={selectedItem}
+                  searchFilter={searchFilter}
                   onItemClick={handleItemClick}
                 />
               )}
@@ -216,10 +216,10 @@ export function DBTree({
               {filteredIndexes.length > 0 && (
                 <SchemaSection
                   title="Indexes"
-                  icon="index"
                   items={filteredIndexes}
                   type="index"
                   selectedItem={selectedItem}
+                  searchFilter={searchFilter}
                   onItemClick={handleItemClick}
                 />
               )}
@@ -245,10 +245,10 @@ export function DBTree({
 
 interface SchemaSectionProps {
   title: string;
-  icon: 'table' | 'view' | 'index';
   items: string[];
   type: SchemaItemType;
   selectedItem: { type: SchemaItemType; name: string } | null;
+  searchFilter?: string;
   onItemClick: (type: SchemaItemType, name: string) => void;
 }
 
@@ -257,10 +257,13 @@ function SchemaSection({
   items,
   type,
   selectedItem,
+  searchFilter,
   onItemClick,
 }: SchemaSectionProps) {
+  // Proper pluralization for test IDs
+  const sectionId = type === 'index' ? 'section-indexes' : `section-${type}s`;
   return (
-    <li data-testid={`section-${type}s`}>
+    <li data-testid={sectionId}>
       <div className="px-2 py-1 text-xs font-medium text-navy-400 uppercase tracking-wider">
         {title}
       </div>
@@ -273,6 +276,7 @@ function SchemaSection({
             isSelected={
               selectedItem?.type === type && selectedItem?.name === item
             }
+            searchFilter={searchFilter}
             onClick={() => onItemClick(type, item)}
           />
         ))}

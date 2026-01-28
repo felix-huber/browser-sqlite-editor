@@ -4,13 +4,14 @@
  * Main sidebar displaying database list with expand/collapse tree.
  * Features:
  * - Database list from store
- * - Search filter
+ * - Search filter with debounce (150ms)
  * - Expand/collapse DB to show tables, views, indexes
  * - Active state highlighting
  * - Lazy schema loading on expand
+ * - Match highlighting in search results
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useDatabases, useDatabaseStore } from '../../store';
 import { DBTree } from './DBTree';
 
@@ -33,8 +34,60 @@ export function Sidebar({
 }: SidebarProps) {
   const databases = useDatabases();
   const activeDbId = useDatabaseStore((state) => state.activeDbId);
-  const [searchFilter, setSearchFilter] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedFilter, setDebouncedFilter] = useState('');
   const [expandedDbs, setExpandedDbs] = useState<Set<string>>(new Set());
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounce search filter (150ms delay, min 2 chars)
+  useEffect(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      // Only apply filter if 2+ chars or empty
+      if (searchInput.trim().length >= 2 || searchInput.trim().length === 0) {
+        setDebouncedFilter(searchInput);
+      }
+    }, 150);
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [searchInput]);
+
+  // Use debounced filter for actual filtering
+  const searchFilter = debouncedFilter;
+
+  // Track whether search filter was active in previous render
+  const prevSearchFilterRef = useRef('');
+  // Track expansion state before search started
+  const savedExpandedDbsRef = useRef<Set<string> | null>(null);
+
+  // Auto-expand all databases when search is active, restore when cleared
+  useEffect(() => {
+    const hadFilter = prevSearchFilterRef.current.trim().length > 0;
+    const hasFilter = searchFilter.trim().length > 0;
+
+    if (hasFilter && !hadFilter) {
+      // Search is starting, save current expansion state and auto-expand all
+      savedExpandedDbsRef.current = new Set(expandedDbs);
+      setExpandedDbs(new Set(databases.map((db) => db.name)));
+    } else if (!hasFilter && hadFilter && savedExpandedDbsRef.current !== null) {
+      // Search is ending, restore previous expansion state
+      setExpandedDbs(savedExpandedDbsRef.current);
+      savedExpandedDbsRef.current = null;
+    } else if (hasFilter) {
+      // Search is active and databases changed, keep all expanded
+      setExpandedDbs(new Set(databases.map((db) => db.name)));
+    }
+
+    prevSearchFilterRef.current = searchFilter;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchFilter, databases]);
 
   // Filter databases by search
   const filteredDatabases = useMemo(() => {
@@ -84,6 +137,24 @@ export function Sidebar({
     [onSelectIndex]
   );
 
+  // Clear search
+  const clearSearch = useCallback(() => {
+    setSearchInput('');
+    setDebouncedFilter('');
+    searchInputRef.current?.focus();
+  }, []);
+
+  // Handle escape key to clear search
+  const handleSearchKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        clearSearch();
+      }
+    },
+    [clearSearch]
+  );
+
   if (collapsed) {
     return null;
   }
@@ -111,14 +182,36 @@ export function Sidebar({
             />
           </svg>
           <input
+            ref={searchInputRef}
             type="text"
-            placeholder="Search..."
-            value={searchFilter}
-            onChange={(e) => setSearchFilter(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 text-sm bg-navy-50 border border-navy-200 rounded focus:outline-none focus:ring-2 focus:ring-navy-600 focus:border-transparent"
+            placeholder="Search tables, views..."
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            className={`w-full pl-8 py-1.5 text-sm bg-navy-50 border border-navy-200 rounded focus:outline-none focus:ring-2 focus:ring-navy-600 focus:border-transparent ${
+              searchInput ? 'pr-8' : 'pr-3'
+            }`}
             data-testid="search-input"
             aria-label="Search databases and tables"
           />
+          {searchInput && (
+            <button
+              type="button"
+              onClick={clearSearch}
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-navy-400 hover:text-navy-600 focus:outline-none"
+              aria-label="Clear search"
+              data-testid="clear-search-button"
+            >
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
@@ -128,7 +221,11 @@ export function Sidebar({
         aria-label="Database navigator"
       >
         {filteredDatabases.length === 0 ? (
-          <EmptyState hasFilter={!!searchFilter.trim()} />
+          <EmptyState
+            hasFilter={!!searchFilter.trim()}
+            filterText={searchFilter.trim()}
+            onClearSearch={clearSearch}
+          />
         ) : (
           <ul className="space-y-1" role="tree" aria-label="Databases">
             {filteredDatabases.map((db) => (
@@ -157,15 +254,35 @@ export function Sidebar({
 
 interface EmptyStateProps {
   hasFilter: boolean;
+  filterText?: string;
+  onClearSearch?: () => void;
 }
 
-function EmptyState({ hasFilter }: EmptyStateProps) {
+function EmptyState({ hasFilter, filterText, onClearSearch }: EmptyStateProps) {
   return (
     <div
       className="text-sm text-navy-500 p-3 text-center"
       data-testid="empty-state"
     >
-      {hasFilter ? 'No matching results' : 'No databases'}
+      {hasFilter ? (
+        <div className="space-y-2">
+          <p>
+            No matches for "<span className="font-medium">{filterText}</span>"
+          </p>
+          {onClearSearch && (
+            <button
+              type="button"
+              onClick={onClearSearch}
+              className="text-navy-600 hover:text-navy-800 underline text-xs"
+              data-testid="empty-state-clear-button"
+            >
+              Clear search
+            </button>
+          )}
+        </div>
+      ) : (
+        'No databases'
+      )}
     </div>
   );
 }

@@ -140,7 +140,7 @@ describe('DBTree', () => {
       />
     );
 
-    expect(screen.getByTestId('section-indexs')).toBeInTheDocument();
+    expect(screen.getByTestId('section-indexes')).toBeInTheDocument();
     expect(screen.getByTestId('item-index-idx_users_email')).toBeInTheDocument();
   });
 
