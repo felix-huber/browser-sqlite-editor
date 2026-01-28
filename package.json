@@ -23,6 +23,7 @@
     "@codemirror/language": "^6.12.1",
     "@codemirror/state": "^6.5.4",
     "@codemirror/view": "^6.39.11",
+    "@journeyapps/wa-sqlite": "^1.4.1",
     "@types/papaparse": "^5.5.2",
     "@xyflow/react": "^12.10.0",
     "papaparse": "^5.5.3",

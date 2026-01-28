@@ -1,0 +1,472 @@
+/**
+ * WASM SQLite Database Engine
+ *
+ * Core database engine integration using wa-sqlite.
+ * Handles WASM initialization, query execution, and error normalization.
+ */
+
+import * as SQLite from '@journeyapps/wa-sqlite';
+import SQLiteESMFactory from '@journeyapps/wa-sqlite/dist/wa-sqlite-async.mjs';
+import { IDBBatchAtomicVFS } from '@journeyapps/wa-sqlite/src/examples/IDBBatchAtomicVFS.js';
+
+import type { QueryResult, QueryRow, WorkerErrorCode } from '../types';
+
+// =============================================================================
+// Types
+// =============================================================================
+
+/**
+ * SQLite error with code and message
+ */
+export interface SQLiteError {
+  code: WorkerErrorCode;
+  message: string;
+  sql?: string;
+  sqliteCode?: number;
+}
+
+/**
+ * Result of exec (DDL/DML without result set)
+ */
+export interface ExecResult {
+  rowsAffected: number;
+  lastInsertId: number;
+}
+
+/**
+ * Database engine state
+ */
+type EngineState = 'uninitialized' | 'initializing' | 'ready' | 'error';
+
+// =============================================================================
+// SQLite Error Code Mapping
+// =============================================================================
+
+/**
+ * Map SQLite error codes to WorkerErrorCode
+ */
+function mapSQLiteErrorCode(sqliteCode: number): WorkerErrorCode {
+  // Primary error codes from sqlite-constants.js
+  switch (sqliteCode) {
+    case SQLite.SQLITE_CONSTRAINT:
+    case SQLite.SQLITE_CONSTRAINT_CHECK:
+    case SQLite.SQLITE_CONSTRAINT_FOREIGNKEY:
+    case SQLite.SQLITE_CONSTRAINT_NOTNULL:
+    case SQLite.SQLITE_CONSTRAINT_PRIMARYKEY:
+    case SQLite.SQLITE_CONSTRAINT_UNIQUE:
+      return 'CONSTRAINT_VIOLATION';
+    case SQLite.SQLITE_ERROR:
+      return 'SYNTAX_ERROR';
+    case SQLite.SQLITE_CORRUPT:
+    case SQLite.SQLITE_NOTADB:
+      return 'CORRUPT_FILE';
+    case SQLite.SQLITE_FULL:
+      return 'QUOTA_EXCEEDED';
+    case SQLite.SQLITE_READONLY:
+      return 'LOCK_HELD';
+    case SQLite.SQLITE_NOTFOUND:
+    case SQLite.SQLITE_CANTOPEN:
+      return 'NOT_FOUND';
+    default:
+      return 'UNKNOWN';
+  }
+}
+
+/**
+ * Extract error info from SQLite exception
+ */
+function normalizeError(err: unknown, sql?: string): SQLiteError {
+  if (err instanceof SQLite.SQLiteError) {
+    return {
+      code: mapSQLiteErrorCode(err.code),
+      message: err.message,
+      sql,
+      sqliteCode: err.code,
+    };
+  }
+
+  if (err instanceof Error) {
+    // Check for common error patterns in message
+    const msg = err.message.toLowerCase();
+    let code: WorkerErrorCode = 'UNKNOWN';
+
+    if (msg.includes('syntax') || msg.includes('near')) {
+      code = 'SYNTAX_ERROR';
+    } else if (msg.includes('constraint') || msg.includes('unique') || msg.includes('foreign key')) {
+      code = 'CONSTRAINT_VIOLATION';
+    } else if (msg.includes('corrupt') || msg.includes('not a database')) {
+      code = 'CORRUPT_FILE';
+    } else if (msg.includes('quota') || msg.includes('full')) {
+      code = 'QUOTA_EXCEEDED';
+    }
+
+    return {
+      code,
+      message: err.message,
+      sql,
+    };
+  }
+
+  return {
+    code: 'UNKNOWN',
+    message: String(err),
+    sql,
+  };
+}
+
+// =============================================================================
+// Database Engine Class
+// =============================================================================
+
+/**
+ * WASM SQLite Database Engine
+ *
+ * Provides core database operations:
+ * - exec(sql): Execute SQL without result set (DDL, DML)
+ * - query(sql, params?): Execute SQL and return rows
+ * - Parameterized queries with ? placeholders
+ */
+export class DatabaseEngine {
+  private sqlite3: ReturnType<typeof SQLite.Factory> | null = null;
+  private db: number | null = null;
+  private vfs: IDBBatchAtomicVFS | null = null;
+  private state: EngineState = 'uninitialized';
+  private initPromise: Promise<void> | null = null;
+  private dbName: string | null = null;
+
+  /**
+   * Initialize the WASM SQLite module
+   *
+   * This must be called before any database operations.
+   * Safe to call multiple times - subsequent calls return immediately.
+   */
+  async initialize(): Promise<void> {
+    if (this.state === 'ready') {
+      return;
+    }
+
+    if (this.state === 'initializing' && this.initPromise) {
+      return this.initPromise;
+    }
+
+    if (this.state === 'error') {
+      // Reset state to allow retry
+      this.state = 'uninitialized';
+    }
+
+    this.state = 'initializing';
+
+    this.initPromise = this._doInitialize();
+
+    try {
+      await this.initPromise;
+      this.state = 'ready';
+    } catch (err) {
+      this.state = 'error';
+      throw err;
+    }
+  }
+
+  private async _doInitialize(): Promise<void> {
+    try {
+      // Load the WASM module
+      const module = await SQLiteESMFactory();
+
+      // Build the SQLite API
+      this.sqlite3 = SQLite.Factory(module);
+
+      // Create IndexedDB VFS for persistence
+      this.vfs = new IDBBatchAtomicVFS('wa-sqlite-vfs');
+      // Cast needed: IDBBatchAtomicVFS from examples doesn't perfectly match SQLiteVFS interface
+      this.sqlite3.vfs_register(this.vfs as unknown as Parameters<typeof this.sqlite3.vfs_register>[0], true);
+    } catch (err) {
+      const normalized = normalizeError(err);
+      throw new Error(`WASM initialization failed: ${normalized.message}`);
+    }
+  }
+
+  /**
+   * Check if the engine is ready for operations
+   */
+  isReady(): boolean {
+    return this.state === 'ready' && this.sqlite3 !== null;
+  }
+
+  /**
+   * Get current engine state
+   */
+  getState(): EngineState {
+    return this.state;
+  }
+
+  /**
+   * Open or create a database
+   *
+   * @param name Database name (used as filename in VFS)
+   */
+  async open(name: string): Promise<void> {
+    if (!this.isReady() || !this.sqlite3) {
+      throw new Error('Engine not initialized. Call initialize() first.');
+    }
+
+    // Close existing database if open
+    if (this.db !== null) {
+      await this.close();
+    }
+
+    try {
+      // Open with read/write/create flags
+      this.db = await this.sqlite3.open_v2(
+        name,
+        SQLite.SQLITE_OPEN_CREATE | SQLite.SQLITE_OPEN_READWRITE,
+      );
+      this.dbName = name;
+    } catch (err) {
+      const normalized = normalizeError(err);
+      throw new Error(`Failed to open database '${name}': ${normalized.message}`);
+    }
+  }
+
+  /**
+   * Close the current database
+   */
+  async close(): Promise<void> {
+    if (this.db !== null && this.sqlite3) {
+      try {
+        await this.sqlite3.close(this.db);
+      } catch {
+        // Ignore close errors
+      }
+      this.db = null;
+      this.dbName = null;
+    }
+  }
+
+  /**
+   * Get the current database name
+   */
+  getDbName(): string | null {
+    return this.dbName;
+  }
+
+  /**
+   * Execute SQL without returning a result set (DDL, DML)
+   *
+   * Use this for CREATE, INSERT, UPDATE, DELETE, etc.
+   *
+   * @param sql SQL statement to execute
+   * @param params Optional parameters for ? placeholders
+   * @returns Execution result with rowsAffected and lastInsertId
+   */
+  async exec(sql: string, params?: unknown[]): Promise<ExecResult> {
+    this._ensureOpen();
+
+    try {
+      if (params && params.length > 0) {
+        // Use parameterized execution
+        await this._execParameterized(sql, params);
+      } else {
+        // Direct execution for simple statements
+        await this.sqlite3!.exec(this.db!, sql);
+      }
+
+      return {
+        rowsAffected: this.sqlite3!.changes(this.db!),
+        lastInsertId: this.sqlite3!.last_insert_id(this.db!),
+      };
+    } catch (err) {
+      throw normalizeError(err, sql);
+    }
+  }
+
+  /**
+   * Execute SQL and return result rows
+   *
+   * Use this for SELECT statements.
+   *
+   * @param sql SQL statement to execute
+   * @param params Optional parameters for ? placeholders
+   * @returns Query result with columns and rows
+   */
+  async query(sql: string, params?: unknown[]): Promise<QueryResult> {
+    this._ensureOpen();
+
+    const columns: string[] = [];
+    const columnTypes: string[] = [];
+    const rows: QueryRow[] = [];
+
+    try {
+      // Use the statements iterator for parameterized queries
+      for await (const stmt of this.sqlite3!.statements(this.db!, sql)) {
+        // Bind parameters if provided
+        if (params && params.length > 0) {
+          this.sqlite3!.bind_collection(stmt, params as SQLite.SQLiteCompatibleType[]);
+        }
+
+        // Get column metadata on first iteration
+        if (columns.length === 0) {
+          const count = this.sqlite3!.column_count(stmt);
+          for (let i = 0; i < count; i++) {
+            columns.push(this.sqlite3!.column_name(stmt, i));
+            // Get column type - will be determined per-row for actual data
+            columnTypes.push(''); // Placeholder, updated on first row
+          }
+        }
+
+        // Fetch all rows
+        while ((await this.sqlite3!.step(stmt)) === SQLite.SQLITE_ROW) {
+          const row: QueryRow = [];
+
+          // Update column types from first row if not set
+          const count = this.sqlite3!.column_count(stmt);
+          for (let i = 0; i < count; i++) {
+            const type = this.sqlite3!.column_type(stmt, i);
+
+            // Update column type hint if not set
+            if (rows.length === 0 && columnTypes[i] === '') {
+              columnTypes[i] = this._sqliteTypeToString(type);
+            }
+
+            // Get value based on type
+            const value = this._extractColumnValue(stmt, i, type);
+            row.push(value);
+          }
+
+          rows.push(row);
+        }
+      }
+
+      return {
+        columns,
+        columnTypes,
+        rows,
+        rowsAffected: this.sqlite3!.changes(this.db!),
+      };
+    } catch (err) {
+      throw normalizeError(err, sql);
+    }
+  }
+
+  /**
+   * Execute parameterized SQL statement
+   */
+  private async _execParameterized(sql: string, params: unknown[]): Promise<void> {
+    for await (const stmt of this.sqlite3!.statements(this.db!, sql)) {
+      this.sqlite3!.bind_collection(stmt, params as SQLite.SQLiteCompatibleType[]);
+
+      // Step through the statement to completion
+      while ((await this.sqlite3!.step(stmt)) === SQLite.SQLITE_ROW) {
+        // Consume any results
+      }
+    }
+  }
+
+  /**
+   * Extract column value from a statement
+   */
+  private _extractColumnValue(
+    stmt: number,
+    index: number,
+    type: number,
+  ): null | number | string | Uint8Array {
+    switch (type) {
+      case SQLite.SQLITE_NULL:
+        return null;
+      case SQLite.SQLITE_INTEGER: {
+        // Use column() which handles BigInt for large integers
+        const val = this.sqlite3!.column(stmt, index);
+        // Convert BigInt to number if safe, otherwise to string
+        if (typeof val === 'bigint') {
+          if (val >= Number.MIN_SAFE_INTEGER && val <= Number.MAX_SAFE_INTEGER) {
+            return Number(val);
+          }
+          // Return as string for very large integers
+          return val.toString();
+        }
+        return val as number;
+      }
+      case SQLite.SQLITE_FLOAT:
+        return this.sqlite3!.column_double(stmt, index);
+      case SQLite.SQLITE_TEXT:
+        return this.sqlite3!.column_text(stmt, index);
+      case SQLite.SQLITE_BLOB:
+        // Make a copy of the blob data
+        return this.sqlite3!.column_blob(stmt, index).slice();
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Convert SQLite type constant to string
+   */
+  private _sqliteTypeToString(type: number): string {
+    switch (type) {
+      case SQLite.SQLITE_INTEGER:
+        return 'INTEGER';
+      case SQLite.SQLITE_FLOAT:
+        return 'REAL';
+      case SQLite.SQLITE_TEXT:
+        return 'TEXT';
+      case SQLite.SQLITE_BLOB:
+        return 'BLOB';
+      case SQLite.SQLITE_NULL:
+        return 'NULL';
+      default:
+        return 'UNKNOWN';
+    }
+  }
+
+  /**
+   * Ensure database is open
+   */
+  private _ensureOpen(): void {
+    if (!this.isReady() || !this.sqlite3) {
+      throw new Error('Engine not initialized. Call initialize() first.');
+    }
+    if (this.db === null) {
+      throw new Error('No database open. Call open(name) first.');
+    }
+  }
+
+  /**
+   * Shutdown the engine and clean up resources
+   */
+  async shutdown(): Promise<void> {
+    await this.close();
+
+    if (this.vfs) {
+      await this.vfs.close();
+      this.vfs = null;
+    }
+
+    this.sqlite3 = null;
+    this.state = 'uninitialized';
+    this.initPromise = null;
+  }
+}
+
+// =============================================================================
+// Module-level Singleton (for worker context)
+// =============================================================================
+
+let _engineInstance: DatabaseEngine | null = null;
+
+/**
+ * Get the singleton database engine instance
+ *
+ * Creates the instance on first call. Safe to call multiple times.
+ */
+export function getEngine(): DatabaseEngine {
+  if (!_engineInstance) {
+    _engineInstance = new DatabaseEngine();
+  }
+  return _engineInstance;
+}
+
+/**
+ * Type alias for SQLiteCompatibleType from wa-sqlite
+ */
+declare module '@journeyapps/wa-sqlite' {
+  export type SQLiteCompatibleType = number | string | Uint8Array | number[] | bigint | null;
+}

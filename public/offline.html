@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Offline - SQLite Editor</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background-color: #f8fafc;
+      color: #1e293b;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+
+    .container {
+      max-width: 28rem;
+      width: 100%;
+      text-align: center;
+    }
+
+    .icon-wrapper {
+      width: 5rem;
+      height: 5rem;
+      margin: 0 auto 1.5rem;
+      border-radius: 50%;
+      background-color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .icon {
+      width: 2.5rem;
+      height: 2.5rem;
+      color: #64748b;
+    }
+
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #1e293b;
+      margin-bottom: 0.5rem;
+    }
+
+    .message {
+      color: #475569;
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+
+    .retry-button {
+      display: inline-block;
+      padding: 0.75rem 1.5rem;
+      background-color: #475569;
+      color: white;
+      font-weight: 500;
+      border: none;
+      border-radius: 0.5rem;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      font-size: 1rem;
+    }
+
+    .retry-button:hover {
+      background-color: #334155;
+    }
+
+    .retry-button:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px #f8fafc, 0 0 0 4px #475569;
+    }
+
+    .hint {
+      margin-top: 1rem;
+      font-size: 0.875rem;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <div class="container" role="alert" aria-live="polite">
+    <div class="icon-wrapper">
+      <svg class="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+      </svg>
+    </div>
+
+    <h1>You're offline</h1>
+    <p class="message">You appear to be offline. Connect to the internet to load the app.</p>
+
+    <button class="retry-button" onclick="handleRetry()">
+      Retry Connection
+    </button>
+
+    <p class="hint">The page will automatically reload when you're back online.</p>
+  </div>
+
+  <script>
+    function handleRetry() {
+      if (navigator.onLine) {
+        window.location.reload();
+      }
+    }
+
+    window.addEventListener('online', function() {
+      window.location.reload();
+    });
+  </script>
+</body>
+</html>
