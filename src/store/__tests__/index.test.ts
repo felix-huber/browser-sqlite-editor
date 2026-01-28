@@ -1,0 +1,588 @@
+/**
+ * Unit tests for Zustand Store
+ *
+ * Tests cover:
+ * - Initial state: all fields have expected defaults
+ * - setActiveDb: updates activeDbId and resets schema
+ * - setReadOnly: updates isReadOnly
+ * - setStorageStatus: updates storageStatus
+ * - Selectors: return correct derived state
+ */
+
+import { describe, it, expect, beforeEach } from 'vitest';
+import { renderHook, act } from '@testing-library/react';
+import {
+  useDatabaseStore,
+  useActiveDb,
+  useIsReadOnly,
+  useTables,
+  useStorageStatus,
+  useViews,
+  useIndexes,
+  useStorageMode,
+  useLockHolder,
+  useDatabases,
+  getState,
+  type SchemaState,
+} from '../index';
+import type { DatabaseEntry } from '../../types';
+
+// =============================================================================
+// Test Data
+// =============================================================================
+
+const mockDatabase1: DatabaseEntry = {
+  name: 'test-db-1',
+  file: 'test_db_1.sqlite',
+  createdAt: '2026-01-28T00:00:00.000Z',
+  lastOpenedAt: '2026-01-28T00:00:00.000Z',
+  fkEnforced: true,
+};
+
+const mockDatabase2: DatabaseEntry = {
+  name: 'test-db-2',
+  file: 'test_db_2.sqlite',
+  createdAt: '2026-01-28T01:00:00.000Z',
+  lastOpenedAt: '2026-01-28T01:00:00.000Z',
+  fkEnforced: false,
+};
+
+const mockSchema: SchemaState = {
+  tables: ['users', 'posts', 'comments'],
+  views: ['active_users'],
+  indexes: ['idx_users_email'],
+};
+
+// =============================================================================
+// Test Setup
+// =============================================================================
+
+beforeEach(() => {
+  // Reset store to initial state before each test
+  useDatabaseStore.getState().reset();
+});
+
+// =============================================================================
+// Initial State Tests
+// =============================================================================
+
+describe('Zustand Store - Initial State', () => {
+  it('should have empty databases array', () => {
+    const state = getState();
+    expect(state.databases).toEqual([]);
+  });
+
+  it('should have null activeDbId', () => {
+    const state = getState();
+    expect(state.activeDbId).toBeNull();
+  });
+
+  it('should have null schema', () => {
+    const state = getState();
+    expect(state.schema).toBeNull();
+  });
+
+  it('should have isReadOnly set to false', () => {
+    const state = getState();
+    expect(state.isReadOnly).toBe(false);
+  });
+
+  it('should have lockHolder set to null', () => {
+    const state = getState();
+    expect(state.lockHolder).toBeNull();
+  });
+
+  it('should have storageStatus set to "ok"', () => {
+    const state = getState();
+    expect(state.storageStatus).toBe('ok');
+  });
+
+  it('should have storageMode set to null', () => {
+    const state = getState();
+    expect(state.storageMode).toBeNull();
+  });
+});
+
+// =============================================================================
+// Action Tests
+// =============================================================================
+
+describe('Zustand Store - setDatabases', () => {
+  it('should set the databases array', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setDatabases([mockDatabase1, mockDatabase2]);
+    });
+
+    expect(result.current.databases).toHaveLength(2);
+    expect(result.current.databases[0]).toEqual(mockDatabase1);
+    expect(result.current.databases[1]).toEqual(mockDatabase2);
+  });
+
+  it('should replace existing databases', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setDatabases([mockDatabase1]);
+    });
+    expect(result.current.databases).toHaveLength(1);
+
+    act(() => {
+      result.current.setDatabases([mockDatabase2]);
+    });
+    expect(result.current.databases).toHaveLength(1);
+    expect(result.current.databases[0].name).toBe('test-db-2');
+  });
+});
+
+describe('Zustand Store - setActiveDb', () => {
+  it('should update activeDbId', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setActiveDb('test-db-1');
+    });
+
+    expect(result.current.activeDbId).toBe('test-db-1');
+  });
+
+  it('should reset schema to null when changing active database', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    // Set schema first
+    act(() => {
+      result.current.setSchema(mockSchema);
+    });
+    expect(result.current.schema).toEqual(mockSchema);
+
+    // Change active database - schema should reset
+    act(() => {
+      result.current.setActiveDb('test-db-2');
+    });
+
+    expect(result.current.activeDbId).toBe('test-db-2');
+    expect(result.current.schema).toBeNull();
+  });
+
+  it('should allow setting activeDbId to null', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setActiveDb('test-db-1');
+    });
+    expect(result.current.activeDbId).toBe('test-db-1');
+
+    act(() => {
+      result.current.setActiveDb(null);
+    });
+    expect(result.current.activeDbId).toBeNull();
+  });
+});
+
+describe('Zustand Store - setSchema', () => {
+  it('should update schema', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setSchema(mockSchema);
+    });
+
+    expect(result.current.schema).toEqual(mockSchema);
+    expect(result.current.schema?.tables).toEqual(['users', 'posts', 'comments']);
+    expect(result.current.schema?.views).toEqual(['active_users']);
+    expect(result.current.schema?.indexes).toEqual(['idx_users_email']);
+  });
+
+  it('should allow setting schema to null', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setSchema(mockSchema);
+    });
+    expect(result.current.schema).not.toBeNull();
+
+    act(() => {
+      result.current.setSchema(null);
+    });
+    expect(result.current.schema).toBeNull();
+  });
+});
+
+describe('Zustand Store - setReadOnly', () => {
+  it('should update isReadOnly to true', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setReadOnly(true);
+    });
+
+    expect(result.current.isReadOnly).toBe(true);
+  });
+
+  it('should update isReadOnly to false', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setReadOnly(true);
+    });
+    expect(result.current.isReadOnly).toBe(true);
+
+    act(() => {
+      result.current.setReadOnly(false);
+    });
+    expect(result.current.isReadOnly).toBe(false);
+  });
+});
+
+describe('Zustand Store - setLockHolder', () => {
+  it('should update lockHolder to "self"', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setLockHolder('self');
+    });
+
+    expect(result.current.lockHolder).toBe('self');
+  });
+
+  it('should update lockHolder to "other"', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setLockHolder('other');
+    });
+
+    expect(result.current.lockHolder).toBe('other');
+  });
+
+  it('should update lockHolder to null', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setLockHolder('self');
+    });
+    expect(result.current.lockHolder).toBe('self');
+
+    act(() => {
+      result.current.setLockHolder(null);
+    });
+    expect(result.current.lockHolder).toBeNull();
+  });
+});
+
+describe('Zustand Store - setStorageStatus', () => {
+  it('should update storageStatus to "quota_exceeded"', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setStorageStatus('quota_exceeded');
+    });
+
+    expect(result.current.storageStatus).toBe('quota_exceeded');
+  });
+
+  it('should update storageStatus to "degraded"', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setStorageStatus('degraded');
+    });
+
+    expect(result.current.storageStatus).toBe('degraded');
+  });
+
+  it('should update storageStatus to "ok"', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setStorageStatus('quota_exceeded');
+    });
+    expect(result.current.storageStatus).toBe('quota_exceeded');
+
+    act(() => {
+      result.current.setStorageStatus('ok');
+    });
+    expect(result.current.storageStatus).toBe('ok');
+  });
+});
+
+describe('Zustand Store - setStorageMode', () => {
+  it('should update storageMode to "opfs"', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setStorageMode('opfs');
+    });
+
+    expect(result.current.storageMode).toBe('opfs');
+  });
+
+  it('should update storageMode to "idb"', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setStorageMode('idb');
+    });
+
+    expect(result.current.storageMode).toBe('idb');
+  });
+
+  it('should update storageMode to null', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    act(() => {
+      result.current.setStorageMode('opfs');
+    });
+    expect(result.current.storageMode).toBe('opfs');
+
+    act(() => {
+      result.current.setStorageMode(null);
+    });
+    expect(result.current.storageMode).toBeNull();
+  });
+});
+
+describe('Zustand Store - reset', () => {
+  it('should reset all state to initial values', () => {
+    const { result } = renderHook(() => useDatabaseStore());
+
+    // Set various state values
+    act(() => {
+      result.current.setDatabases([mockDatabase1]);
+      result.current.setActiveDb('test-db-1');
+      result.current.setSchema(mockSchema);
+      result.current.setReadOnly(true);
+      result.current.setLockHolder('self');
+      result.current.setStorageStatus('quota_exceeded');
+      result.current.setStorageMode('opfs');
+    });
+
+    // Verify state was changed
+    expect(result.current.databases).toHaveLength(1);
+    expect(result.current.activeDbId).toBe('test-db-1');
+    expect(result.current.schema).not.toBeNull();
+    expect(result.current.isReadOnly).toBe(true);
+    expect(result.current.lockHolder).toBe('self');
+    expect(result.current.storageStatus).toBe('quota_exceeded');
+    expect(result.current.storageMode).toBe('opfs');
+
+    // Reset
+    act(() => {
+      result.current.reset();
+    });
+
+    // Verify all state is reset
+    expect(result.current.databases).toEqual([]);
+    expect(result.current.activeDbId).toBeNull();
+    expect(result.current.schema).toBeNull();
+    expect(result.current.isReadOnly).toBe(false);
+    expect(result.current.lockHolder).toBeNull();
+    expect(result.current.storageStatus).toBe('ok');
+    expect(result.current.storageMode).toBeNull();
+  });
+});
+
+// =============================================================================
+// Selector Tests
+// =============================================================================
+
+describe('Zustand Store - Selectors', () => {
+  describe('useActiveDb', () => {
+    it('should return null when no database is active', () => {
+      const { result } = renderHook(() => useActiveDb());
+      expect(result.current).toBeNull();
+    });
+
+    it('should return null when activeDbId does not match any database', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useActiveDb());
+
+      act(() => {
+        storeResult.current.setDatabases([mockDatabase1]);
+        storeResult.current.setActiveDb('nonexistent');
+      });
+
+      expect(selectorResult.current).toBeNull();
+    });
+
+    it('should return the active database entry', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useActiveDb());
+
+      act(() => {
+        storeResult.current.setDatabases([mockDatabase1, mockDatabase2]);
+        storeResult.current.setActiveDb('test-db-1');
+      });
+
+      expect(selectorResult.current).toEqual(mockDatabase1);
+    });
+  });
+
+  describe('useIsReadOnly', () => {
+    it('should return false initially', () => {
+      const { result } = renderHook(() => useIsReadOnly());
+      expect(result.current).toBe(false);
+    });
+
+    it('should return true when set', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useIsReadOnly());
+
+      act(() => {
+        storeResult.current.setReadOnly(true);
+      });
+
+      expect(selectorResult.current).toBe(true);
+    });
+  });
+
+  describe('useTables', () => {
+    it('should return empty array when schema is null', () => {
+      const { result } = renderHook(() => useTables());
+      expect(result.current).toEqual([]);
+    });
+
+    it('should return tables from schema', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useTables());
+
+      act(() => {
+        storeResult.current.setSchema(mockSchema);
+      });
+
+      expect(selectorResult.current).toEqual(['users', 'posts', 'comments']);
+    });
+  });
+
+  describe('useStorageStatus', () => {
+    it('should return "ok" initially', () => {
+      const { result } = renderHook(() => useStorageStatus());
+      expect(result.current).toBe('ok');
+    });
+
+    it('should return current storage status', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useStorageStatus());
+
+      act(() => {
+        storeResult.current.setStorageStatus('degraded');
+      });
+
+      expect(selectorResult.current).toBe('degraded');
+    });
+  });
+
+  describe('useViews', () => {
+    it('should return empty array when schema is null', () => {
+      const { result } = renderHook(() => useViews());
+      expect(result.current).toEqual([]);
+    });
+
+    it('should return views from schema', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useViews());
+
+      act(() => {
+        storeResult.current.setSchema(mockSchema);
+      });
+
+      expect(selectorResult.current).toEqual(['active_users']);
+    });
+  });
+
+  describe('useIndexes', () => {
+    it('should return empty array when schema is null', () => {
+      const { result } = renderHook(() => useIndexes());
+      expect(result.current).toEqual([]);
+    });
+
+    it('should return indexes from schema', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useIndexes());
+
+      act(() => {
+        storeResult.current.setSchema(mockSchema);
+      });
+
+      expect(selectorResult.current).toEqual(['idx_users_email']);
+    });
+  });
+
+  describe('useStorageMode', () => {
+    it('should return null initially', () => {
+      const { result } = renderHook(() => useStorageMode());
+      expect(result.current).toBeNull();
+    });
+
+    it('should return current storage mode', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useStorageMode());
+
+      act(() => {
+        storeResult.current.setStorageMode('opfs');
+      });
+
+      expect(selectorResult.current).toBe('opfs');
+    });
+  });
+
+  describe('useLockHolder', () => {
+    it('should return null initially', () => {
+      const { result } = renderHook(() => useLockHolder());
+      expect(result.current).toBeNull();
+    });
+
+    it('should return current lock holder', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useLockHolder());
+
+      act(() => {
+        storeResult.current.setLockHolder('other');
+      });
+
+      expect(selectorResult.current).toBe('other');
+    });
+  });
+
+  describe('useDatabases', () => {
+    it('should return empty array initially', () => {
+      const { result } = renderHook(() => useDatabases());
+      expect(result.current).toEqual([]);
+    });
+
+    it('should return all databases', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useDatabases());
+
+      act(() => {
+        storeResult.current.setDatabases([mockDatabase1, mockDatabase2]);
+      });
+
+      expect(selectorResult.current).toHaveLength(2);
+      expect(selectorResult.current[0].name).toBe('test-db-1');
+      expect(selectorResult.current[1].name).toBe('test-db-2');
+    });
+  });
+});
+
+// =============================================================================
+// Non-hook Accessor Tests
+// =============================================================================
+
+describe('Zustand Store - Non-hook Accessors', () => {
+  describe('getState', () => {
+    it('should return current state synchronously', () => {
+      const { result } = renderHook(() => useDatabaseStore());
+
+      act(() => {
+        result.current.setActiveDb('test-db');
+        result.current.setReadOnly(true);
+      });
+
+      const state = getState();
+      expect(state.activeDbId).toBe('test-db');
+      expect(state.isReadOnly).toBe(true);
+    });
+  });
+});
