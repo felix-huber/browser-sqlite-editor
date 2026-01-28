@@ -399,6 +399,113 @@ describe('WebLockManager - localStorage Heartbeat Fallback', () => {
       expect(manager.hasLock('test-db')).toBe(false);
     });
   });
+
+  describe('Heartbeat interval', () => {
+    it('should write heartbeat every 2 seconds', async () => {
+      vi.useFakeTimers();
+      const adapter = createMockAdapter(mockState);
+      const localStorage = mockLocalStorage(mockState);
+      const manager = new WebLockManager(adapter);
+
+      await manager.acquireLock('test-db');
+      const initialCallCount = localStorage.setItem.mock.calls.length;
+
+      // Advance time by 2 seconds
+      vi.advanceTimersByTime(2000);
+
+      // Should have written another heartbeat
+      expect(localStorage.setItem.mock.calls.length).toBeGreaterThan(initialCallCount);
+
+      // Advance time by another 2 seconds
+      const callCountAfterFirst = localStorage.setItem.mock.calls.length;
+      vi.advanceTimersByTime(2000);
+
+      // Should have written yet another heartbeat
+      expect(localStorage.setItem.mock.calls.length).toBeGreaterThan(callCountAfterFirst);
+
+      // Cleanup
+      await manager.releaseLock('test-db');
+      vi.useRealTimers();
+    });
+
+    it('should update heartbeat timestamp on each write', async () => {
+      vi.useFakeTimers();
+      const adapter = createMockAdapter(mockState);
+      mockLocalStorage(mockState);
+      const manager = new WebLockManager(adapter);
+
+      const startTime = Date.now();
+      await manager.acquireLock('test-db');
+
+      const key = `${_testing.LS_HEARTBEAT_PREFIX}test-db`;
+      const initialData = JSON.parse(mockState.localStorageData.get(key)!);
+      expect(initialData.timestamp).toBe(startTime);
+
+      // Advance time by 2 seconds
+      vi.advanceTimersByTime(2000);
+
+      const updatedData = JSON.parse(mockState.localStorageData.get(key)!);
+      expect(updatedData.timestamp).toBe(startTime + 2000);
+
+      // Cleanup
+      await manager.releaseLock('test-db');
+      vi.useRealTimers();
+    });
+  });
+
+  describe('No heartbeat acquisition', () => {
+    it('should acquire lock when no heartbeat exists', async () => {
+      const adapter = createMockAdapter(mockState);
+      const manager = new WebLockManager(adapter);
+
+      // No heartbeat in localStorage
+      const key = `${_testing.LS_HEARTBEAT_PREFIX}test-db`;
+      expect(mockState.localStorageData.has(key)).toBe(false);
+
+      const result = await manager.acquireLock('test-db');
+
+      expect(result.acquired).toBe(true);
+      expect(result.holderId).toBeNull();
+      expect(manager.hasLock('test-db')).toBe(true);
+    });
+  });
+
+  describe('Unload cleanup', () => {
+    it('should clear localStorage key on dispose', async () => {
+      const adapter = createMockAdapter(mockState);
+      const localStorage = mockLocalStorage(mockState);
+      const manager = new WebLockManager(adapter);
+
+      await manager.acquireLock('test-db');
+      const key = `${_testing.LS_HEARTBEAT_PREFIX}test-db`;
+      expect(mockState.localStorageData.has(key)).toBe(true);
+
+      // Simulate page unload by calling dispose
+      manager.dispose();
+
+      expect(localStorage.removeItem).toHaveBeenCalledWith(key);
+      expect(manager.hasLock('test-db')).toBe(false);
+    });
+
+    it('should clear all localStorage keys on dispose for multiple databases', async () => {
+      const adapter = createMockAdapter(mockState);
+      const localStorage = mockLocalStorage(mockState);
+      const manager = new WebLockManager(adapter);
+
+      await manager.acquireLock('db1');
+      await manager.acquireLock('db2');
+
+      const key1 = `${_testing.LS_HEARTBEAT_PREFIX}db1`;
+      const key2 = `${_testing.LS_HEARTBEAT_PREFIX}db2`;
+      expect(mockState.localStorageData.has(key1)).toBe(true);
+      expect(mockState.localStorageData.has(key2)).toBe(true);
+
+      manager.dispose();
+
+      expect(localStorage.removeItem).toHaveBeenCalledWith(key1);
+      expect(localStorage.removeItem).toHaveBeenCalledWith(key2);
+    });
+  });
 });
 
 // =============================================================================
@@ -464,12 +571,12 @@ describe('WebLockManager - Constants', () => {
     expect(_testing.LOCK_CHANNEL).toBe('sqlite-editor-locks');
   });
 
-  it('should have reasonable heartbeat interval', () => {
-    expect(_testing.HEARTBEAT_INTERVAL).toBe(1000);
+  it('should have heartbeat interval of 2 seconds', () => {
+    expect(_testing.HEARTBEAT_INTERVAL).toBe(2000);
   });
 
-  it('should have reasonable stale threshold', () => {
-    expect(_testing.HEARTBEAT_STALE_THRESHOLD).toBe(3000);
+  it('should have stale threshold of 6 seconds', () => {
+    expect(_testing.HEARTBEAT_STALE_THRESHOLD).toBe(6000);
     expect(_testing.HEARTBEAT_STALE_THRESHOLD).toBeGreaterThan(_testing.HEARTBEAT_INTERVAL);
   });
 

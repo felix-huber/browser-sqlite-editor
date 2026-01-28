@@ -28,10 +28,10 @@ const LOCK_PREFIX = 'sqlite-editor-';
 const LOCK_CHANNEL = 'sqlite-editor-locks';
 
 /** Heartbeat interval for localStorage fallback (ms) */
-const HEARTBEAT_INTERVAL = 1000;
+const HEARTBEAT_INTERVAL = 2000;
 
 /** Heartbeat staleness threshold (ms) */
-const HEARTBEAT_STALE_THRESHOLD = 3000;
+const HEARTBEAT_STALE_THRESHOLD = 6000;
 
 /** localStorage key prefix for heartbeat fallback */
 const LS_HEARTBEAT_PREFIX = 'sqlite-editor-lock-';
