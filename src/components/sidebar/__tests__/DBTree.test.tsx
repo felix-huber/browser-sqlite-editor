@@ -292,4 +292,226 @@ describe('DBTree', () => {
     expect(dbTreeItem).toHaveAttribute('role', 'treeitem');
     expect(dbTreeItem).toHaveAttribute('aria-expanded', 'true');
   });
+
+  // Context Menu Tests
+  describe('Database Context Menu', () => {
+    it('shows context menu on right-click', () => {
+      render(<DBTree {...defaultProps} />);
+
+      const dbRow = screen.getByTestId('db-row-test-db');
+      fireEvent.contextMenu(dbRow);
+
+      expect(screen.getByTestId('db-context-menu-test-db')).toBeInTheDocument();
+    });
+
+    it('shows all database menu items', () => {
+      render(<DBTree {...defaultProps} />);
+
+      const dbRow = screen.getByTestId('db-row-test-db');
+      fireEvent.contextMenu(dbRow);
+
+      expect(screen.getByTestId('db-context-menu-test-db-item-open')).toBeInTheDocument();
+      expect(screen.getByTestId('db-context-menu-test-db-item-rename')).toBeInTheDocument();
+      expect(screen.getByTestId('db-context-menu-test-db-item-refresh')).toBeInTheDocument();
+      expect(screen.getByTestId('db-context-menu-test-db-item-export')).toBeInTheDocument();
+      expect(screen.getByTestId('db-context-menu-test-db-item-delete')).toBeInTheDocument();
+    });
+
+    it('calls onDbContextAction when menu item is clicked', () => {
+      const onDbContextAction = vi.fn();
+      render(<DBTree {...defaultProps} onDbContextAction={onDbContextAction} />);
+
+      const dbRow = screen.getByTestId('db-row-test-db');
+      fireEvent.contextMenu(dbRow);
+
+      const openItem = screen.getByTestId('db-context-menu-test-db-item-open');
+      fireEvent.click(openItem);
+
+      expect(onDbContextAction).toHaveBeenCalledWith('open', 'test-db');
+    });
+
+    it('disables destructive actions in read-only mode', () => {
+      render(<DBTree {...defaultProps} isReadOnly={true} />);
+
+      const dbRow = screen.getByTestId('db-row-test-db');
+      fireEvent.contextMenu(dbRow);
+
+      const renameItem = screen.getByTestId('db-context-menu-test-db-item-rename');
+      const deleteItem = screen.getByTestId('db-context-menu-test-db-item-delete');
+
+      expect(renameItem).toHaveAttribute('aria-disabled', 'true');
+      expect(deleteItem).toHaveAttribute('aria-disabled', 'true');
+    });
+
+    it('does not disable non-destructive actions in read-only mode', () => {
+      render(<DBTree {...defaultProps} isReadOnly={true} />);
+
+      const dbRow = screen.getByTestId('db-row-test-db');
+      fireEvent.contextMenu(dbRow);
+
+      const openItem = screen.getByTestId('db-context-menu-test-db-item-open');
+      const refreshItem = screen.getByTestId('db-context-menu-test-db-item-refresh');
+      const exportItem = screen.getByTestId('db-context-menu-test-db-item-export');
+
+      expect(openItem).not.toHaveAttribute('aria-disabled', 'true');
+      expect(refreshItem).not.toHaveAttribute('aria-disabled', 'true');
+      expect(exportItem).not.toHaveAttribute('aria-disabled', 'true');
+    });
+  });
+
+  describe('Table Context Menu', () => {
+    it('shows context menu on right-click', () => {
+      render(
+        <DBTree
+          {...defaultProps}
+          isExpanded={true}
+          isActive={true}
+          initialSchema={mockSchema}
+        />
+      );
+
+      const tableItem = screen.getByTestId('item-table-users');
+      fireEvent.contextMenu(tableItem);
+
+      expect(screen.getByTestId('table-context-menu-users')).toBeInTheDocument();
+    });
+
+    it('shows table-specific menu items', () => {
+      render(
+        <DBTree
+          {...defaultProps}
+          isExpanded={true}
+          isActive={true}
+          initialSchema={mockSchema}
+        />
+      );
+
+      const tableItem = screen.getByTestId('item-table-users');
+      fireEvent.contextMenu(tableItem);
+
+      expect(screen.getByTestId('table-context-menu-users-item-view-data')).toBeInTheDocument();
+      expect(screen.getByTestId('table-context-menu-users-item-design')).toBeInTheDocument();
+      expect(screen.getByTestId('table-context-menu-users-item-copy-create')).toBeInTheDocument();
+      expect(screen.getByTestId('table-context-menu-users-item-truncate')).toBeInTheDocument();
+      expect(screen.getByTestId('table-context-menu-users-item-drop')).toBeInTheDocument();
+    });
+
+    it('calls onSchemaContextAction when menu item is clicked', () => {
+      const onSchemaContextAction = vi.fn();
+      render(
+        <DBTree
+          {...defaultProps}
+          isExpanded={true}
+          isActive={true}
+          initialSchema={mockSchema}
+          onSchemaContextAction={onSchemaContextAction}
+        />
+      );
+
+      const tableItem = screen.getByTestId('item-table-users');
+      fireEvent.contextMenu(tableItem);
+
+      const viewDataItem = screen.getByTestId('table-context-menu-users-item-view-data');
+      fireEvent.click(viewDataItem);
+
+      expect(onSchemaContextAction).toHaveBeenCalledWith('view-data', 'table', 'users');
+    });
+
+    it('disables destructive table actions in read-only mode', () => {
+      render(
+        <DBTree
+          {...defaultProps}
+          isExpanded={true}
+          isActive={true}
+          isReadOnly={true}
+          initialSchema={mockSchema}
+        />
+      );
+
+      const tableItem = screen.getByTestId('item-table-users');
+      fireEvent.contextMenu(tableItem);
+
+      const truncateItem = screen.getByTestId('table-context-menu-users-item-truncate');
+      const dropItem = screen.getByTestId('table-context-menu-users-item-drop');
+
+      expect(truncateItem).toHaveAttribute('aria-disabled', 'true');
+      expect(dropItem).toHaveAttribute('aria-disabled', 'true');
+    });
+  });
+
+  describe('View Context Menu', () => {
+    it('shows view-specific menu items', () => {
+      render(
+        <DBTree
+          {...defaultProps}
+          isExpanded={true}
+          isActive={true}
+          initialSchema={mockSchema}
+        />
+      );
+
+      const viewItem = screen.getByTestId('item-view-user_summary');
+      fireEvent.contextMenu(viewItem);
+
+      expect(screen.getByTestId('view-context-menu-user_summary-item-view-data')).toBeInTheDocument();
+      expect(screen.getByTestId('view-context-menu-user_summary-item-edit-definition')).toBeInTheDocument();
+      expect(screen.getByTestId('view-context-menu-user_summary-item-copy-create')).toBeInTheDocument();
+      expect(screen.getByTestId('view-context-menu-user_summary-item-drop')).toBeInTheDocument();
+    });
+
+    it('disables drop view in read-only mode', () => {
+      render(
+        <DBTree
+          {...defaultProps}
+          isExpanded={true}
+          isActive={true}
+          isReadOnly={true}
+          initialSchema={mockSchema}
+        />
+      );
+
+      const viewItem = screen.getByTestId('item-view-user_summary');
+      fireEvent.contextMenu(viewItem);
+
+      const dropItem = screen.getByTestId('view-context-menu-user_summary-item-drop');
+      expect(dropItem).toHaveAttribute('aria-disabled', 'true');
+    });
+  });
+
+  describe('Index Context Menu', () => {
+    it('shows index-specific menu items', () => {
+      render(
+        <DBTree
+          {...defaultProps}
+          isExpanded={true}
+          isActive={true}
+          initialSchema={mockSchema}
+        />
+      );
+
+      const indexItem = screen.getByTestId('item-index-idx_users_email');
+      fireEvent.contextMenu(indexItem);
+
+      expect(screen.getByTestId('index-context-menu-idx_users_email-item-copy-create')).toBeInTheDocument();
+      expect(screen.getByTestId('index-context-menu-idx_users_email-item-drop')).toBeInTheDocument();
+    });
+
+    it('disables drop index in read-only mode', () => {
+      render(
+        <DBTree
+          {...defaultProps}
+          isExpanded={true}
+          isActive={true}
+          isReadOnly={true}
+          initialSchema={mockSchema}
+        />
+      );
+
+      const indexItem = screen.getByTestId('item-index-idx_users_email');
+      fireEvent.contextMenu(indexItem);
+
+      const dropItem = screen.getByTestId('index-context-menu-idx_users_email-item-drop');
+      expect(dropItem).toHaveAttribute('aria-disabled', 'true');
+    });
+  });
 });

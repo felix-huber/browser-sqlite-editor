@@ -8,18 +8,31 @@
  * - Indexes section (on expand)
  *
  * Lazy loads schema when database is expanded.
+ * Supports right-click context menu for database actions.
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { useDatabaseStore } from '../../store';
-import { TableItem, type SchemaItemType } from './TableItem';
+import { TableItem, type SchemaItemType, type SchemaContextAction } from './TableItem';
+import {
+  ContextMenu,
+  useContextMenu,
+  ContextMenuIcons,
+  type ContextMenuItem,
+} from '../common/ContextMenu';
 import type { DatabaseEntry } from '../../types';
+
+// Re-export SchemaContextAction for convenience
+export type { SchemaContextAction } from './TableItem';
 
 export interface DBTreeSchema {
   tables: string[];
   views: string[];
   indexes: string[];
 }
+
+/** Context menu action types for database */
+export type DBContextAction = 'open' | 'rename' | 'delete' | 'refresh' | 'export';
 
 export interface DBTreeProps {
   /** Database entry to display */
@@ -28,6 +41,8 @@ export interface DBTreeProps {
   isExpanded: boolean;
   /** Whether this is the active database */
   isActive: boolean;
+  /** Whether in read-only mode */
+  isReadOnly?: boolean;
   /** Current search filter */
   searchFilter?: string;
   /** Callback to toggle expansion */
@@ -38,6 +53,14 @@ export interface DBTreeProps {
   onSelectView?: (viewName: string) => void;
   /** Callback when an index is selected */
   onSelectIndex?: (indexName: string) => void;
+  /** Callback for database context menu actions */
+  onDbContextAction?: (action: DBContextAction, dbName: string) => void;
+  /** Callback for schema item context menu actions */
+  onSchemaContextAction?: (
+    action: SchemaContextAction,
+    itemType: SchemaItemType,
+    itemName: string
+  ) => void;
   /** Optional schema override (for testing) */
   initialSchema?: DBTreeSchema | null;
 }
@@ -46,11 +69,14 @@ export function DBTree({
   database,
   isExpanded,
   isActive,
+  isReadOnly = false,
   searchFilter = '',
   onToggleExpand,
   onSelectTable,
   onSelectView,
   onSelectIndex,
+  onDbContextAction,
+  onSchemaContextAction,
   initialSchema,
 }: DBTreeProps) {
   const [schema, setSchema] = useState<DBTreeSchema | null>(initialSchema ?? null);
@@ -59,6 +85,9 @@ export function DBTree({
     type: SchemaItemType;
     name: string;
   } | null>(null);
+
+  // Context menu state for database
+  const dbContextMenu = useContextMenu();
 
   // Get schema from store when this is the active database
   const storeSchema = useDatabaseStore((state) =>
@@ -109,6 +138,46 @@ export function DBTree({
     [onSelectTable, onSelectView, onSelectIndex]
   );
 
+  // Build database context menu items
+  const dbMenuItems: ContextMenuItem[] = [
+    {
+      id: 'open',
+      label: 'Open',
+      icon: ContextMenuIcons.open,
+      onClick: () => onDbContextAction?.('open', database.name),
+    },
+    {
+      id: 'rename',
+      label: 'Rename',
+      icon: ContextMenuIcons.rename,
+      disabled: isReadOnly,
+      disabledTooltip: 'Database is read-only',
+      onClick: () => onDbContextAction?.('rename', database.name),
+      dividerAfter: true,
+    },
+    {
+      id: 'refresh',
+      label: 'Refresh Schema',
+      icon: ContextMenuIcons.refresh,
+      onClick: () => onDbContextAction?.('refresh', database.name),
+    },
+    {
+      id: 'export',
+      label: 'Export',
+      icon: ContextMenuIcons.export,
+      onClick: () => onDbContextAction?.('export', database.name),
+      dividerAfter: true,
+    },
+    {
+      id: 'delete',
+      label: 'Delete',
+      icon: ContextMenuIcons.delete,
+      disabled: isReadOnly,
+      disabledTooltip: 'Database is read-only',
+      onClick: () => onDbContextAction?.('delete', database.name),
+    },
+  ];
+
   // Filter schema items by search
   const filterItems = (items: string[]): string[] => {
     if (!searchFilter.trim()) return items;
@@ -131,6 +200,7 @@ export function DBTree({
         }`}
         onClick={onToggleExpand}
         onKeyDown={handleKeyDown}
+        onContextMenu={dbContextMenu.onContextMenu}
         tabIndex={0}
         role="button"
         aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${database.name}`}
@@ -196,7 +266,9 @@ export function DBTree({
                   type="table"
                   selectedItem={selectedItem}
                   searchFilter={searchFilter}
+                  isReadOnly={isReadOnly}
                   onItemClick={handleItemClick}
+                  onContextAction={onSchemaContextAction}
                 />
               )}
 
@@ -208,7 +280,9 @@ export function DBTree({
                   type="view"
                   selectedItem={selectedItem}
                   searchFilter={searchFilter}
+                  isReadOnly={isReadOnly}
                   onItemClick={handleItemClick}
+                  onContextAction={onSchemaContextAction}
                 />
               )}
 
@@ -220,7 +294,9 @@ export function DBTree({
                   type="index"
                   selectedItem={selectedItem}
                   searchFilter={searchFilter}
+                  isReadOnly={isReadOnly}
                   onItemClick={handleItemClick}
+                  onContextAction={onSchemaContextAction}
                 />
               )}
 
@@ -239,6 +315,17 @@ export function DBTree({
           )}
         </ul>
       )}
+
+      {/* Database Context Menu */}
+      {dbContextMenu.isOpen && (
+        <ContextMenu
+          items={dbMenuItems}
+          x={dbContextMenu.x}
+          y={dbContextMenu.y}
+          onClose={dbContextMenu.close}
+          testIdPrefix={`db-context-menu-${database.name}`}
+        />
+      )}
     </li>
   );
 }
@@ -249,7 +336,9 @@ interface SchemaSectionProps {
   type: SchemaItemType;
   selectedItem: { type: SchemaItemType; name: string } | null;
   searchFilter?: string;
+  isReadOnly?: boolean;
   onItemClick: (type: SchemaItemType, name: string) => void;
+  onContextAction?: (action: SchemaContextAction, itemType: SchemaItemType, itemName: string) => void;
 }
 
 function SchemaSection({
@@ -258,7 +347,9 @@ function SchemaSection({
   type,
   selectedItem,
   searchFilter,
+  isReadOnly = false,
   onItemClick,
+  onContextAction,
 }: SchemaSectionProps) {
   // Proper pluralization for test IDs
   const sectionId = type === 'index' ? 'section-indexes' : `section-${type}s`;
@@ -277,7 +368,9 @@ function SchemaSection({
               selectedItem?.type === type && selectedItem?.name === item
             }
             searchFilter={searchFilter}
+            isReadOnly={isReadOnly}
             onClick={() => onItemClick(type, item)}
+            onContextAction={onContextAction}
           />
         ))}
       </ul>

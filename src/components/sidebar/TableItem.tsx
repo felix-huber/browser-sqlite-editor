@@ -7,9 +7,25 @@
  * - Active/selected state highlighting
  * - Optional row count badge (for tables)
  * - Keyboard navigation support
+ * - Right-click context menu with type-specific actions
  */
 
 import { useCallback } from 'react';
+import {
+  ContextMenu,
+  useContextMenu,
+  ContextMenuIcons,
+  type ContextMenuItem,
+} from '../common/ContextMenu';
+
+/** Context menu action types for schema items */
+export type SchemaContextAction =
+  | 'view-data'
+  | 'design'
+  | 'copy-create'
+  | 'truncate'
+  | 'drop'
+  | 'edit-definition';
 
 export type SchemaItemType = 'table' | 'view' | 'index';
 
@@ -20,6 +36,8 @@ export interface TableItemProps {
   type: SchemaItemType;
   /** Whether this item is currently selected */
   isSelected?: boolean;
+  /** Whether in read-only mode */
+  isReadOnly?: boolean;
   /** Optional row count for tables */
   rowCount?: number;
   /** Optional target table name for indexes */
@@ -28,17 +46,23 @@ export interface TableItemProps {
   searchFilter?: string;
   /** Click handler */
   onClick?: () => void;
+  /** Context menu action handler */
+  onContextAction?: (action: SchemaContextAction, itemType: SchemaItemType, itemName: string) => void;
 }
 
 export function TableItem({
   name,
   type,
   isSelected = false,
+  isReadOnly = false,
   rowCount,
   targetTable,
   searchFilter,
   onClick,
+  onContextAction,
 }: TableItemProps) {
+  const contextMenu = useContextMenu();
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ') {
@@ -49,48 +73,160 @@ export function TableItem({
     [onClick]
   );
 
+  // Build context menu items based on item type
+  const buildContextMenuItems = (): ContextMenuItem[] => {
+    const readOnlyTooltip = 'Database is read-only';
+
+    if (type === 'table') {
+      return [
+        {
+          id: 'view-data',
+          label: 'View Data',
+          icon: ContextMenuIcons.table,
+          onClick: () => onContextAction?.('view-data', type, name),
+        },
+        {
+          id: 'design',
+          label: 'Design Table',
+          icon: ContextMenuIcons.design,
+          onClick: () => onContextAction?.('design', type, name),
+          dividerAfter: true,
+        },
+        {
+          id: 'copy-create',
+          label: 'Copy CREATE Statement',
+          icon: ContextMenuIcons.copy,
+          onClick: () => onContextAction?.('copy-create', type, name),
+          dividerAfter: true,
+        },
+        {
+          id: 'truncate',
+          label: 'Truncate Table',
+          icon: ContextMenuIcons.truncate,
+          disabled: isReadOnly,
+          disabledTooltip: readOnlyTooltip,
+          onClick: () => onContextAction?.('truncate', type, name),
+        },
+        {
+          id: 'drop',
+          label: 'Drop Table',
+          icon: ContextMenuIcons.drop,
+          disabled: isReadOnly,
+          disabledTooltip: readOnlyTooltip,
+          onClick: () => onContextAction?.('drop', type, name),
+        },
+      ];
+    }
+
+    if (type === 'view') {
+      return [
+        {
+          id: 'view-data',
+          label: 'View Data',
+          icon: ContextMenuIcons.view,
+          onClick: () => onContextAction?.('view-data', type, name),
+        },
+        {
+          id: 'edit-definition',
+          label: 'Edit Definition',
+          icon: ContextMenuIcons.code,
+          onClick: () => onContextAction?.('edit-definition', type, name),
+          dividerAfter: true,
+        },
+        {
+          id: 'copy-create',
+          label: 'Copy CREATE Statement',
+          icon: ContextMenuIcons.copy,
+          onClick: () => onContextAction?.('copy-create', type, name),
+          dividerAfter: true,
+        },
+        {
+          id: 'drop',
+          label: 'Drop View',
+          icon: ContextMenuIcons.drop,
+          disabled: isReadOnly,
+          disabledTooltip: readOnlyTooltip,
+          onClick: () => onContextAction?.('drop', type, name),
+        },
+      ];
+    }
+
+    // Index type
+    return [
+      {
+        id: 'copy-create',
+        label: 'Copy CREATE Statement',
+        icon: ContextMenuIcons.copy,
+        onClick: () => onContextAction?.('copy-create', type, name),
+        dividerAfter: true,
+      },
+      {
+        id: 'drop',
+        label: 'Drop Index',
+        icon: ContextMenuIcons.drop,
+        disabled: isReadOnly,
+        disabledTooltip: readOnlyTooltip,
+        onClick: () => onContextAction?.('drop', type, name),
+      },
+    ];
+  };
+
   return (
-    <li
-      className={`flex items-center gap-2 px-2 py-1 rounded cursor-pointer transition-colors text-sm ${
-        isSelected
-          ? 'bg-navy-100 text-navy-900'
-          : 'hover:bg-navy-50 text-navy-600'
-      }`}
-      onClick={onClick}
-      onKeyDown={handleKeyDown}
-      tabIndex={0}
-      role="treeitem"
-      aria-selected={isSelected}
-      data-testid={`item-${type}-${name}`}
-    >
-      {/* Type Icon */}
-      <ItemIcon type={type} />
+    <>
+      <li
+        className={`flex items-center gap-2 px-2 py-1 rounded cursor-pointer transition-colors text-sm ${
+          isSelected
+            ? 'bg-navy-100 text-navy-900'
+            : 'hover:bg-navy-50 text-navy-600'
+        }`}
+        onClick={onClick}
+        onKeyDown={handleKeyDown}
+        onContextMenu={contextMenu.onContextMenu}
+        tabIndex={0}
+        role="treeitem"
+        aria-selected={isSelected}
+        data-testid={`item-${type}-${name}`}
+      >
+        {/* Type Icon */}
+        <ItemIcon type={type} />
 
-      {/* Item Name */}
-      <span className="truncate flex-1">
-        <HighlightedText text={name} highlight={searchFilter} />
-      </span>
-
-      {/* Optional Badge */}
-      {type === 'table' && rowCount !== undefined && (
-        <span
-          className="text-xs text-navy-400 bg-navy-100 px-1.5 py-0.5 rounded"
-          data-testid={`row-count-${name}`}
-        >
-          {formatRowCount(rowCount)}
+        {/* Item Name */}
+        <span className="truncate flex-1">
+          <HighlightedText text={name} highlight={searchFilter} />
         </span>
-      )}
 
-      {/* Target table for indexes */}
-      {type === 'index' && targetTable && (
-        <span
-          className="text-xs text-navy-400"
-          data-testid={`target-table-${name}`}
-        >
-          → {targetTable}
-        </span>
+        {/* Optional Badge */}
+        {type === 'table' && rowCount !== undefined && (
+          <span
+            className="text-xs text-navy-400 bg-navy-100 px-1.5 py-0.5 rounded"
+            data-testid={`row-count-${name}`}
+          >
+            {formatRowCount(rowCount)}
+          </span>
+        )}
+
+        {/* Target table for indexes */}
+        {type === 'index' && targetTable && (
+          <span
+            className="text-xs text-navy-400"
+            data-testid={`target-table-${name}`}
+          >
+            → {targetTable}
+          </span>
+        )}
+      </li>
+
+      {/* Context Menu */}
+      {contextMenu.isOpen && (
+        <ContextMenu
+          items={buildContextMenuItems()}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={contextMenu.close}
+          testIdPrefix={`${type}-context-menu-${name}`}
+        />
       )}
-    </li>
+    </>
   );
 }
 
