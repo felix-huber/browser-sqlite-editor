@@ -1,0 +1,105 @@
+{
+"issues": [
+{
+"severity": "major",
+"category": "product",
+"title": "Platform support and storage-mode degradation contract is underspecified",
+"evidence": "PRD "Performance & Scale Targets" defines only: "Baseline environment: Chrome 120+ on a mid-range laptop" and "OPFS: Use FileSystemSyncAccessHandle in a Web Worker for synchronous read/write." It also states: "Fall back to IndexedDB via idb-keyval." US-010 says: "Fallback to IndexedDB when OPFS is not available (detected at startup; banner shown: \"Using IndexedDB fallback — performance may be reduced\")" but does not define which features/guarantees change under fallback (atomicity, size limits, multi-tab locks, perf targets).",
+"recommendation": "Add a dedicated PRD section: "Supported browsers & storage modes" with (1) an explicit support matrix (e.g., Chromium required for FileSystemSyncAccessHandle; what happens on Firefox/Safari), (2) a clear storage-mode decision tree (OPFS sync handle vs OPFS async vs IndexedDB), and (3) a written "Fallback contract" that states which guarantees remain true (persistence, atomicity expectations, max recommended DB size, multi-tab behavior) and which are degraded/disabled in fallback (e.g., disable >X MB, disable multi-tab editing, reduced perf targets). Tie each mode to acceptance criteria and E2E IDs.",
+"acceptanceTest": "Checklist:\n1) artifacts/01-prd.md includes a "Supported browsers & storage modes" section listing supported browsers/versions and required APIs.\n2) PRD includes a storage-mode decision tree and a "Fallback contract" with explicit feature parity/degradations.\n3) E2E: Run Playwright in Chromium + Firefox. In Firefox (or with OPFS intentionally disabled via feature flag), app shows the IndexedDB fallback banner and still passes: create DB -> edit cell -> hard refresh -> value persists; multi-tab behavior matches the documented fallback contract.",
+"files": [
+"artifacts/01-prd.md",
+"artifacts/00-brief.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "Open-file flow lacks explicit persistence semantics (import vs session-only)",
+"evidence": "Intro promises: "The app runs as a PWA with no backend — all data stays in the browser via OPFS persistence." But US-001 only specifies opening: "Drag-and-drop a `.sqlite`/`.db` file onto the app to open it" and "File is loaded into wa-sqlite WASM engine" without specifying whether the opened file becomes a persisted copy, how it’s named, or whether it reappears after reload. US-010 says: "On app load, previously opened databases appear in the sidebar" without tying that to US-001 behavior.",
+"recommendation": "Define a single, explicit product rule for US-001: when a user opens a file, the app either (A) imports it into a persisted workspace DB (copy into OPFS/IndexedDB) or (B) opens it as a temporary session DB unless user clicks "Import/Persist". Specify naming rules (default name from filename), what metadata is stored, and how the user returns to it on next load. Add acceptance criteria + an E2E that covers open -> persist -> reload -> edit persists.",
+"acceptanceTest": "E2E (new): Drop a fixture file named `chinook.sqlite`; app prompts (or auto) to create a persisted entry named `chinook` (or `chinook (1)` on collision). Hard refresh. Sidebar still lists it. Edit a cell and refresh again; edit remains. Verify exported download differs from original only by changes (size/hash change expected).",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "Database naming/rename rules and collision handling are missing",
+"evidence": "US-002: "User is prompted to name the database" and "Database is immediately persisted to OPFS" but no validation/collision rules. US-012 context menu includes: "Right-click context menu: Open, Design, Rename, Drop" but there is no story/criteria defining rename behavior, invalid names, or what happens when a name already exists.",
+"recommendation": "Add explicit naming constraints and collision policy: allowed characters, length, case-sensitivity, reserved names, trimming, and whether duplicates are blocked or auto-suffixed. Define rename behavior (including collision handling and whether renaming changes on-disk key/path and metadata references like ERD layout positions). Add acceptance criteria for Create + Rename covering invalid names and collisions.",
+"acceptanceTest": "Checklist/E2E:\n1) Attempt to create DB named "" (empty) -> blocked with inline validation.\n2) Create DB named "test" then create another named "test" -> either blocked with message or auto-creates "test (1)" (match PRD).\n3) Rename "test" to existing name -> same collision behavior.\n4) Refresh: names persist and refer to the correct underlying DB (no cross-linking).",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "blocker",
+"category": "product",
+"title": "CSV import/export rules are inconsistent with NULL vs empty-string round-tripping",
+"evidence": "Grid spec explicitly distinguishes: "NULL values shown as italic gray \"NULL\" placeholder; distinct from empty string" and "leaving it empty saves empty string". Import rules say: "Empty unquoted fields → NULL; empty quoted fields (`\\\"\\\"`) → empty string." Export rules say: "NULL → empty unquoted field." There is no rule for exporting empty strings, yet US-009 E2E requires: "open in PapaParse; all values round-trip correctly".",
+"recommendation": "Specify a lossless CSV encoding rule for empty strings vs NULL. Concrete option: always export empty strings as quoted empty fields (`\"\"`) and export NULL as empty unquoted fields. Add this explicitly under "Data interchange rules (export)" and ensure the exporter enforces it. If you want a user-togglable behavior, add an export option, but the default must satisfy the round-trip E2E claim.",
+"acceptanceTest": "E2E (amend US-009):\n1) Create table with one TEXT column.\n2) Insert two rows: one with NULL, one with empty string.\n3) Export to CSV.\n4) Assert the NULL row column is an empty unquoted field, and the empty-string row column is `\"\"`.\n5) Re-import into a fresh table and verify via SQL: one row is NULL and one is empty string (and not swapped).",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "100MB goal lacks measurable time/memory thresholds and “no crash” definition",
+"evidence": "Goals: "Handle databases up to 100MB without crashing or excessive memory use". Performance target: "100MB `.sqlite` fixture loads and persists to OPFS without errors or OOM". Success metrics: "Databases up to 100MB load and persist without errors". None define a time budget for 100MB, a memory ceiling, or what "crashing" means operationally.",
+"recommendation": "Turn the 100MB requirement into explicit, testable targets: (1) time-to-open and time-to-first-interaction thresholds for 100MB on the baseline environment, (2) a memory ceiling (e.g., JS heap/process RSS upper bound) or at least a max multiplier (e.g., <2.5× DB size in memory), and (3) an operational definition of "crash" (tab reload, browser OOM kill, >N seconds unresponsive). Align these thresholds across Goals, Performance Targets, and Success Metrics so they don’t drift.",
+"acceptanceTest": "Perf test checklist (CI-friendly):\n1) Playwright loads 100MB fixture; measure `performance.mark` from drop/open to sidebar populated and first query runnable.\n2) Assert time under the defined threshold.\n3) Collect memory signal (Chrome `performance.memory` or Playwright tracing + documented proxy) and assert under ceiling.\n4) Assert the page remains responsive (no long task > X ms for Y seconds) and no crashes/reloads occurred.",
+"files": [
+"artifacts/01-prd.md",
+"artifacts/00-brief.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "SQL editor execution semantics are unclear (single vs multi-statement, transactions, multi-results)",
+"evidence": "US-005 only states: "Execute button" and describes outputs for SELECT vs INSERT/UPDATE/DELETE, plus "Errors displayed inline with line number reference". Persistence contract includes: "any SQL statement that modifies data (INSERT/UPDATE/DELETE/DDL)" but does not specify what happens when the editor runs multiple statements, mixed statement types, or partial failure mid-script.",
+"recommendation": "Decide and document one of these explicit behaviors for v1:\nA) Single-statement execution only (block multiple statements with a clear error), OR\nB) Script execution (split on semicolons with SQLite-aware parsing) with defined result handling.\nIf (B), specify transaction policy (wrap entire script in a transaction by default and rollback on error, or execute per-statement) and how UI displays multiple result sets (tabs, last SELECT only, etc.). Update US-005 acceptance criteria and add E2E covering both a success multi-statement script and a mid-script error rollback behavior.",
+"acceptanceTest": "E2E (new/updated US-005):\n1) Paste script: `BEGIN; INSERT INTO t(x) VALUES (1); SELECT count(*) FROM t; COMMIT;` -> Verify INSERT affected row count is shown and SELECT result set renders correctly.\n2) Paste script with error after a write: `BEGIN; INSERT INTO t(x) VALUES (2); SELECT * FROM non_existent; COMMIT;` -> Verify error is shown with correct line number AND (per chosen policy) the INSERT is rolled back (count unchanged) if using atomic script transactions.",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "Table rebuild “preserve indexes/FKs/triggers” promise lacks verifiable acceptance coverage",
+"evidence": "US-003 states: "Table rebuild operations preserve all data, indexes, foreign keys, and triggers; on failure the database remains in last-known-good state (transactional rollback)" but the only E2E listed checks: "verify schema via `PRAGMA table_info` matches expected output"—which does not validate indexes, triggers, FKs, or rollback correctness.",
+"recommendation": "Expand US-003 acceptance criteria to include explicit post-apply verification for: indexes (`PRAGMA index_list` + `PRAGMA index_info`), triggers (`sqlite_master` entries), and foreign keys (`PRAGMA foreign_key_list`). Add a negative-path test that forces rebuild failure (e.g., introducing a NOT NULL constraint or CHECK violation during copy) and verifies the database remains unchanged (schema + data).",
+"acceptanceTest": "E2E (add to US-003):\n1) Create table A with an index, a trigger, and a FK from another table referencing A.\n2) Perform a rebuild operation (drop column / rename column).\n3) Assert: row count unchanged; `sqlite_master` still contains the trigger; `PRAGMA foreign_key_list` still contains expected FK; `PRAGMA index_list/index_info` still match.\n4) Force a rebuild failure and assert the DB schema/data are identical to pre-operation snapshot (e.g., compare `sqlite_master` + row counts + checksum query).",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "ERD E2E FK-count acceptance is ambiguous and likely not implementable as written",
+"evidence": "US-004 E2E: "Open Chinook fixture DB; ERD renders all FK connections; count matches `SELECT count(*) FROM pragma_foreign_key_list(...)`" — the SQL contains `...` and `pragma_foreign_key_list` is table-scoped, so there’s no defined way to compute the expected total FK edge count for the whole DB from this statement.",
+"recommendation": "Replace the ambiguous E2E evidence with an explicit, DB-wide expected-FK computation and a clear UI mapping. Example: define expected edges as the sum of `count(*)` over `pragma_foreign_key_list(table_name)` for all non-internal tables, and define UI edges as one edge per FK entry (or per column mapping). Put the exact SQL (or algorithm) into the acceptance criteria so test authors can implement it deterministically.",
+"acceptanceTest": "E2E (updated US-004):\n1) Compute expected FK count with a deterministic query/algorithm defined in the PRD (e.g., iterate tables from `sqlite_master` and sum `pragma_foreign_key_list`).\n2) Load Chinook fixture.\n3) Assert rendered ERD edge count equals expected count (DOM query for edges).\n4) Assert at least one known FK (e.g., a specific table/column pair from Chinook) is present as an edge label/source/target.",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "Debounced autosave lacks a defined “flush on close/reload” behavior (risk of losing last edit)",
+"evidence": "Persistence contract: "Save strategy: Debounced — saves are batched with a 500ms debounce after the last write." There is no acceptance criteria describing what happens if the user closes/reloads the page within that debounce window or while "saving..." is in progress.",
+"recommendation": "Define a strict persistence guarantee for last-write durability: either (A) force-flush pending saves on `beforeunload` / visibility change and block navigation until completed, or (B) show an "Unsaved changes" interstitial/confirm dialog when a save is pending. Add acceptance criteria and an E2E that simulates an immediate reload after an edit (<500ms) and verifies the documented behavior (persisted change or blocked reload with warning).",
+"acceptanceTest": "E2E (new under US-010):\n1) Open persisted DB.\n2) Edit a cell and immediately trigger a hard reload within <500ms.\n3) Expected (choose one per PRD):\n   - If flush-on-unload: after reload, edited value is persisted.\n   - If warn/block: the app shows a confirm dialog or blocks reload until save completes, and final persisted state matches the last edit.\n4) Repeat while the UI shows "saving..." to confirm no partial write state appears.",
+"files": [
+"artifacts/01-prd.md"
+]
+}
+]
+}

@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SQLite Editor — ERD View</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            navy: { 600: '#1e3a5f', 700: '#162d4d' },
+            surface: '#ffffff',
+            page: '#f9fafb',
+            border: '#e5e7eb',
+            muted: '#6b7280',
+            amber: '#d4a853',
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+        }
+      }
+    }
+  </script>
+  <style>
+    * { font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11'; }
+    .tree-item { transition: background 150ms ease-out; }
+    .tree-item:hover { background: #f3f4f6; }
+    .tree-item.selected { background: #e5e7eb; }
+    .erd-table {
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      min-width: 180px;
+    }
+    .erd-table:hover {
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .erd-column.pk { background: #fef3c7; }
+    .erd-column.fk { background: #dbeafe; }
+    .canvas-bg {
+      background-image:
+        radial-gradient(circle, #d1d5db 1px, transparent 1px);
+      background-size: 20px 20px;
+    }
+  </style>
+</head>
+<body class="bg-page font-sans text-gray-900 antialiased">
+  <div class="h-screen flex flex-col">
+
+    <!-- Top Toolbar -->
+    <header class="h-12 bg-surface border-b border-border flex items-center px-4 gap-4 shrink-0">
+      <div class="flex items-center gap-2">
+        <div class="w-5 h-5 bg-navy-600 rounded-sm"></div>
+        <span class="font-semibold text-sm tracking-tight">SQLite Editor</span>
+      </div>
+      <div class="w-px h-6 bg-border"></div>
+      <div class="flex items-center gap-1">
+        <button class="px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded transition-colors">Open Database</button>
+        <button class="px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded transition-colors">New Database</button>
+      </div>
+      <div class="flex-1"></div>
+      <div class="flex items-center gap-2">
+        <button class="px-3 py-1.5 bg-navy-600 text-white text-sm font-medium rounded hover:bg-navy-700 transition-colors">Download</button>
+      </div>
+    </header>
+
+    <div class="flex-1 flex overflow-hidden">
+      <!-- Sidebar -->
+      <aside class="w-60 bg-surface border-r border-border flex flex-col shrink-0">
+        <div class="p-3 border-b border-border">
+          <div class="relative">
+            <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+            </svg>
+            <input type="text" placeholder="Search tables..." class="w-full pl-8 pr-3 py-1.5 text-sm bg-page border border-border rounded focus:outline-none focus:ring-2 focus:ring-navy-600">
+          </div>
+        </div>
+
+        <nav class="flex-1 overflow-y-auto p-2">
+          <div class="mb-1">
+            <div class="tree-item selected flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer">
+              <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+              </svg>
+              <svg class="w-4 h-4 text-amber" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 2C6.48 2 2 4.02 2 6.5V17.5C2 19.98 6.48 22 12 22C17.52 22 22 19.98 22 17.5V6.5C22 4.02 17.52 2 12 2ZM12 4C16.41 4 20 5.57 20 6.5C20 7.43 16.41 9 12 9C7.59 9 4 7.43 4 6.5C4 5.57 7.59 4 12 4Z"></path>
+              </svg>
+              <span class="text-sm font-medium truncate">chinook</span>
+            </div>
+
+            <div class="ml-4">
+              <div class="tree-item flex items-center gap-2 px-2 py-1 rounded cursor-pointer">
+                <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                </svg>
+                <span class="text-xs font-medium text-muted uppercase tracking-wider">Tables</span>
+                <span class="text-xs text-gray-400 ml-auto">11</span>
+              </div>
+            </div>
+          </div>
+        </nav>
+      </aside>
+
+      <!-- ERD Canvas -->
+      <main class="flex-1 flex flex-col overflow-hidden bg-page">
+        <!-- ERD Header -->
+        <div class="h-12 bg-surface border-b border-border flex items-center px-4 gap-4 shrink-0">
+          <div class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"></path>
+            </svg>
+            <h1 class="font-semibold text-sm">Relationships</h1>
+          </div>
+
+          <div class="flex items-center gap-2 ml-4">
+            <span class="text-xs text-muted">11 tables</span>
+            <span class="text-gray-300">|</span>
+            <span class="text-xs text-muted">11 relationships</span>
+          </div>
+
+          <div class="flex-1"></div>
+
+          <div class="flex items-center gap-2">
+            <button class="px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded transition-colors flex items-center gap-1.5">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>
+              </svg>
+              Fit View
+            </button>
+            <div class="flex items-center gap-1 bg-gray-100 rounded px-1">
+              <button class="p-1 text-gray-600 hover:bg-gray-200 rounded">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path>
+                </svg>
+              </button>
+              <span class="text-xs font-mono w-10 text-center">100%</span>
+              <button class="p-1 text-gray-600 hover:bg-gray-200 rounded">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Canvas -->
+        <div class="flex-1 overflow-auto canvas-bg relative">
+          <!-- SVG Layer for connections -->
+          <svg class="absolute inset-0 w-full h-full pointer-events-none" style="min-width: 1200px; min-height: 800px;">
+            <!-- albums -> artists -->
+            <path d="M 380 140 C 420 140, 440 100, 480 100" stroke="#6b7280" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+            <!-- tracks -> albums -->
+            <path d="M 200 340 C 200 280, 200 220, 200 200" stroke="#6b7280" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+            <!-- tracks -> genres -->
+            <path d="M 280 380 C 360 380, 400 380, 480 380" stroke="#6b7280" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+            <!-- invoice_items -> tracks -->
+            <path d="M 200 540 C 200 480, 200 440, 200 420" stroke="#6b7280" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+            <!-- invoice_items -> invoices -->
+            <path d="M 280 580 C 360 580, 400 580, 480 580" stroke="#6b7280" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+            <!-- invoices -> customers -->
+            <path d="M 660 540 C 660 480, 660 420, 660 400" stroke="#6b7280" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+
+            <defs>
+              <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                <polygon points="0 0, 10 3.5, 0 7" fill="#6b7280"/>
+              </marker>
+            </defs>
+          </svg>
+
+          <!-- Tables -->
+          <div class="relative p-8" style="min-width: 1200px; min-height: 800px;">
+
+            <!-- albums -->
+            <div class="erd-table absolute cursor-move" style="left: 100px; top: 80px;">
+              <div class="px-3 py-2 border-b border-border bg-gray-50 rounded-t-md">
+                <span class="text-sm font-semibold">albums</span>
+              </div>
+              <div class="divide-y divide-border text-xs">
+                <div class="erd-column pk px-3 py-1.5 flex items-center gap-2">
+                  <svg class="w-3 h-3 text-amber-600" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65z"></path>
+                  </svg>
+                  <span class="font-mono">AlbumId</span>
+                  <span class="text-gray-400 ml-auto">INTEGER</span>
+                </div>
+                <div class="px-3 py-1.5 flex items-center gap-2">
+                  <span class="w-3"></span>
+                  <span class="font-mono">Title</span>
+                  <span class="text-gray-400 ml-auto">TEXT</span>
+                </div>
+                <div class="erd-column fk px-3 py-1.5 flex items-center gap-2">
+                  <svg class="w-3 h-3 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65z"></path>
+                  </svg>
+                  <span class="font-mono">ArtistId</span>
+                  <span class="text-gray-400 ml-auto">INTEGER</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- artists -->
+            <div class="erd-table absolute cursor-move" style="left: 480px; top: 40px;">
+              <div class="px-3 py-2 border-b border-border bg-gray-50 rounded-t-md">
+                <span class="text-sm font-semibold">artists</span>
+              </div>
+              <div class="divide-y divide-border text-xs">
+                <div class="erd-column pk px-3 py-1.5 flex items-center gap-2">
+                  <svg class="w-3 h-3 text-amber-600" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65z"></path>
+                  </svg>
+                  <span class="font-mono">ArtistId</span>
+                  <span class="text-gray-400 ml-auto">INTEGER</span>
+                </div>
+                <div class="px-3 py-1.5 flex items-center gap-2">
+                  <span class="w-3"></span>
+                  <span class="font-mono">Name</span>
+                  <span class="text-gray-400 ml-auto">TEXT</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- tracks -->
+            <div class="erd-table absolute cursor-move" style="left: 100px; top: 280px;">
+              <div class="px-3 py-2 border-b border-border bg-gray-50 rounded-t-md">
+                <span class="text-sm font-semibold">tracks</span>
+              </div>
+              <div class="divide-y divide-border text-xs">
+                <div class="erd-column pk px-3 py-1.5 flex items-center gap-2">
+                  <svg class="w-3 h-3 text-amber-600" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65z"></path>
+                  </svg>
+                  <span class="font-mono">TrackId</span>
+                  <span class="text-gray-400 ml-auto">INTEGER</span>
+                </div>
+                <div class="px-3 py-1.5 flex items-center gap-2">
+                  <span class="w-3"></span>
+                  <span class="font-mono">Name</span>
+                  <span class="text-gray-400 ml-auto">TEXT</span>
+                </div>
+                <div class="erd-column fk px-3 py-1.5 flex items-center gap-2">
+                  <svg class="w-3 h-3 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65z"></path>
+                  </svg>
+                  <span class="font-mono">AlbumId</span>
+                  <span class="text-gray-400 ml-auto">INTEGER</span>
+                </div>
+                <div class="erd-column fk px-3 py-1.5 flex items-center gap-2">
+                  <svg class="w-3 h-3 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65z"></path>
+                  </svg>
+                  <span class="font-mono">GenreId</span>
+                  <span class="text-gray-400 ml-auto">INTEGER</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- genres -->
+            <div class="erd-table absolute cursor-move" style="left: 480px; top: 320px;">
+              <div class="px-3 py-2 border-b border-border bg-gray-50 rounded-t-md">
+                <span class="text-sm font-semibold">genres</span>
+              </div>
+              <div class="divide-y divide-border text-xs">
+                <div class="erd-column pk px-3 py-1.5 flex items-center gap-2">
+                  <svg class="w-3 h-3 text-amber-600" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65z"></path>
+                  </svg>
+                  <span class="font-mono">GenreId</span>
+                  <span class="text-gray-400 ml-auto">INTEGER</span>
+                </div>
+                <div class="px-3 py-1.5 flex items-center gap-2">
+                  <span class="w-3"></span>
+                  <span class="font-mono">Name</span>
+                  <span class="text-gray-400 ml-auto">TEXT</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- invoice_items -->
+            <div class="erd-table absolute cursor-move" style="left: 100px; top: 500px;">
+              <div class="px-3 py-2 border-b border-border bg-gray-50 rounded-t-md">
+                <span class="text-sm font-semibold">invoice_items</span>
+              </div>
+              <div class="divide-y divide-border text-xs">
+                <div class="erd-column pk px-3 py-1.5 flex items-center gap-2">
+                  <svg class="w-3 h-3 text-amber-600" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65z"></path>
+                  </svg>
+                  <span class="font-mono">InvoiceLineId</span>
+                  <span class="text-gray-400 ml-auto">INTEGER</span>
+                </div>
+                <div class="erd-column fk px-3 py-1.5 flex items-center gap-2">
+                  <svg class="w-3 h-3 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65z"></path>
+                  </svg>
+                  <span class="font-mono">InvoiceId</span>
+                  <span class="text-gray-400 ml-auto">INTEGER</span>
+                </div>
+                <div class="erd-column fk px-3 py-1.5 flex items-center gap-2">
+                  <svg class="w-3 h-3 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65z"></path>
+                  </svg>
+                  <span class="font-mono">TrackId</span>
+                  <span class="text-gray-400 ml-auto">INTEGER</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- invoices -->
+            <div class="erd-table absolute cursor-move" style="left: 480px; top: 520px;">
+              <div class="px-3 py-2 border-b border-border bg-gray-50 rounded-t-md">
+                <span class="text-sm font-semibold">invoices</span>
+              </div>
+              <div class="divide-y divide-border text-xs">
+                <div class="erd-column pk px-3 py-1.5 flex items-center gap-2">
+                  <svg class="w-3 h-3 text-amber-600" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65z"></path>
+                  </svg>
+                  <span class="font-mono">InvoiceId</span>
+                  <span class="text-gray-400 ml-auto">INTEGER</span>
+                </div>
+                <div class="erd-column fk px-3 py-1.5 flex items-center gap-2">
+                  <svg class="w-3 h-3 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65z"></path>
+                  </svg>
+                  <span class="font-mono">CustomerId</span>
+                  <span class="text-gray-400 ml-auto">INTEGER</span>
+                </div>
+                <div class="px-3 py-1.5 flex items-center gap-2">
+                  <span class="w-3"></span>
+                  <span class="font-mono">Total</span>
+                  <span class="text-gray-400 ml-auto">REAL</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- customers -->
+            <div class="erd-table absolute cursor-move" style="left: 560px; top: 280px;">
+              <div class="px-3 py-2 border-b border-border bg-gray-50 rounded-t-md">
+                <span class="text-sm font-semibold">customers</span>
+              </div>
+              <div class="divide-y divide-border text-xs">
+                <div class="erd-column pk px-3 py-1.5 flex items-center gap-2">
+                  <svg class="w-3 h-3 text-amber-600" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65z"></path>
+                  </svg>
+                  <span class="font-mono">CustomerId</span>
+                  <span class="text-gray-400 ml-auto">INTEGER</span>
+                </div>
+                <div class="px-3 py-1.5 flex items-center gap-2">
+                  <span class="w-3"></span>
+                  <span class="font-mono">FirstName</span>
+                  <span class="text-gray-400 ml-auto">TEXT</span>
+                </div>
+                <div class="px-3 py-1.5 flex items-center gap-2">
+                  <span class="w-3"></span>
+                  <span class="font-mono">LastName</span>
+                  <span class="text-gray-400 ml-auto">TEXT</span>
+                </div>
+                <div class="px-3 py-1.5 flex items-center gap-2">
+                  <span class="w-3"></span>
+                  <span class="font-mono">Email</span>
+                  <span class="text-gray-400 ml-auto">TEXT</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <footer class="h-7 bg-surface border-t border-border flex items-center px-4 text-xs shrink-0">
+      <div class="flex items-center gap-3">
+        <span class="flex items-center gap-1.5 text-green-600 font-medium">
+          <span class="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
+          Saved
+        </span>
+        <span class="text-muted">OPFS</span>
+        <span class="text-muted">1.2 MB</span>
+      </div>
+      <div class="flex-1"></div>
+      <div class="flex items-center gap-3 text-muted">
+        <span>FK: <span class="text-green-600 font-medium">ON</span></span>
+        <span class="font-mono">SQLite 3.45.0</span>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,127 @@
+{
+"issues": [
+{
+"severity": "blocker",
+"category": "product",
+"title": "WASM engine decision is inconsistent (sql.js vs wa-sqlite)",
+"evidence": "artifacts/01-prd.md US-001 AC: "File is loaded into sql.js WASM engine and schema is parsed" + FR-1: "Load `.sqlite`/`.db` files ... into sql.js WASM engine" + Technical Considerations: "**WASM engine**: wa-sqlite — native OPFS support" + Decisions: "**WASM engine**: wa-sqlite". artifacts/00-brief.md Constraints: "sql.js (SQLite compiled to WASM)" + Notes: "sql.js vs wa-sqlite ... worth evaluating".",
+"recommendation": "Pick a single v1 engine and lock it in (or explicitly mark as undecided). Then update every mention to match (User Stories, Functional Requirements, Constraints, Decisions). Add one line stating the embedded SQLite version/features you are targeting (because ALTER TABLE + join support depends on it).",
+"acceptanceTest": "Checklist:\n- Search across docs for "sql.js" and "wa-sqlite"; exactly one engine is referenced as the v1 choice (the other, if mentioned, is clearly relegated to "considered alternatives").\n- FR-1 and US-001 reference the same engine as the Decisions section.\n- Docs include an explicit "SQLite version/feature baseline" line (e.g., "SQLite >= X.Y").",
+"files": [
+"artifacts/01-prd.md",
+"artifacts/00-brief.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "Dark mode scope contradicts v1 decision",
+"evidence": "artifacts/01-prd.md Design Considerations → Theme: "Light mode default, dark mode toggle." vs Decisions: "Theming: Light mode only in v1. No dark mode."",
+"recommendation": "Make v1 scope explicit and consistent: either (A) remove dark mode toggle from Design Considerations and add "No dark mode in v1" to Non-Goals, or (B) keep dark mode in scope and add a dedicated user story + acceptance criteria (toggle location, persistence, minimum contrast rules).",
+"acceptanceTest": "Doc consistency check:\n- A search for "dark mode" yields a single, non-contradictory v1 statement.\n- If dark mode is out of scope: Non-Goals explicitly states it, and Design Considerations does not specify a toggle.\n- If in scope: there is a user story with verifiable AC including persistence across reloads.",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "Acceptance criteria are frequently non-verifiable (“Verify in browser”)",
+"evidence": "artifacts/01-prd.md multiple user stories end with: "- [ ] Verify in browser" (e.g., US-001 through US-008, US-011, US-012).",
+"recommendation": "Replace every "Verify in browser" checkbox with explicit, observable outcomes and expected states. Add a "Testing / Definition of Done" section that maps each user story to at least one Playwright E2E test scenario (IDs like E2E-US-007-01).",
+"acceptanceTest": "Checklist:\n- `\"Verify in browser\"` does not appear anywhere in artifacts/01-prd.md.\n- Every US has at least one AC that is objectively checkable (UI state, generated file, SQL result, error message).\n- Each US references at least one E2E test ID, and those IDs exist in the test plan list.",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "Table designer scope is underspecified and risks hidden data-loss/migration work",
+"evidence": "artifacts/01-prd.md US-003 AC: "Drag-and-drop to reorder columns" and "Edit existing table structure (add/remove/rename columns)" and "Apply creates/alters the table in the database".",
+"recommendation": "Specify exactly which schema edits are supported in v1 and how they behave:\n- Distinguish "UI reorder" vs "physical column reorder".\n- For operations requiring table rebuild/migration, define: data copy strategy, preservation of indexes/FKs/triggers, and rollback on failure.\n- Add explicit UX rules for destructive changes (warnings, backups/undo, diff preview).",
+"acceptanceTest": "Behavior checklist using a fixture DB:\n- Rename column: data preserved; dependent indexes/constraints handled per spec.\n- Drop column: remaining columns preserved; irreversible action requires explicit confirmation.\n- Reorder columns: either (A) UI-only reorder is clearly labeled and persisted as layout metadata, or (B) physical reorder produces expected PRAGMA table_info order after migration.\n- Failure during apply leaves DB in last-known-good state (no partial schema).",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "Query builder supported SQL surface is not fully reflected in the user story",
+"evidence": "artifacts/01-prd.md Decisions: "Query builder scope: Simple — SELECT, JOIN, WHERE, ORDER BY, LIMIT only. No subqueries, GROUP BY, HAVING, or aggregates in v1." but US-006 AC does not mention these limits and lists JOINs as "(INNER, LEFT, RIGHT)".",
+"recommendation": "Update US-006 (and FR-7) to explicitly list what is supported and what is intentionally not supported in v1 (GROUP BY/HAVING/aggregates/subqueries). Clarify the exact join types supported by the chosen SQLite build/version and how the UI prevents generating unsupported SQL (disabled controls + validation).",
+"acceptanceTest": "Checklist:\n- US-006 includes an explicit "Not supported in v1" list matching the Decisions section.\n- App behavior: there is no UI affordance to add GROUP BY/HAVING/aggregates/subqueries; attempts to paste/import unsupported constructs into the builder (if supported) produce a clear validation error.\n- Generated SQL is guaranteed to be within the declared subset (spot-check via snapshot tests of builder state → SQL output).",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "ERD/foreign key editor lacks critical edge-case definitions (composite keys, actions, enforcement)",
+"evidence": "artifacts/01-prd.md US-004 AC: "Drag from one column to another to create a new FK relationship" and success metric: "Visual relationship editor correctly renders all FK connections from an imported database" — but no mention of composite/multi-column FKs, ON DELETE/UPDATE actions, DEFERRABLE, self-references, or multiple FKs between the same tables.",
+"recommendation": "Add a "Foreign key support" spec:\n- Supported FK shapes: single-column vs composite, self-referential, multiple relationships between same pair.\n- Supported FK options in UI: ON DELETE/UPDATE actions at minimum (RESTRICT/NO ACTION/CASCADE/SET NULL), and whether DEFERRABLE is supported.\n- Enforcement policy: whether you set `PRAGMA foreign_keys=ON` by default, and whether users can toggle it.\n- Rendering rules for ambiguous cases (e.g., multiple lines between same tables).",
+"acceptanceTest": "Fixture-based checklist:\n- Open a DB containing: (1) composite FK, (2) self-referencing FK, (3) two different FKs between same tables. ERD renders all of them without overlap ambiguity.\n- Create a FK with ON DELETE CASCADE via UI; verify `PRAGMA foreign_key_list(<table>)` reflects it.\n- If enforcement is ON by default: inserting a violating row fails with a clear error surfaced in UI; if OFF by default: UI clearly indicates enforcement state.",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "Persistence contract is unclear (what counts as a write, atomicity, quota, multi-tab)",
+"evidence": "artifacts/01-prd.md US-010 AC: "Databases are auto-saved to OPFS after every write operation" + "Fallback to IndexedDB when OPFS is not available" + "User can delete a persisted database".",
+"recommendation": "Define the persistence contract precisely:\n- What events trigger saves (cell edit commit, bulk import, schema apply, etc.) and whether saves are debounced/batched.\n- Atomicity and corruption prevention (temp writes + replace, journaling behavior, crash recovery expectation).\n- Storage quota behavior (quota exceeded, partial save failure) and required UX (banner, blocking modal, forced export).\n- Multi-tab policy (lock single writer, read-only second tab, or last-write-wins with warnings).",
+"acceptanceTest": "Checklist:\n- After a single-cell edit, a save occurs according to the documented rules (immediately or within the debounce window), and the save status is visible.\n- Simulate quota exceeded: app shows a clear error, prevents silent data loss, and DB remains openable.\n- Open same persisted DB in two tabs: behavior matches the documented policy (e.g., second tab read-only with warning).\n- Hard refresh during/after save does not corrupt the persisted DB (reopen succeeds).",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "Performance/scale success metrics are ambiguous and not tied to a test harness",
+"evidence": "artifacts/01-prd.md Success Metrics: "run a query within 10 seconds of first page load"; "smooth scrolling" for "100k+ rows"; "Databases up to 100MB load and persist without errors"; "Lighthouse PWA score >= 90".",
+"recommendation": "Add a "Performance & scale targets" section with:\n- Baseline test environment (browser version, device class, CPU/RAM).\n- Representative DB fixtures (schema shape + row counts) for 100MB and 100k-row claims.\n- Definitions for "smooth" (e.g., median frame time / input latency thresholds) and for "within 10 seconds" (what file size? cold cache? SW installed?).\n- A repeatable measurement approach (Lighthouse CI + custom perf timings logged via Performance API).",
+"acceptanceTest": "Checklist:\n- Docs include baseline environment + fixture definitions.\n- Repo includes fixture generator or fixed fixtures and a scripted benchmark runner.\n- CI (or a documented local command) produces a perf report and fails if thresholds are exceeded.\n- Each success metric references an objective measurement (timestamped events, FPS/input latency, etc.).",
+"files": [
+"artifacts/01-prd.md",
+"artifacts/00-brief.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "“No network calls after initial load” is underspecified for a PWA and common editor deps",
+"evidence": "artifacts/01-prd.md FR-13: "All processing client-side — no network calls after initial load" + US-011 AC: "Service worker caches all app assets" + US-005 AC: "Monaco or CodeMirror" (both can introduce worker/assets fetching if misconfigured).",
+"recommendation": "Define what "no network calls" means operationally:\n- Require bundling of all assets (WASM, editor workers, fonts) and forbid CDN/runtime fetches.\n- Specify whether SW update checks are allowed and how they behave offline.\n- Add an explicit E2E test: after first online load, subsequent loads must succeed with the browser offline and with request-blocking enabled.",
+"acceptanceTest": "E2E checklist:\n- Load once online to install SW.\n- Set browser offline (or intercept and fail every network request).\n- Reload app and complete: open persisted DB, run a SELECT query, edit a cell, export results.\n- Test asserts: zero external network requests occurred after offline mode was enabled.",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "Inline editing/delete lacks a defined row identity strategy (PK/rowid/WITHOUT ROWID)",
+"evidence": "artifacts/01-prd.md US-007 AC: "Double-click a cell to edit its value" and "Delete rows via selection + delete button" — no mention of how rows are uniquely identified for UPDATE/DELETE, especially for tables without primary keys.",
+"recommendation": "Add a row identity spec for the data grid:\n- Preferred: use declared PRIMARY KEY.\n- Fallback: use hidden `rowid` where available.\n- For `WITHOUT ROWID` tables or tables without a stable unique identifier: make grid read-only or require user to choose a key.\n- Define how NULL vs empty string is displayed/edited, and how BLOB cells behave (read-only/base64 editor/etc.).",
+"acceptanceTest": "Fixture checklist:\n- Table with PK: editing/deleting affects exactly the selected row (verify by querying).\n- Table without PK (rowid): editing/deleting still affects exactly the selected row; rowid is not user-visible unless enabled.\n- WITHOUT ROWID table lacking a usable key: grid shows a clear read-only state with explanation.\n- NULL vs empty string round-trips correctly (edit, save, reload, re-query).",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "Import/export lacks a concrete data interchange spec (NULLs, encoding, BLOBs, round-trip guarantees)",
+"evidence": "artifacts/01-prd.md US-008 AC: "Auto-detect column types (INTEGER, REAL, TEXT)" and "Preview first 10 rows"; US-009 AC: "CSV export uses proper quoting and escaping" and "JSON export produces an array of objects" — but no rules for encoding, delimiters, NULL/empty string, BLOBs, or nested JSON structures.",
+"recommendation": "Add a "Data interchange" section defining:\n- CSV parsing/export rules (delimiter support, quote rules, newline-in-field behavior, UTF-8 requirement).\n- NULL vs empty string mapping (and whether there’s a configurable option).\n- BLOB handling (disallow in CSV/JSON, or represent as base64 with a marker).\n- JSON rules (must be array-of-objects; nested objects either flattened with a documented strategy or rejected with an error).\n- Add explicit progress + cancel for large exports (not just imports).",
+"acceptanceTest": "Round-trip checklist with fixtures:\n- Import CSV containing commas, quotes, and embedded newlines; exported CSV reopens in a standard parser and preserves values.\n- Import JSON with nested object: behavior matches spec (flatten or reject with clear error).\n- Export table containing NULLs and verify representation matches spec; re-import yields identical NULL/empty semantics.\n- Export a DB/table large enough to require progress UI; cancel stops export without freezing the app.",
+"files": [
+"artifacts/01-prd.md"
+]
+}
+]
+}

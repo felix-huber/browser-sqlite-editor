@@ -1,0 +1,167 @@
+{
+"issues": [
+{
+"severity": "major",
+"category": "product",
+"title": "Schema mutation may silently drop unsupported table features during rebuilds",
+"evidence": "US-003 (Visual table designer): "Add columns with name, type, and constraints (PK, NOT NULL, UNIQUE, DEFAULT)." and "Table rebuild operations preserve all data, indexes, foreign keys, and triggers" plus US-004: "All FK create/edit/delete operations in the ERD are applied via table rebuild of the child table".",
+"recommendation": "Add an explicit "Schema Feature Support & Preservation" section for mutation operations (table designer + ERD rebuilds). Define one of these v1-safe contracts:\n1) **Preserve-by-default**: The rebuild engine must preserve the full original CREATE TABLE semantics (e.g., CHECK constraints, composite PK/UNIQUE constraints, COLLATE, GENERATED columns, STRICT, WITHOUT ROWID, AUTOINCREMENT, partial indexes, triggers, view dependencies, etc.) via AST-based rewriting (not string hacks).\n2) **Guardrails**: If the target table uses unsupported constructs, the designer/ERD mutation path is disabled with a banner ("This table uses unsupported schema features for visual editing; use SQL editor"), while still allowing read-only inspection.\nAlso add explicit acceptance criteria for what must be preserved and what triggers a guardrail.",
+"acceptanceTest": "Playwright E2E fixture:\n- Create a table using at least two "hard" features not represented in UI (e.g., CHECK constraint + GENERATED column, or STRICT + WITHOUT ROWID + composite PRIMARY KEY).\n- Attempt a supported v1 mutation (rename column / drop column / add FK via ERD).\nPass criteria:\n- If preserve-by-default: post-operation `sqlite_master.sql` for the table still contains the original features (CHECK/GENERATED/STRICT/etc.), and data remains intact.\n- If guardrails: the UI blocks the mutation with a deterministic message and makes **no** schema changes (verify `sqlite_master` unchanged).",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "major",
+"category": "product",
+"title": "CSV formula-injection hardening is underspecified and risks corrupting common values (e.g., negative numbers) and breaking round-trip expectations",
+"evidence": "US-009 Data interchange rules (export): "Formula injection protection... (default ON). When enabled, cell values starting with `=`, `+`, `-`, `@`, `\\t`, `\\r` are prefixed with a single quote (`'`)".",
+"recommendation": "Narrow and clarify the hardening rule so it cannot accidentally mutate numeric exports and silently change types:\n- Apply hardening **only to TEXT values** (SQLite type string) or values explicitly exported as strings.\n- Never harden NULL, INTEGER, REAL.\n- Update the UX copy to state: "Spreadsheet-safe export may alter text values and is not guaranteed lossless for round-trip" (or change default to OFF if you want lossless-by-default).\n- Add an explicit "Lossless" vs "Spreadsheet-safe" mode naming, not just a checkbox, to reduce user surprise.",
+"acceptanceTest": "E2E:\n1) Table with values: TEXT "=1+1", TEXT "-abc", INTEGER -42, REAL -3.14.\n2) Export CSV with hardening ON.\nVerify:\n- TEXT values beginning with `=`, `+`, `-`, `@` are prefixed with `'`.\n- Numeric values (-42, -3.14) are **not** prefixed.\n3) Re-import into a fresh table with explicit column types.\nVerify:\n- Numeric columns remain numeric and match original values.\n- Hardened text values match documented behavior.",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "minor",
+"category": "product",
+"title": "SQL editor error semantics are ambiguous: stop-on-error vs continue and what "atomic" means in practice",
+"evidence": "US-005 SQL execution semantics: "Statements execute sequentially within an implicit transaction." and "On any error, the transaction is rolled back (atomic script execution)." Also: "`COMMIT` without `BEGIN`... the error is displayed and subsequent statements continue executing."",
+"recommendation": "Make script execution control flow explicit and testable:\n- For implicit transaction mode: specify **stop executing at first error** and roll back the whole script.\n- For explicit transaction mode: specify whether to stop at first error (recommended for predictability) or continue executing subsequent statements after issuing ROLLBACK.\n- Define whether "subsequent statements continue" applies only to the specific COMMIT-without-BEGIN case or generally.",
+"acceptanceTest": "Add E2E:\n- Script: `INSERT INTO t(x) VALUES (1); SELECT * FROM nonexistent; INSERT INTO t(x) VALUES (2);`\nExpected: error shown; transaction rolled back; row count unchanged; third statement does not execute.\n- Script with explicit BEGIN and a post-error statement; verify behavior matches the documented policy exactly.",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "minor",
+"category": "product",
+"title": "Query editor and query builder result handling lacks guardrails for huge result sets",
+"evidence": "US-005: "SELECT results displayed in a scrollable data grid" and "Row count shown". US-006: "Run executes the generated query and shows results." No explicit limit/virtualization/cancel behavior is defined for result sets.",
+"recommendation": "Define a v1 "Large result set" contract shared by SQL editor and query builder:\n- Default max rows rendered (e.g., 10,000) with an explicit "Load more" affordance.\n- Always use virtualization in the result grid.\n- Provide cancel for long-running queries.\n- Clarify what "Row count" means: rows fetched vs total rows in result (the latter may require expensive COUNT).",
+"acceptanceTest": "E2E:\n- Run `WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt LIMIT 200000) SELECT x FROM cnt;`\nVerify UI stays responsive, renders first N rows only, shows "200,000 rows total" only if explicitly computed, and cancel stops execution/fetching.",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "minor",
+"category": "product",
+"title": "Query builder parameterization is only specified for text; numeric handling is unclear",
+"evidence": "US-006 WHERE semantics: "Text values are always parameterized (`?` placeholders), never interpolated." No equivalent statement for numbers.",
+"recommendation": "Parameterize **all** user-supplied values (text and number) in generated SQL, and treat NULL as a structural operator (`IS NULL` / `IS NOT NULL`) rather than a parameter. This improves safety, avoids locale formatting surprises, and keeps SQL deterministic.",
+"acceptanceTest": "Unit test:\n- Build a condition: column `age` >= 18 (number).\nVerify generated SQL uses `?` and parameters list contains numeric 18, not a string-interpolated literal.\nE2E: ensure SQL preview + executed result are correct.",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "minor",
+"category": "product",
+"title": "LIKE escaping is fully specified in query builder but underspecified in data grid filters",
+"evidence": "US-006 WHERE semantics: "generated SQL includes `ESCAPE '\\'` clause" and details escaping `%`, `_`, and `\\`. US-007 filters: "text (case-insensitive `LIKE '%term%'` contains match; `%` and `_` in user input are escaped)" (no escape character/clause specified).",
+"recommendation": "Standardize LIKE escaping rules across the app:\n- Choose one escape char (backslash is fine).\n- Always emit `ESCAPE '\\'` for LIKE-based filters.\n- Document exact transformation for `%`, `_`, and `\\`.\n- Ensure the same behavior is used in both query builder and data grid filters to prevent "it works here but not there" surprises.",
+"acceptanceTest": "E2E:\n- Insert row with value `100%_done\\\\ok`.\n- Apply grid text filter for `100%_done\\ok`.\nExpected: it matches the row literally (not wildcard-expanded).\n- Repeat with query builder using LIKE contains operator; results match grid behavior.",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "minor",
+"category": "product",
+"title": "DB rename/delete flows don’t specify migration/cleanup of per-DB localStorage data (query history)",
+"evidence": "Query history storage: "Per-database, stored in localStorage under key `qh:<db-name>`." Naming rules: "Rename ... updates the OPFS storage key and all metadata references (including ERD layout positions)." Delete: "removes DB file... and registry entry" (no mention of query history).",
+"recommendation": "Define lifecycle rules for per-DB local settings:\n- On rename: migrate `qh:<old>` → `qh:<new>`.\n- On delete: remove `qh:<db-name>`.\n- If rename is blocked due to collision, ensure no partial migration occurs.\nThis avoids orphaned data and preserves user expectations (history follows the DB identity).",
+"acceptanceTest": "E2E:\n- Open DB `test`, run 3 queries (history populated).\n- Rename DB to `test2`.\nVerify history dropdown still shows the 3 queries and localStorage key is updated.\n- Delete DB `test2`.\nVerify localStorage has no `qh:test2` key.",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "minor",
+"category": "product",
+"title": "Data grid requirement allows pagination OR virtualization, but performance targets assume virtualization scrolling",
+"evidence": "US-007: "Pagination or virtual scrolling for tables with >1000 rows". Performance & Scale Targets: "Virtual scrolling: Data grid with 100k rows achieves median frame time < 16ms (60fps) during scroll".",
+"recommendation": "Remove the ambiguity by aligning requirement with the metric:\n- Either require virtualization for large tables (recommended), or\n- If pagination is acceptable, adjust the performance target to a pagination-based interaction (but then the "during scroll" metric needs rewording).\nGiven you already chose TanStack Virtual, locking in virtualization is the simplest.",
+"acceptanceTest": "Checklist:\n- US-007 acceptance criteria explicitly states virtualization is the v1 approach for >1000 rows.\n- Perf E2E fixture `100k rows` scroll test uses the same grid component as the data grid view and passes the <16ms median frame time criterion.",
+"files": [
+"artifacts/01-prd.md"
+]
+},
+{
+"severity": "nit",
+"category": "product",
+"title": "Registry timestamps are placeholders; specify format for consistency and testability",
+"evidence": "Database registry example: `{ \"name\": \"chinook\", \"file\": \"chinook.sqlite\", \"createdAt\": \"...\", \"lastOpenedAt\": \"...\" }`",
+"recommendation": "Specify timestamp format (ISO 8601 UTC string or epoch ms) and update policy (e.g., lastOpenedAt updates when DB becomes active). This makes registry behavior deterministic and easier to debug/migrate.",
+"acceptanceTest": "Unit test:\n- Create DB → registry entry has createdAt and lastOpenedAt in the documented format.\n- Switch active DB → lastOpenedAt changes and remains parseable by the chosen format parser.",
+"files": [
+"artifacts/01-prd.md"
+]
+}
+],
+"suggestions": [
+{
+"category": "best-practice",
+"title": "Add explicit accessibility requirements for keyboard-only and screen reader support",
+"description": "The PRD includes keyboard shortcuts but doesn’t define focus management, ARIA labeling, or keyboard navigation for complex widgets (sidebar tree, grid, ERD canvas, dialogs). This is a common source of UX regressions in React apps with heavy custom UI.",
+"recommendation": "Add a short Accessibility section with v1 requirements: tab order, visible focus rings, ARIA roles for tree view, dialog focus trap + escape behavior, grid cell editing keyboard navigation, and a minimum set of Playwright a11y smoke checks (e.g., no focus loss, dialogs trap focus).",
+"rationale": "Prevents late-stage rework and makes the tool usable for more developers. Also increases the chance of passing PWA/Lighthouse checks and general QA expectations.",
+"priority": "medium"
+},
+{
+"category": "enhancement",
+"title": "Define a corrupt-database recovery UX for OPFS/IndexedDB beyond registry self-heal",
+"description": "Registry self-healing is specified, but if the actual `.sqlite` file becomes corrupted (or IndexedDB snapshot breaks), the user experience is unclear.",
+"recommendation": "Add a recovery flow: when opening fails, show a modal offering: (1) export raw file (best-effort), (2) duplicate and attempt `PRAGMA integrity_check` / `VACUUM` repair, (3) delete the broken DB from storage. Record the failure reason in a local-only debug log.",
+"rationale": "Turns a scary failure mode into a manageable workflow and reduces support burden (even without telemetry).",
+"priority": "medium"
+},
+{
+"category": "improvement",
+"title": "Add a “Diagnostics” panel for storage/perf mode transparency",
+"description": "You have sophisticated mode logic (OPFS vs IndexedDB, locks, read-only enforcement, SQLite version baseline). Users and developers will benefit from a single place that reports what mode they’re actually in.",
+"recommendation": "Add a settings subpanel showing: storage mode (OPFS/IndexedDB), OPFS SyncAccessHandle availability, Web Locks availability, current DB size, SQLite version string, foreign_keys status, read-only reason (multi-tab vs user toggle), and last save status (esp. in IndexedDB mode).",
+"rationale": "Greatly improves debuggability and reduces ambiguity when users report "it’s slow" or "it didn’t save".",
+"priority": "low"
+},
+{
+"category": "improvement",
+"title": "Standardize irreversible-operation confirmations and copy",
+"description": "Some destructive actions require confirmation (drop column/table, delete DB), while SQL editor explicitly does not. That’s fine, but the UX language and patterns should be consistent.",
+"recommendation": "Define a confirmation standard: when to use simple confirm vs "type the name" confirm (e.g., delete DB), and ensure the wording is consistent across table designer, sidebar drop, and ERD FK deletes.",
+"rationale": "Prevents accidental data loss and keeps the app feeling coherent without over-restricting power users.",
+"priority": "low"
+},
+{
+"category": "enhancement",
+"title": "Add copy/export affordances for DDL diffs and generated SQL",
+"description": "DDL diff previews and SQL previews are great, but people will want to copy them into git commits, PRs, or external review tools.",
+"recommendation": "Add a “Copy to clipboard” button (and optional “Download .sql”) wherever you show a DDL diff or generated SQL (table designer + ERD + query builder).",
+"rationale": "Improves workflow integration while keeping the no-backend constraint intact.",
+"priority": "low"
+},
+{
+"category": "best-practice",
+"title": "Introduce a unified cancellable-task pattern for long-running operations",
+"description": "Some operations already mention cancel/progress (imports, FK validation), but the PRD could benefit from a shared model (imports, exports, large queries, rebuilds).",
+"recommendation": "Define a reusable “Task” abstraction with: progress, cancel token, error surface, and UI location (bottom console/status). Apply it across import/export/query execution/rebuild where applicable.",
+"rationale": "Reduces implementation complexity and creates consistent UX under heavy workloads (which your perf targets explicitly cover).",
+"priority": "medium"
+}
+],
+"strengths": [
+"Acceptance criteria are unusually concrete and implementation-friendly (many include E2E IDs and deterministic checks).",
+"Clear storage-mode contracts (OPFS direct durability vs IndexedDB debounced snapshots) with explicit UX states (“Saved”, “Saving…”, “Save failed”).",
+"Multi-tab policy is thoughtfully designed with a hard backstop (`SQLITE_OPEN_READONLY`) plus UI-level write blocking and statement-level checks.",
+"Strong security posture for a local-only app: strict CSP, explicit XSS defense model, no `dangerouslySetInnerHTML`, and security E2E tests.",
+"Performance targets are measurable and tied to a CI measurement approach (CDP heap sampling, trace artifacts, Lighthouse CI).",
+"Scope boundaries are well-articulated (non-goals list is crisp; v1 scope for query builder and ERD FK editing is explicit).",
+"Data interchange rules for NULL vs empty string are precise and tested (often a source of subtle bugs)."
+],
+"overallAssessment": {
+"readyForImplementation": true,
+"confidenceScore": 8,
+"summary": "PRD is detailed, testable, and internally consistent enough to start implementation. Two high-impact clarifications—schema-mutation fidelity during rebuilds and CSV hardening semantics—should be nailed down to avoid silent data/schema surprises and rework."
+}
+}

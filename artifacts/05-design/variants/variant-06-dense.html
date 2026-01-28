@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SQLite Editor — Dense View</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            navy: { 600: '#1e3a5f', 700: '#162d4d' },
+            surface: '#ffffff',
+            page: '#f9fafb',
+            border: '#e5e7eb',
+            muted: '#6b7280',
+            amber: '#d4a853',
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+        }
+      }
+    }
+  </script>
+  <style>
+    * { font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11'; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+    .tree-item { transition: background 100ms ease-out; }
+    .tree-item:hover { background: #f3f4f6; }
+    .tree-item.selected { background: #e5e7eb; }
+    .grid-row { transition: background 100ms ease-out; }
+    .grid-row:hover { background: #f9fafb; }
+  </style>
+</head>
+<body class="bg-page font-sans text-gray-900 antialiased text-xs">
+  <div class="h-screen flex flex-col">
+
+    <!-- Compact Top Toolbar -->
+    <header class="h-9 bg-surface border-b border-border flex items-center px-3 gap-2 shrink-0">
+      <div class="flex items-center gap-1.5">
+        <div class="w-4 h-4 bg-navy-600 rounded-sm"></div>
+        <span class="font-semibold text-xs tracking-tight">SQLite Editor</span>
+      </div>
+      <div class="w-px h-4 bg-border"></div>
+      <button class="px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded transition-colors">Open</button>
+      <button class="px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded transition-colors">New</button>
+      <div class="flex-1"></div>
+      <button class="px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded transition-colors">Import</button>
+      <button class="px-2 py-1 bg-navy-600 text-white text-xs rounded hover:bg-navy-700 transition-colors">Download</button>
+      <button class="p-1 text-gray-400 hover:bg-gray-100 rounded transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+        </svg>
+      </button>
+    </header>
+
+    <div class="flex-1 flex overflow-hidden">
+      <!-- Narrow Sidebar -->
+      <aside class="w-48 bg-surface border-r border-border flex flex-col shrink-0">
+        <div class="p-2 border-b border-border">
+          <input type="text" placeholder="Search..." class="w-full px-2 py-1 text-xs bg-page border border-border rounded focus:outline-none focus:ring-1 focus:ring-navy-600">
+        </div>
+
+        <nav class="flex-1 overflow-y-auto p-1">
+          <div class="mb-0.5">
+            <div class="tree-item selected flex items-center gap-1.5 px-1.5 py-1 rounded cursor-pointer">
+              <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+              </svg>
+              <svg class="w-3 h-3 text-amber" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 2C6.48 2 2 4.02 2 6.5V17.5C2 19.98 6.48 22 12 22C17.52 22 22 19.98 22 17.5V6.5C22 4.02 17.52 2 12 2Z"></path>
+              </svg>
+              <span class="text-xs font-medium truncate">chinook</span>
+            </div>
+
+            <div class="ml-3">
+              <div class="tree-item flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer">
+                <svg class="w-2.5 h-2.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                </svg>
+                <span class="text-[10px] font-medium text-muted uppercase">Tables</span>
+                <span class="text-[10px] text-gray-400 ml-auto">11</span>
+              </div>
+
+              <div class="ml-3 space-y-0">
+                <div class="tree-item selected flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer">
+                  <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                  </svg>
+                  <span class="text-xs truncate">albums</span>
+                </div>
+                <div class="tree-item flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer">
+                  <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                  </svg>
+                  <span class="text-xs truncate">artists</span>
+                </div>
+                <div class="tree-item flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer">
+                  <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                  </svg>
+                  <span class="text-xs truncate">customers</span>
+                </div>
+                <div class="tree-item flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer">
+                  <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                  </svg>
+                  <span class="text-xs truncate">employees</span>
+                </div>
+                <div class="tree-item flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer">
+                  <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                  </svg>
+                  <span class="text-xs truncate">genres</span>
+                </div>
+                <div class="tree-item flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer">
+                  <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                  </svg>
+                  <span class="text-xs truncate">invoice_items</span>
+                </div>
+                <div class="tree-item flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer">
+                  <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                  </svg>
+                  <span class="text-xs truncate">invoices</span>
+                </div>
+                <div class="tree-item flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer">
+                  <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                  </svg>
+                  <span class="text-xs truncate">media_types</span>
+                </div>
+                <div class="tree-item flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer">
+                  <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                  </svg>
+                  <span class="text-xs truncate">playlists</span>
+                </div>
+                <div class="tree-item flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer">
+                  <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                  </svg>
+                  <span class="text-xs truncate">playlist_track</span>
+                </div>
+                <div class="tree-item flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer">
+                  <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                  </svg>
+                  <span class="text-xs truncate">tracks</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </nav>
+      </aside>
+
+      <!-- Main Area -->
+      <main class="flex-1 flex flex-col overflow-hidden bg-page">
+        <!-- Compact Table Header -->
+        <div class="h-8 bg-surface border-b border-border flex items-center px-3 gap-2 shrink-0">
+          <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+          </svg>
+          <span class="font-medium text-xs">albums</span>
+          <div class="flex items-center gap-0.5 ml-3">
+            <button class="px-2 py-0.5 text-[10px] font-medium bg-page border border-border rounded-t border-b-0 -mb-px relative z-10">Data</button>
+            <button class="px-2 py-0.5 text-[10px] text-muted hover:text-gray-700">Design</button>
+            <button class="px-2 py-0.5 text-[10px] text-muted hover:text-gray-700">SQL</button>
+          </div>
+          <div class="flex-1"></div>
+          <button class="px-2 py-0.5 text-[10px] text-gray-600 hover:bg-gray-100 rounded">Filter</button>
+          <button class="px-2 py-0.5 text-[10px] text-gray-600 hover:bg-gray-100 rounded">Export</button>
+        </div>
+
+        <!-- Dense Data Grid -->
+        <div class="flex-1 overflow-auto">
+          <table class="w-full border-collapse text-xs">
+            <thead class="sticky top-0 z-10">
+              <tr class="bg-gray-50 border-b border-border">
+                <th class="w-8 px-2 py-1.5 text-left">
+                  <input type="checkbox" class="w-3 h-3 rounded border-gray-300 text-navy-600">
+                </th>
+                <th class="px-2 py-1.5 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider border-r border-border">
+                  AlbumId <span class="text-gray-400 font-normal">INT</span>
+                </th>
+                <th class="px-2 py-1.5 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider border-r border-border">
+                  Title <span class="text-gray-400 font-normal">TEXT</span>
+                </th>
+                <th class="px-2 py-1.5 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
+                  ArtistId <span class="text-gray-400 font-normal">INT</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody class="bg-surface divide-y divide-border">
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">1</td><td class="px-2 py-1 border-r border-border">For Those About To Rock We Salute You</td><td class="px-2 py-1 font-mono text-gray-600">1</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">2</td><td class="px-2 py-1 border-r border-border">Balls to the Wall</td><td class="px-2 py-1 font-mono text-gray-600">2</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">3</td><td class="px-2 py-1 border-r border-border">Restless and Wild</td><td class="px-2 py-1 font-mono text-gray-600">2</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">4</td><td class="px-2 py-1 border-r border-border">Let There Be Rock</td><td class="px-2 py-1 font-mono text-gray-600">1</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">5</td><td class="px-2 py-1 border-r border-border">Big Ones</td><td class="px-2 py-1 font-mono text-gray-600">3</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">6</td><td class="px-2 py-1 border-r border-border">Jagged Little Pill</td><td class="px-2 py-1 font-mono text-gray-600">4</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">7</td><td class="px-2 py-1 border-r border-border">Facelift</td><td class="px-2 py-1 font-mono text-gray-600">5</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">8</td><td class="px-2 py-1 border-r border-border">Warner 25 Anos</td><td class="px-2 py-1 font-mono text-gray-600">6</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">9</td><td class="px-2 py-1 border-r border-border">Plays Metallica By Four Cellos</td><td class="px-2 py-1 font-mono text-gray-600">7</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">10</td><td class="px-2 py-1 border-r border-border">Audioslave</td><td class="px-2 py-1 font-mono text-gray-600">8</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">11</td><td class="px-2 py-1 border-r border-border">Out of Exile</td><td class="px-2 py-1 font-mono text-gray-600">8</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">12</td><td class="px-2 py-1 border-r border-border">BackBeat Soundtrack</td><td class="px-2 py-1 font-mono text-gray-600">9</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">13</td><td class="px-2 py-1 border-r border-border">The Best of Billy Cobham</td><td class="px-2 py-1 font-mono text-gray-600">10</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">14</td><td class="px-2 py-1 border-r border-border">Alcohol Fueled Brewtality</td><td class="px-2 py-1 font-mono text-gray-600">11</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">15</td><td class="px-2 py-1 border-r border-border">Carry On</td><td class="px-2 py-1 font-mono text-gray-600">12</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">16</td><td class="px-2 py-1 border-r border-border">Revelations</td><td class="px-2 py-1 font-mono text-gray-600">12</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">17</td><td class="px-2 py-1 border-r border-border">Chill: Brazil</td><td class="px-2 py-1 font-mono text-gray-600">13</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">18</td><td class="px-2 py-1 border-r border-border">The Best of Ed Motta</td><td class="px-2 py-1 font-mono text-gray-600">14</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">19</td><td class="px-2 py-1 border-r border-border">Unplugged</td><td class="px-2 py-1 font-mono text-gray-600">15</td></tr>
+              <tr class="grid-row"><td class="px-2 py-1"><input type="checkbox" class="w-3 h-3 rounded border-gray-300"></td><td class="px-2 py-1 font-mono text-gray-600 border-r border-border">20</td><td class="px-2 py-1 border-r border-border">Iron Maiden</td><td class="px-2 py-1 font-mono text-gray-600">16</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Compact Footer -->
+        <div class="h-6 bg-surface border-t border-border flex items-center px-2 shrink-0">
+          <button class="flex items-center gap-1 text-[10px] text-muted hover:text-gray-700">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+            Add
+          </button>
+          <div class="flex-1"></div>
+          <span class="text-[10px] text-muted">347 rows</span>
+        </div>
+      </main>
+    </div>
+
+    <!-- Compact Status Bar -->
+    <footer class="h-5 bg-surface border-t border-border flex items-center px-2 text-[10px] shrink-0">
+      <span class="flex items-center gap-1 text-green-600 font-medium">
+        <span class="w-1 h-1 bg-green-500 rounded-full"></span>
+        Saved
+      </span>
+      <span class="mx-2 text-gray-300">|</span>
+      <span class="text-muted">OPFS</span>
+      <span class="mx-1 text-gray-300">|</span>
+      <span class="text-muted">1.2MB</span>
+      <div class="flex-1"></div>
+      <span class="text-muted">FK: ON</span>
+      <span class="mx-1 text-gray-300">|</span>
+      <span class="font-mono text-muted">3.45.0</span>
+    </footer>
+  </div>
+</body>
+</html>

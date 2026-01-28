@@ -1,0 +1,1 @@
+../../commands/swarm-status.md

@@ -1,0 +1,124 @@
+```json
+{
+  "issues": [
+    {
+      "severity": "major",
+      "category": "product",
+      "title": "Undefined behavior when adding FK with existing data violations",
+      "evidence": "US-004 Foreign key support (v1 scope) + FK enforcement: `PRAGMA foreign_keys = ON` is set by default. No acceptance criteria describe behavior when creating a new FK on tables with existing violating rows.",
+      "recommendation": "Explicitly define FK creation behavior when existing data violates the constraint: (a) block creation with a detailed error listing sample violating rows, or (b) allow creation with FK enforcement temporarily disabled during rebuild, then re-enable and fail if violations exist.",
+      "acceptanceTest": "Create two tables with violating rows, attempt to add FK via ERD. Verify deterministic outcome: either FK creation is blocked with an error message, or FK is created only if data is valid; enforcement state is restored correctly.",
+      "files": ["artifacts/01-prd.md"]
+    },
+    {
+      "severity": "major",
+      "category": "product",
+      "title": "Data grid sorting/filtering execution model is ambiguous at scale",
+      "evidence": "US-007: Columns are sortable and filterable; pagination or virtual scrolling for >1000 rows. No definition whether sort/filter are SQL-backed or client-side, especially for 100k-row performance target.",
+      "recommendation": "Specify that sorting and filtering are executed via generated SQL queries with ORDER BY / WHERE clauses, with LIMIT/OFFSET or cursor-based pagination, not in-memory array operations.",
+      "acceptanceTest": "Open a 100k-row table; apply sort and filter; verify generated SQL includes ORDER BY / WHERE and that JS heap does not grow linearly with row count.",
+      "files": ["artifacts/01-prd.md"]
+    },
+    {
+      "severity": "minor",
+      "category": "product",
+      "title": "SQL multi-statement tokenization underspecified",
+      "evidence": "US-005 SQL execution semantics: 'SQLite-aware tokenization' is referenced without defining edge cases (e.g., semicolons in strings, comments).",
+      "recommendation": "Reference a concrete strategy (e.g., SQLite parser via wa-sqlite, or a known tokenizer) and state supported edge cases explicitly.",
+      "acceptanceTest": "Execute a script containing semicolons in strings and comments; verify correct statement splitting and execution.",
+      "files": ["artifacts/01-prd.md"]
+    },
+    {
+      "severity": "minor",
+      "category": "product",
+      "title": "beforeunload persistence guarantees may not be achievable in all browsers",
+      "evidence": "US-010 Persistence contract: 'The page will attempt to block navigation until the flush completes (via beforeunload event return value).' Modern browsers restrict async work during beforeunload.",
+      "recommendation": "Clarify that durability on abrupt close is best-effort, document known browser limitations, and define expected behavior if flush cannot complete.",
+      "acceptanceTest": "Simulate immediate tab close across supported browsers; verify documented behavior matches observed persistence guarantees.",
+      "files": ["artifacts/01-prd.md"]
+    },
+    {
+      "severity": "minor",
+      "category": "product",
+      "title": "IndexedDB fallback multi-tab enforcement is vague",
+      "evidence": "Fallback contract: 'Web Locks API still used if available; otherwise single-tab-only with advisory warning.' No mechanism is defined when locks are unavailable.",
+      "recommendation": "Define enforcement strategy when Web Locks are unavailable (e.g., localStorage heartbeat + advisory-only) and clarify data safety guarantees.",
+      "acceptanceTest": "Open same DB in two tabs on a browser without Web Locks; verify expected banners and that only one tab can write.",
+      "files": ["artifacts/01-prd.md"]
+    },
+    {
+      "severity": "minor",
+      "category": "product",
+      "title": "ERD layout persistence schema not defined",
+      "evidence": "US-004: 'Layout positions persist across sessions (stored in OPFS metadata per database)' without defining format or versioning.",
+      "recommendation": "Define a minimal metadata schema with versioning for ERD layout storage to support future evolution.",
+      "acceptanceTest": "Persist ERD layout, reload app, verify positions restored; upgrade metadata version and confirm backward compatibility handling.",
+      "files": ["artifacts/01-prd.md"]
+    },
+    {
+      "severity": "minor",
+      "category": "product",
+      "title": "CSV import/export encoding constraints could surprise users",
+      "evidence": "US-008: 'CSV: UTF-8 encoding required.' US-009: 'CSV: UTF-8 with BOM.' Import behavior for BOM or other encodings is not specified.",
+      "recommendation": "Clarify how UTF-8 BOM is handled on import and define error messaging for non-UTF-8 CSV files.",
+      "acceptanceTest": "Import CSV with UTF-8 BOM and without BOM; verify identical results. Import non-UTF-8 CSV; verify clear error.",
+      "files": ["artifacts/01-prd.md"]
+    },
+    {
+      "severity": "nit",
+      "category": "product",
+      "title": "Terminology inconsistency between 'database' and 'workspace'",
+      "evidence": "US-001 refers to 'persisted workspace copy' while most other sections refer to 'database'.",
+      "recommendation": "Standardize terminology (prefer 'database') and reserve 'workspace' only if multiple DB grouping is intended.",
+      "acceptanceTest": "Terminology audit: no mixed usage in PRD unless explicitly defined.",
+      "files": ["artifacts/01-prd.md"]
+    }
+  ],
+  "suggestions": [
+    {
+      "category": "best-practice",
+      "title": "Explicit error taxonomy",
+      "description": "Errors are well covered, but categories and codes are not standardized.",
+      "recommendation": "Define a small, stable error code taxonomy (e.g., STORAGE_QUOTA, SQLITE_CORRUPT, FK_VIOLATION) used across UI and tests.",
+      "rationale": "Improves debuggability, testability, and long-term maintainability.",
+      "priority": "medium"
+    },
+    {
+      "category": "improvement",
+      "title": "Document SQL feature detection at runtime",
+      "description": "Some features depend on SQLite build capabilities (e.g., RIGHT JOIN).",
+      "recommendation": "Add a short section describing how SQLite feature support is detected and cached at runtime.",
+      "rationale": "Prevents ambiguity and reduces conditional logic surprises during implementation.",
+      "priority": "low"
+    },
+    {
+      "category": "enhancement",
+      "title": "Schema change dry-run mode",
+      "description": "Table rebuilds are complex and risky even with rollback.",
+      "recommendation": "Add an optional 'Validate only' mode that runs rebuild logic without committing, reporting potential failures.",
+      "rationale": "Improves user confidence and reduces destructive trial-and-error.",
+      "priority": "low"
+    },
+    {
+      "category": "simplification",
+      "title": "Clarify performance measurement ownership",
+      "description": "Multiple metrics are defined but responsibility is implicit.",
+      "recommendation": "Add a brief note assigning ownership (CI vs manual benchmarking) for each performance target.",
+      "rationale": "Reduces uncertainty during implementation and review.",
+      "priority": "low"
+    }
+  ],
+  "strengths": [
+    "Exceptionally detailed acceptance criteria with concrete E2E tests",
+    "Clear v1 scope boundaries and explicit non-goals",
+    "Strong data integrity focus (transactions, rollback, atomic writes)",
+    "Well-defined persistence and offline model",
+    "Performance targets are measurable and tied to fixtures and CI"
+  ],
+  "overallAssessment": {
+    "readyForImplementation": true,
+    "confidenceScore": 8,
+    "summary": "The PRD is thorough and implementation-ready with only a couple of significant clarifications needed around FK creation semantics and data grid execution strategy."
+  }
+}
+```

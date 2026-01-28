@@ -1,0 +1,167 @@
+```json
+{
+  "issues": [
+    {
+      "severity": "major",
+      "category": "product",
+      "title": "Multi-database UX vs single-loaded-DB decision is ambiguous/contradictory",
+      "evidence": "US-012: \"I want a sidebar that lists all open databases, their tables, views, and indexes\" + \"Tree view: Database > Tables / Views / Indexes\" vs Decisions #17: \"Only one database is loaded into the wa-sqlite engine at a time. Other persisted DBs are listed in the sidebar but not loaded until selected.\"",
+      "recommendation": "Define the exact sidebar contract for non-active databases: (A) show only DB names until selected, (B) lazy-load schema per DB on expand (temporarily opening/closing DB), or (C) maintain cached schema metadata per DB that is updated after schema-changing operations. Update US-012 acceptance criteria to match the chosen option, including how/when schema is refreshed and how this interacts with the one-DB-loaded memory model.",
+      "acceptanceTest": "E2E checklist: (1) Create DB1 with 2 tables, DB2 with 3 tables. (2) On reload, sidebar shows both DBs. (3) Verify the intended behavior for DB2 schema visibility while DB1 is active (per chosen option). (4) Switch DBs twice; assert the prior DB connection is closed (no worker handle leaks) and memory does not trend upward across 20 switches.",
+      "files": [
+        "artifacts/01-prd.md"
+      ]
+    },
+    {
+      "severity": "major",
+      "category": "product",
+      "title": "Table rebuild requirements don’t specify how dependent objects are kept valid (triggers/views) after rename/drop/FK edits",
+      "evidence": "US-003: \"rename column (via table rebuild)\" and \"Table rebuild operations preserve all data, indexes, foreign keys, and triggers\". US-004 FK mechanics: \"All FK create/edit/delete operations ... applied via table rebuild ... preserves all data, indexes, triggers, and other FKs\".",
+      "recommendation": "Add an explicit dependency-handling policy for rebuilds: which objects are rewritten vs blocked vs warned. At minimum, define behavior for triggers/views (and optionally CHECK constraints) that reference renamed/dropped columns. Strong option: use SQLite-native ALTER TABLE capabilities where they correctly propagate renames (e.g., RENAME COLUMN) and reserve rebuild only for cases SQLite truly can’t do; otherwise, require the rebuild engine to (1) enumerate dependent objects from sqlite_master, (2) rewrite their SQL or block with a clear dependency report, and (3) validate by preparing the rewritten SQL before committing the transaction.",
+      "acceptanceTest": "E2E-US-003-DEP-01: Create table t(a INT, b INT); create view v AS SELECT a FROM t; create trigger trg AFTER INSERT ON t BEGIN SELECT a; END; then rename column a->a1 via designer. Verify: (1) INSERT into t succeeds, (2) SELECT * FROM v returns a1 values, (3) sqlite_master definitions for v/trg compile (attempt sqlite3_prepare on each). E2E-US-004-DEP-02: Add FK via ERD that forces rebuild; ensure unrelated triggers on the child table still execute successfully post-rebuild (not just present in sqlite_master).",
+      "files": [
+        "artifacts/01-prd.md"
+      ]
+    },
+    {
+      "severity": "minor",
+      "category": "product",
+      "title": "IndexedDB fallback: “Saved”/durability semantics are underspecified and could mislead users",
+      "evidence": "OPFS mode: \"Status bar shows 'Saved' after each successful commit\". IndexedDB mode: \"Debounced — saves are batched with a 500ms debounce\" and \"data written within the last debounce window may be lost if the tab is force-killed\".",
+      "recommendation": "Define explicit UI states and guarantees in IndexedDB mode: e.g., 'Saving…' while a snapshot is pending/in progress, 'Saved' only after the IndexedDB transaction commits, and 'Risk window' warning when changes exist that have not yet been snapshotted. Also specify what happens when a snapshot fails (retry policy, user-visible error, and whether writes continue).",
+      "acceptanceTest": "E2E-IDB-SAVE-01: Force IndexedDB mode, slow down snapshot serialization (test hook). Edit a cell; verify status transitions Unsaved -> Saving… -> Saved only after IndexedDB put commits. Trigger a hard refresh during Saving…; verify the UI does not claim persistence and behavior matches the documented risk window (either lost change + warning on next load, or persisted if snapshot completed).",
+      "files": [
+        "artifacts/01-prd.md"
+      ]
+    },
+    {
+      "severity": "minor",
+      "category": "product",
+      "title": "Fallback multi-tab lock via localStorage heartbeat is vulnerable to background throttling and false takeovers",
+      "evidence": "Fallback contract: \"localStorage heartbeat (write timestamp every 2s; ... if heartbeat expires (>5s stale), the lock is released and the waiting tab may acquire write access).\"",
+      "recommendation": "Harden the fallback lock policy: increase stale threshold, incorporate Page Visibility (don’t treat hidden-tab silence as death), add BroadcastChannel coordination, and/or require a user-confirmed 'Take over lock' flow when the lock appears stale. Make the takeover path explicit to avoid silent dual-writer scenarios in IndexedDB snapshot mode.",
+      "acceptanceTest": "E2E-LOCK-01: In an environment without Web Locks, open the same DB in two tabs. Background the first tab (simulate timer throttling). Confirm the second tab cannot silently acquire write access while the first is still open; it must either remain read-only or require an explicit takeover action. Verify at no time do both tabs allow writes concurrently.",
+      "files": [
+        "artifacts/01-prd.md"
+      ]
+    },
+    {
+      "severity": "minor",
+      "category": "product",
+      "title": "Import append behavior doesn’t define what happens on constraint failures or type conversion errors",
+      "evidence": "US-008: \"Missing columns use DEFAULT or NULL.\" and \"cancel button stops import without partial data (transactional)\" but no explicit contract for NOT NULL/UNIQUE/FK failures or for error reporting (row/column).",
+      "recommendation": "Add a deterministic error-handling contract for import: preflight against target table constraints when appending (NOT NULL without DEFAULT, UNIQUE conflicts, FK enforcement on/off), and on failure show (a) row number in source file, (b) column name, (c) SQLite error, and (d) confirm that 0 rows were committed due to transactional import.",
+      "acceptanceTest": "E2E-US-008-ERR-01: Append CSV missing a NOT NULL column with no DEFAULT into an existing table; verify import is blocked (or fails) with a clear message and 0 new rows. E2E-US-008-ERR-02: Append rows causing UNIQUE violation; verify error identifies a sample offending value and commits 0 rows.",
+      "files": [
+        "artifacts/01-prd.md"
+      ]
+    },
+    {
+      "severity": "minor",
+      "category": "product",
+      "title": "Data grid filter semantics are not testable as written (multiple valid interpretations)",
+      "evidence": "US-007 acceptance criteria: \"Column filters (text search, numeric range, NULL/NOT NULL)\" with no definition of matching rules (contains vs prefix, case sensitivity, escaping/wildcards).",
+      "recommendation": "Specify filter semantics precisely: for text, define operator set (contains/prefix/exact), case-sensitivity behavior, and escaping rules; for numeric, define inclusive/exclusive bounds; for NULL define tri-state behavior. Add at least one E2E per filter type to lock behavior.",
+      "acceptanceTest": "E2E-GRID-FILTER-01: Given values ['Foo', 'food', 'bar'], apply text filter 'foo' and assert expected matches per defined case rule. E2E-GRID-FILTER-02: Numeric range [10, 20] includes endpoints (or not) per spec. E2E-GRID-FILTER-03: NULL/NOT NULL filter returns exactly the intended rows.",
+      "files": [
+        "artifacts/01-prd.md"
+      ]
+    },
+    {
+      "severity": "minor",
+      "category": "product",
+      "title": "JSON BLOB export implies reversibility while v1 import explicitly won’t restore BLOBs",
+      "evidence": "Export rules (JSON): \"BLOB → base64-encoded string with '__blob_base64__' prefix marker.\" Import rules: \"The '__blob_base64__' marker in JSON export is informational only; v1 import does not parse it back into BLOB.\"",
+      "recommendation": "Make the UX unambiguous: either (A) change JSON export to use a clear placeholder object (e.g., {\"__blob__\": \"base64\", \"bytes\": N}) plus a prominent non-roundtrip warning, or (B) support importing the marker back into BLOB for symmetry. Also ensure export/import summaries surface exact counts of skipped/restored BLOB fields.",
+      "acceptanceTest": "E2E-BLOB-ROUNDTRIP-01 (if staying non-roundtrip): Export JSON from table with BLOBs; verify UI shows an explicit 'BLOBs will not re-import in v1' warning and includes skipped count. Import the exported JSON; verify BLOB columns are skipped and warning count matches, with no silent data mutation.",
+      "files": [
+        "artifacts/01-prd.md"
+      ]
+    },
+    {
+      "severity": "minor",
+      "category": "product",
+      "title": "Performance/heap measurement approach relies on Chrome-only APIs, risking flaky or non-portable tests",
+      "evidence": "Performance targets: \"Peak JS heap must remain under 250MB ... Measured via ... performance.memory.\"",
+      "recommendation": "Define a CI-grade measurement method: in Playwright/Chromium use Chrome DevTools Protocol (CDP) to read heap stats; gate heap assertions to Chromium runs only. Document what’s measured in non-Chromium (time-based perf only) to avoid false failures.",
+      "acceptanceTest": "CI checklist: (1) Perf tests run on Chromium with CDP heap sampling and assert <250MB peak during 100MB import workflow. (2) Firefox/WebKit jobs skip heap assertions but still run functional E2E. (3) Perf tests emit artifacts (trace + JSON metrics) for regression triage.",
+      "files": [
+        "artifacts/01-prd.md"
+      ]
+    },
+    {
+      "severity": "nit",
+      "category": "product",
+      "title": "DB delete should explicitly include ERD metadata cleanup to prevent orphan files",
+      "evidence": "US-010: \"User can delete a persisted database (confirmation dialog; removes from OPFS and sidebar)\" while ERD metadata is stored as \"<db-name>.erd.json\" alongside the DB.",
+      "recommendation": "Add a one-liner to US-010: deleting a DB also deletes its associated metadata files (e.g., .erd.json). In IndexedDB mode, delete any metadata entries too.",
+      "acceptanceTest": "E2E-DELETE-01: Create DB 'x', open ERD (ensures x.erd.json exists), then delete DB. Verify neither the DB file nor x.erd.json remains in OPFS (or IndexedDB keys), and sidebar no longer lists 'x' after reload.",
+      "files": [
+        "artifacts/01-prd.md"
+      ]
+    }
+  ],
+  "suggestions": [
+    {
+      "category": "best-practice",
+      "title": "Add an explicit “schema cache/registry” data model section",
+      "description": "Several flows implicitly require metadata beyond the raw .sqlite file (DB list, display name vs storage key, last-opened, ERD positions, maybe schema summary). Making this explicit reduces accidental coupling and makes multi-DB UX decisions easier.",
+      "recommendation": "Add a short “Client-side data model” section defining: database registry entries, storage keys (case-insensitive collisions), per-DB metadata files (ERD now, possibly others later), and how they’re migrated/versioned.",
+      "rationale": "Clarifies persistence and multi-DB behavior, improves testability, and prevents “where does this info live?” rework.",
+      "priority": "high"
+    },
+    {
+      "category": "simplification",
+      "title": "Prefer SQLite-native ALTER TABLE where available; reserve rebuild for true gaps",
+      "description": "Rebuilds are powerful but brittle (dependency rewriting, triggers/views, edge cases). SQLite already supports several operations with correct dependency propagation.",
+      "recommendation": "Amend v1 approach: use ALTER TABLE RENAME COLUMN / DROP COLUMN when supported by the embedded SQLite version; use rebuild only for FK edits and operations SQLite cannot do safely. Document the decision boundary.",
+      "rationale": "Reduces the most complex, bug-prone surface area while still meeting v1 goals.",
+      "priority": "high"
+    },
+    {
+      "category": "enhancement",
+      "title": "Introduce a “Read-only session” toggle (global safety switch)",
+      "description": "Power users sometimes want guaranteed non-destructive inspection, especially when opening unknown DB files.",
+      "recommendation": "Add a read-only toggle per DB session that blocks all write entry points (grid edits, designer apply, ERD edits, imports, SQL DML/DDL). Show a persistent banner when enabled.",
+      "rationale": "Prevents accidental mutations and reduces anxiety; also a nice workaround for some multi-tab read-only scenarios.",
+      "priority": "medium"
+    },
+    {
+      "category": "improvement",
+      "title": "Make unsupported features discoverable with explicit messaging (not just hidden UI)",
+      "description": "You already hide unsupported query-builder features; similar messaging helps in other places (composite FKs read-only, BLOB import unsupported, SQLCipher unsupported).",
+      "recommendation": "Add a consistent “Why can’t I do X?” tooltip/link pattern that explains v1 limitations at the point of interaction, with a short roadmap hint if appropriate.",
+      "rationale": "Reduces user confusion and support burden without increasing scope.",
+      "priority": "medium"
+    },
+    {
+      "category": "best-practice",
+      "title": "Define a single shared “DDL diff preview” component and contract",
+      "description": "Both table designer and ERD require identical DDL diff previews; duplicated implementations tend to diverge and break parity.",
+      "recommendation": "Specify a shared diff format (before/after SQL, object list, dependency warnings) and make both flows consume it. Add a couple of snapshot tests for the diff output.",
+      "rationale": "Improves consistency, reduces rework, and makes rebuild/FK changes safer to ship.",
+      "priority": "medium"
+    },
+    {
+      "category": "enhancement",
+      "title": "Add a lightweight “integrity check” tool in Settings",
+      "description": "Users will open arbitrary DBs (possibly corrupted). A quick health check builds trust and helps debugging.",
+      "recommendation": "Add a Settings action that runs `PRAGMA quick_check` (or `integrity_check` with a row limit) and shows results in a modal, with copy-to-clipboard.",
+      "rationale": "Improves trust and provides a first-line diagnostic without adding backend support.",
+      "priority": "low"
+    }
+  ],
+  "strengths": [
+    "User stories are unusually implementation-friendly: clear acceptance criteria plus concrete E2E IDs across core flows (load/import/persist/design/ERD/query/grid).",
+    "Scope boundaries are explicit and repeated where it matters (non-goals, v1 query-builder scope, composite FK read-only behavior, SQLCipher out of scope).",
+    "Persistence design is thoughtfully split by capability (OPFS VFS direct durability vs IndexedDB snapshot fallback) and includes quota handling + multi-tab policy.",
+    "Performance targets are measurable and tied to fixtures and CI automation (fixture generator, Playwright perf suite, Lighthouse CI).",
+    "Security model covers the most likely client-only attack vectors (escaping, no dangerouslySetInnerHTML, CSP, parameterized queries, worker isolation) with an explicit E2E security test."
+  ],
+  "overallAssessment": {
+    "readyForImplementation": true,
+    "confidenceScore": 8,
+    "summary": "This PRD is strong and mostly testable as-is; resolve the two major ambiguities (multi-DB sidebar behavior and rebuild dependency validity) and the implementation should proceed with low rework risk."
+  }
+}
+```
