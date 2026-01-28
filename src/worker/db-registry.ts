@@ -91,6 +91,7 @@ export interface StorageAdapter {
   listFiles: (mode: StorageMode) => Promise<string[]>;
   renameFile?: (mode: StorageMode, oldName: string, newName: string) => Promise<void>;
   fileExists?: (mode: StorageMode, name: string) => Promise<boolean>;
+  deleteFile?: (mode: StorageMode, name: string) => Promise<void>;
 }
 
 // =============================================================================
@@ -131,6 +132,24 @@ export interface RenameResult {
     code: RenameErrorCode;
     message: string;
   };
+}
+
+/**
+ * Error codes for delete operations
+ */
+export type DeleteErrorCode = 'NOT_FOUND' | 'DELETE_FAILED';
+
+/**
+ * Result of a delete operation
+ */
+export interface DeleteResult {
+  success: boolean;
+  error?: {
+    code: DeleteErrorCode;
+    message: string;
+  };
+  /** Warnings for partial failures (e.g., file deletion failed but registry updated) */
+  warnings?: string[];
 }
 
 /**
@@ -404,6 +423,36 @@ async function renameOpfsSidecar(oldBasename: string, newBasename: string): Prom
   }
 }
 
+/**
+ * Delete a database file from OPFS
+ */
+async function deleteOpfsFile(filename: string): Promise<void> {
+  const dir = await getOpfsRoot();
+  try {
+    await dir.removeEntry(filename);
+  } catch (err) {
+    // If file doesn't exist, that's okay
+    if (err instanceof DOMException && err.name === 'NotFoundError') {
+      return;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Delete the .erd.json sidecar file in OPFS (if it exists)
+ */
+async function deleteOpfsSidecar(basename: string): Promise<void> {
+  const dir = await getOpfsRoot();
+  const sidecar = `${basename}.erd.json`;
+
+  try {
+    await dir.removeEntry(sidecar);
+  } catch {
+    // Sidecar doesn't exist, that's fine
+  }
+}
+
 // =============================================================================
 // IndexedDB Operations
 // =============================================================================
@@ -585,6 +634,43 @@ async function renameIdbDatabase(oldName: string, newName: string): Promise<void
   }
 }
 
+/**
+ * Delete a database from IDB
+ */
+async function deleteIdbDatabase(name: string): Promise<void> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('idb-sqlite', 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = (event) => {
+      const database = (event.target as IDBOpenDBRequest).result;
+      if (!database.objectStoreNames.contains('databases')) {
+        database.createObjectStore('databases', { keyPath: 'name' });
+      }
+    };
+  });
+
+  try {
+    const tx = db.transaction('databases', 'readwrite');
+    const store = tx.objectStore('databases');
+
+    await new Promise<void>((resolve, reject) => {
+      const request = store.delete(name);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+
+    // Wait for transaction to complete
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
 // =============================================================================
 // Default Storage Adapter
 // =============================================================================
@@ -627,6 +713,17 @@ const defaultStorageAdapter: StorageAdapter = {
       return opfsFileExists(toFilename(name));
     } else {
       return idbDatabaseExists(name);
+    }
+  },
+  deleteFile: async (mode, name) => {
+    if (mode === 'opfs') {
+      // For OPFS, delete the .sqlite file and sidecar
+      const filename = toFilename(name);
+      await deleteOpfsFile(filename);
+      // Also delete the sidecar
+      await deleteOpfsSidecar(filename.replace(/\.sqlite$/, ''));
+    } else {
+      await deleteIdbDatabase(name);
     }
   },
 };
@@ -839,6 +936,68 @@ export class DatabaseRegistry {
   }
 
   /**
+   * Delete a database completely
+   *
+   * This operation:
+   * 1. Removes the entry from the registry
+   * 2. Deletes the .erd.json sidecar file (if exists)
+   * 3. Deletes the database file from OPFS/IDB
+   *
+   * Note: The caller is responsible for:
+   * - Closing the database connection first if open
+   * - Releasing any Web Locks held for this database
+   * - Clearing pending write operations
+   * - Deleting query history (qh:<db> key)
+   *
+   * @param name Database name to delete
+   * @returns Result with success/error
+   */
+  async deleteDatabase(name: string): Promise<DeleteResult> {
+    // Step 1: Find the entry by name
+    const entry = this.data.databases.find((e) => e.name === name);
+    if (!entry) {
+      return {
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: `Database "${name}" not found in registry`,
+        },
+      };
+    }
+
+    const errors: string[] = [];
+
+    // Step 2: Remove from registry first (so it doesn't show up even if file deletion fails)
+    const index = this.data.databases.findIndex((e) => e.name === name);
+    if (index !== -1) {
+      this.data.databases.splice(index, 1);
+      await this.save();
+    }
+
+    // Step 3: Delete the file and sidecar via adapter
+    if (this.adapter.deleteFile) {
+      try {
+        await this.adapter.deleteFile(this.storageMode, name);
+      } catch (err) {
+        // Log but don't fail - registry entry is already removed
+        const message = err instanceof Error ? err.message : String(err);
+        errors.push(`File deletion failed: ${message}`);
+        console.warn(`[DatabaseRegistry] Failed to delete file for "${name}":`, err);
+      }
+    }
+
+    // If there were errors, mark as partially failed (for potential self-healing)
+    if (errors.length > 0) {
+      return {
+        success: true, // Registry updated, so technically succeeded
+        warnings: errors,
+      };
+    }
+
+    return { success: true };
+  }
+
+  /**
    * Get a database entry by ID
    *
    * @param id Database ID
@@ -1041,10 +1200,13 @@ export const _testing = {
   opfsFileExists,
   renameOpfsFile,
   renameOpfsSidecar,
+  deleteOpfsFile,
+  deleteOpfsSidecar,
   readIdbRegistry,
   writeIdbRegistry,
   listIdbDatabases,
   idbDatabaseExists,
   renameIdbDatabase,
+  deleteIdbDatabase,
   defaultStorageAdapter,
 };

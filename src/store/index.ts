@@ -20,6 +20,7 @@ import type {
 } from '../types';
 import { getWorkerClient, type WorkerClient } from '../lib/worker-client';
 import { getLockManager, type WebLockManager } from '../worker/web-locks';
+import { migrateHistory, deleteHistory } from '../lib/history';
 
 // =============================================================================
 // Store State Types
@@ -371,7 +372,8 @@ export async function createDb(name: string): Promise<void> {
  *
  * 1. Closes the database if it's currently active
  * 2. Deletes the database storage via the worker
- * 3. Removes from the registry
+ * 3. Removes query history for the database
+ * 4. Removes from the registry
  *
  * @param id Database ID to delete
  */
@@ -383,8 +385,11 @@ export async function deleteDb(id: string): Promise<void> {
     await closeDb();
   }
 
-  // Delete via worker (handles storage deletion)
+  // Delete via worker (handles storage deletion: DB file, sidecar, registry entry)
   await _deps.workerClient.deleteDb(id);
+
+  // Delete query history for this database (qh:<db> key in localStorage)
+  deleteHistory(id);
 
   // Remove from local registry state
   const updatedDatabases = store.databases.filter((db) => db.name !== id);
@@ -394,7 +399,8 @@ export async function deleteDb(id: string): Promise<void> {
 /**
  * Rename a database
  *
- * Updates the database name in storage and registry.
+ * Updates the database name in storage and registry,
+ * and migrates query history to the new name.
  *
  * @param id Current database ID/name
  * @param newName New name for the database
@@ -405,15 +411,19 @@ export async function renameDb(id: string, newName: string): Promise<void> {
   // Rename via worker (handles storage rename)
   await _deps.workerClient.renameDb(id, newName);
 
+  // Migrate query history from old name to new name
+  migrateHistory(id, newName);
+
   // Update local registry state
   const updatedDatabases = store.databases.map((db) =>
     db.name === id ? { ...db, name: newName } : db
   );
   store.setDatabases(updatedDatabases);
 
-  // If this was the active database, update activeDbId
+  // If this was the active database, update activeDbId without resetting schema
   if (store.activeDbId === id) {
-    store.setActiveDb(newName);
+    // Use direct set to preserve schema (setActiveDb resets schema to null)
+    useDatabaseStore.setState({ activeDbId: newName });
   }
 }
 

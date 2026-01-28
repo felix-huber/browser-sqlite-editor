@@ -828,6 +828,23 @@ describe('Database Actions', () => {
       expect(state.databases).toHaveLength(0);
       expect(state.activeDbId).toBeNull();
     });
+
+    it('should delete query history when deleting database', async () => {
+      // Set up initial state with databases
+      useDatabaseStore.getState().setDatabases([mockDatabase1]);
+
+      // Add some query history for the database
+      localStorage.setItem('qh:test-db-1', JSON.stringify([
+        { sql: 'SELECT 1', executedAt: '2026-01-28T00:00:00.000Z' },
+      ]));
+
+      mockWorkerClient.deleteDb.mockResolvedValue(undefined);
+
+      await deleteDb('test-db-1');
+
+      // Query history should be deleted
+      expect(localStorage.getItem('qh:test-db-1')).toBeNull();
+    });
   });
 
   describe('renameDb', () => {
@@ -858,6 +875,26 @@ describe('Database Actions', () => {
 
       const state = getState();
       expect(state.activeDbId).toBe('renamed-db');
+    });
+
+    it('should migrate query history when renaming', async () => {
+      // Set up initial state
+      useDatabaseStore.getState().setDatabases([mockDatabase1]);
+
+      // Add some history to the old name
+      localStorage.setItem('qh:test-db-1', JSON.stringify([{ sql: 'SELECT 1', executedAt: '2026-01-28T00:00:00.000Z' }]));
+
+      mockWorkerClient.renameDb.mockResolvedValue(undefined);
+
+      await renameDb('test-db-1', 'renamed-db');
+
+      // Old history should be gone
+      expect(localStorage.getItem('qh:test-db-1')).toBeNull();
+
+      // New history should exist
+      const newHistory = localStorage.getItem('qh:renamed-db');
+      expect(newHistory).not.toBeNull();
+      expect(JSON.parse(newHistory!)).toEqual([{ sql: 'SELECT 1', executedAt: '2026-01-28T00:00:00.000Z' }]);
     });
   });
 

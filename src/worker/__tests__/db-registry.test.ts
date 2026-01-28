@@ -35,6 +35,8 @@ interface MockStorageState {
   existingFiles: Set<string>;
   renamedFiles: Map<string, string>;
   throwOnRename: boolean;
+  deletedFiles: Set<string>;
+  throwOnDelete: boolean;
 }
 
 function createMockAdapter(state: MockStorageState): StorageAdapter {
@@ -64,6 +66,17 @@ function createMockAdapter(state: MockStorageState): StorageAdapter {
     fileExists: vi.fn(async (_mode, name: string) => {
       return state.existingFiles.has(name);
     }),
+    deleteFile: vi.fn(async (_mode, name: string) => {
+      if (state.throwOnDelete) {
+        throw new Error('Simulated delete failure');
+      }
+      state.deletedFiles.add(name);
+      // Remove from fileList
+      const idx = state.fileList.indexOf(name);
+      if (idx !== -1) {
+        state.fileList.splice(idx, 1);
+      }
+    }),
   };
 }
 
@@ -82,6 +95,8 @@ beforeEach(() => {
     existingFiles: new Set(),
     renamedFiles: new Map(),
     throwOnRename: false,
+    deletedFiles: new Set(),
+    throwOnDelete: false,
   };
   resetRegistry();
 });
@@ -957,5 +972,124 @@ describe('Rename Constants', () => {
     expect(_testing.WINDOWS_RESERVED_NAMES).toContain('nul');
     expect(_testing.WINDOWS_RESERVED_NAMES).toContain('com1');
     expect(_testing.WINDOWS_RESERVED_NAMES).toContain('lpt1');
+  });
+});
+
+// =============================================================================
+// Delete Database Tests
+// =============================================================================
+
+describe('DatabaseRegistry - deleteDatabase', () => {
+  describe('successful deletion', () => {
+    it('should delete a closed database: all artifacts removed', async () => {
+      // Start with empty fileList, registry will auto-add to fileList when registering
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      // Register a database (this won't create a file in our mock, but that's ok)
+      await registry.registerDatabase('mydb', 'idb');
+      expect(registry.count()).toBe(1);
+
+      // Delete it
+      const result = await registry.deleteDatabase('mydb');
+
+      expect(result.success).toBe(true);
+      expect(result.warnings).toBeUndefined();
+      expect(registry.count()).toBe(0);
+      expect(registry.getDatabaseByName('mydb')).toBeNull();
+      expect(mockState.deletedFiles.has('mydb')).toBe(true);
+    });
+
+    it('should succeed when sidecar is missing (sidecar optional)', async () => {
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      await registry.registerDatabase('testdb', 'idb');
+
+      // Delete - should succeed even without sidecar
+      const result = await registry.deleteDatabase('testdb');
+
+      expect(result.success).toBe(true);
+      expect(registry.count()).toBe(0);
+    });
+
+    it('should remove registry entry before attempting file deletion', async () => {
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      await registry.registerDatabase('test', 'idb');
+
+      // Delete
+      await registry.deleteDatabase('test');
+
+      // Registry should be empty
+      expect(registry.count()).toBe(0);
+      // Registry data should be updated
+      expect(mockState.registryData?.databases).toHaveLength(0);
+    });
+  });
+
+  describe('error handling', () => {
+    it('should return NOT_FOUND for unknown database name', async () => {
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const result = await registry.deleteDatabase('nonexistent');
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('NOT_FOUND');
+      expect(result.error?.message).toContain('nonexistent');
+    });
+
+    it('should continue with registry update even if file deletion fails', async () => {
+      mockState.throwOnDelete = true;
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      await registry.registerDatabase('faildb', 'idb');
+      expect(registry.count()).toBe(1);
+
+      // Delete - file deletion will fail
+      const result = await registry.deleteDatabase('faildb');
+
+      // Should still succeed (registry updated) but with warnings
+      expect(result.success).toBe(true);
+      expect(result.warnings).toBeDefined();
+      expect(result.warnings?.length).toBeGreaterThan(0);
+      expect(result.warnings?.[0]).toContain('File deletion failed');
+
+      // Registry should be updated even though file deletion failed
+      expect(registry.count()).toBe(0);
+    });
+  });
+
+  describe('multiple databases', () => {
+    it('should only delete the specified database', async () => {
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      await registry.registerDatabase('db1', 'idb');
+      await registry.registerDatabase('db2', 'idb');
+      await registry.registerDatabase('db3', 'idb');
+      expect(registry.count()).toBe(3);
+
+      // Delete only db2
+      const result = await registry.deleteDatabase('db2');
+
+      expect(result.success).toBe(true);
+      expect(registry.count()).toBe(2);
+      expect(registry.getDatabaseByName('db1')).not.toBeNull();
+      expect(registry.getDatabaseByName('db2')).toBeNull();
+      expect(registry.getDatabaseByName('db3')).not.toBeNull();
+      expect(mockState.deletedFiles.has('db2')).toBe(true);
+      expect(mockState.deletedFiles.has('db1')).toBe(false);
+      expect(mockState.deletedFiles.has('db3')).toBe(false);
+    });
   });
 });
