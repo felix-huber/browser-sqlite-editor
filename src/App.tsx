@@ -1,9 +1,15 @@
+import { AppShell } from './components/layout/AppShell'
+
 function App() {
   return (
-    <div className="min-h-screen bg-navy-900 p-8">
-      <h1 className="text-3xl font-bold text-amber-400">SQLite Editor</h1>
-      <p className="mt-4 text-navy-100">Custom colors and Inter font configured.</p>
-    </div>
+    <AppShell>
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-semibold text-navy-800">Welcome to SQLite Editor</h1>
+          <p className="mt-2 text-navy-500">Open or create a database to get started.</p>
+        </div>
+      </div>
+    </AppShell>
   )
 }
 
