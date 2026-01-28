@@ -10,6 +10,10 @@ import SQLiteESMFactory from '@journeyapps/wa-sqlite/dist/wa-sqlite-async.mjs';
 import { IDBBatchAtomicVFS } from '@journeyapps/wa-sqlite/src/examples/IDBBatchAtomicVFS.js';
 
 import type { QueryResult, QueryRow, WorkerErrorCode } from '../types';
+import {
+  progressHandlerCallback,
+  isInterruptError,
+} from '../worker/query-cancel';
 
 // =============================================================================
 // Types
@@ -46,6 +50,11 @@ type EngineState = 'uninitialized' | 'initializing' | 'ready' | 'error';
  * Map SQLite error codes to WorkerErrorCode
  */
 function mapSQLiteErrorCode(sqliteCode: number): WorkerErrorCode {
+  // Check for interrupt/cancellation first
+  if (isInterruptError(sqliteCode)) {
+    return 'CANCELED';
+  }
+
   // Primary error codes from sqlite-constants.js
   switch (sqliteCode) {
     case SQLite.SQLITE_CONSTRAINT:
@@ -90,7 +99,10 @@ function normalizeError(err: unknown, sql?: string): SQLiteError {
     const msg = err.message.toLowerCase();
     let code: WorkerErrorCode = 'UNKNOWN';
 
-    if (msg.includes('syntax') || msg.includes('near')) {
+    // Check for interrupt/canceled first
+    if (msg.includes('interrupt') || msg.includes('canceled') || msg.includes('cancelled')) {
+      code = 'CANCELED';
+    } else if (msg.includes('syntax') || msg.includes('near')) {
       code = 'SYNTAX_ERROR';
     } else if (msg.includes('constraint') || msg.includes('unique') || msg.includes('foreign key')) {
       code = 'CONSTRAINT_VIOLATION';
@@ -221,6 +233,10 @@ export class DatabaseEngine {
         SQLite.SQLITE_OPEN_CREATE | SQLite.SQLITE_OPEN_READWRITE,
       );
       this.dbName = name;
+
+      // Set up progress handler for cancellation support
+      // Check every 1000 VM instructions for cancel requests
+      this.sqlite3.progress_handler(this.db, 1000, progressHandlerCallback, null);
     } catch (err) {
       const normalized = normalizeError(err);
       throw new Error(`Failed to open database '${name}': ${normalized.message}`);

@@ -14,6 +14,7 @@
  */
 
 import type { ForeignKeyInfo, ForeignKeyAction } from '../types/index'
+import type { DatabaseEngine } from './db-engine'
 
 // =============================================================================
 // Types
@@ -643,4 +644,330 @@ function quoteIdentifier(identifier: string): string {
   }
   const escaped = identifier.replace(/"/g, '""')
   return `"${escaped}"`
+}
+
+// =============================================================================
+// Rebuild Execution
+// =============================================================================
+
+/**
+ * Result of a rebuild execution.
+ */
+export interface RebuildExecutionResult {
+  /** Whether the rebuild succeeded */
+  success: boolean
+  /** Row count before rebuild (for verification) */
+  rowCountBefore: number
+  /** Row count after rebuild (for verification) */
+  rowCountAfter: number
+  /** Operations that were executed */
+  executedOperations: RebuildOperationType[]
+  /** Error message if failed */
+  error?: string
+}
+
+/**
+ * Executes a rebuild plan transactionally.
+ *
+ * The execution follows these steps:
+ * 1. Disable foreign key enforcement
+ * 2. Begin transaction
+ * 3. Create temp table with new schema
+ * 4. Copy data from original table
+ * 5. Drop original table
+ * 6. Rename temp table to original name
+ * 7. Recreate indexes
+ * 8. Recreate triggers
+ * 9. Run FK check
+ * 10. Commit (or rollback on any failure)
+ * 11. Re-enable foreign keys
+ *
+ * @param engine Database engine to execute on
+ * @param plan Rebuild plan to execute
+ * @returns Execution result with success status and row counts
+ */
+export async function executeRebuildPlan(
+  engine: DatabaseEngine,
+  plan: RebuildPlan
+): Promise<RebuildExecutionResult> {
+  const executedOperations: RebuildOperationType[] = []
+  let rowCountBefore = 0
+  let rowCountAfter = 0
+  let inTransaction = false
+  let fkWasEnabled = false
+
+  try {
+    // Get row count before rebuild for verification
+    const countResult = await engine.query(
+      `SELECT COUNT(*) as cnt FROM ${quoteIdentifier(plan.tableName)}`
+    )
+    rowCountBefore = countResult.rows[0]?.[0] as number ?? 0
+
+    // Check current FK state
+    const fkResult = await engine.query('PRAGMA foreign_keys')
+    fkWasEnabled = (fkResult.rows[0]?.[0] as number) === 1
+
+    // Execute each operation
+    for (const op of plan.operations) {
+      if (op.sql) {
+        // Handle special operations
+        if (op.type === 'begin_transaction') {
+          await engine.exec(op.sql)
+          inTransaction = true
+          executedOperations.push(op.type)
+        } else if (op.type === 'commit_transaction') {
+          await engine.exec(op.sql)
+          inTransaction = false
+          executedOperations.push(op.type)
+        } else if (op.type === 'fk_check') {
+          // FK check returns rows if there are violations
+          const violations = await engine.query(op.sql)
+          if (violations.rows.length > 0) {
+            throw new Error(
+              `Foreign key violations detected: ${violations.rows.length} violation(s)`
+            )
+          }
+          executedOperations.push(op.type)
+        } else {
+          // Regular SQL execution
+          await engine.exec(op.sql)
+          executedOperations.push(op.type)
+        }
+      }
+    }
+
+    // Get row count after rebuild for verification
+    const countAfterResult = await engine.query(
+      `SELECT COUNT(*) as cnt FROM ${quoteIdentifier(plan.tableName)}`
+    )
+    rowCountAfter = countAfterResult.rows[0]?.[0] as number ?? 0
+
+    return {
+      success: true,
+      rowCountBefore,
+      rowCountAfter,
+      executedOperations,
+    }
+  } catch (err) {
+    // Rollback if in transaction
+    if (inTransaction) {
+      try {
+        await engine.exec('ROLLBACK')
+      } catch {
+        // Ignore rollback errors - original error is more important
+      }
+    }
+
+    // Re-enable foreign keys if they were enabled before
+    if (fkWasEnabled) {
+      try {
+        await engine.exec('PRAGMA foreign_keys = ON')
+      } catch {
+        // Ignore - best effort
+      }
+    }
+
+    const message = err instanceof Error ? err.message : String(err)
+    return {
+      success: false,
+      rowCountBefore,
+      rowCountAfter,
+      executedOperations,
+      error: message,
+    }
+  }
+}
+
+/**
+ * Generates SQL to copy data between tables with column transformations.
+ *
+ * This handles:
+ * - Column renames (via mapping)
+ * - Removed columns (excluded from copy)
+ * - Added columns (receive NULL or DEFAULT)
+ * - Type coercion (handled by SQLite automatically)
+ *
+ * @param fromTable Source table
+ * @param toTable Destination table (temp table with new schema)
+ * @param sourceColumns Columns in the source table
+ * @param targetColumns Columns in the target table (new schema)
+ * @param columnRenames Map from old column name to new column name
+ * @returns INSERT ... SELECT SQL
+ */
+export function generateColumnMappedCopyDataSql(
+  fromTable: string,
+  toTable: string,
+  sourceColumns: string[],
+  targetColumns: string[],
+  columnRenames?: Map<string, string>
+): string {
+  // Build mapping: for each target column, find the source column
+  const selectExprs: string[] = []
+  const targetColNames: string[] = []
+
+  // Create reverse mapping: newName -> oldName
+  const reverseRenames = new Map<string, string>()
+  if (columnRenames) {
+    for (const [oldName, newName] of columnRenames) {
+      reverseRenames.set(newName.toLowerCase(), oldName)
+    }
+  }
+
+  for (const targetCol of targetColumns) {
+    const targetLower = targetCol.toLowerCase()
+
+    // Check if this is a renamed column
+    const sourceColName = reverseRenames.get(targetLower)
+    if (sourceColName) {
+      // Column was renamed: SELECT old_name as new_name
+      selectExprs.push(quoteIdentifier(sourceColName))
+      targetColNames.push(quoteIdentifier(targetCol))
+    } else if (sourceColumns.some((s) => s.toLowerCase() === targetLower)) {
+      // Column exists with same name in source
+      selectExprs.push(quoteIdentifier(targetCol))
+      targetColNames.push(quoteIdentifier(targetCol))
+    }
+    // Else: new column, will get NULL/DEFAULT - don't include in INSERT
+  }
+
+  if (selectExprs.length === 0) {
+    // No columns to copy - just create empty table
+    return `INSERT INTO ${quoteIdentifier(toTable)} SELECT * FROM ${quoteIdentifier(fromTable)} WHERE 0`
+  }
+
+  return `INSERT INTO ${quoteIdentifier(toTable)} (${targetColNames.join(', ')}) SELECT ${selectExprs.join(', ')} FROM ${quoteIdentifier(fromTable)}`
+}
+
+/**
+ * Creates a rebuild plan with explicit column mapping for schema changes.
+ *
+ * Use this when you know exactly which columns are being:
+ * - Renamed (provide in columnRenames map)
+ * - Added (in newColumns but not in oldColumns)
+ * - Removed (in oldColumns but not in newColumns)
+ *
+ * @param tableName Table to rebuild
+ * @param newCreateTableSql New CREATE TABLE SQL
+ * @param dependents Dependent objects
+ * @param oldColumns Columns in current schema
+ * @param newColumns Columns in new schema
+ * @param columnRenames Map from old column name to new column name
+ * @returns Rebuild plan with correct column mapping
+ */
+export function generateRebuildPlanWithColumnMapping(
+  tableName: string,
+  newCreateTableSql: string,
+  dependents: TableDependents,
+  oldColumns: string[],
+  newColumns: string[],
+  columnRenames?: Map<string, string>
+): RebuildPlan {
+  const operations: RebuildOperation[] = []
+  const tempTableName = `_${tableName}_rebuild_temp`
+
+  // Step 1: Disable foreign key enforcement
+  operations.push({
+    type: 'disable_fk',
+    sql: 'PRAGMA foreign_keys = OFF',
+    description: 'Disable foreign key enforcement',
+  })
+
+  // Step 2: Begin transaction
+  operations.push({
+    type: 'begin_transaction',
+    sql: 'BEGIN TRANSACTION',
+    description: 'Start rebuild transaction',
+  })
+
+  // Step 3: Create temp table with new schema
+  const tempCreateSql = replaceTableNameInCreate(
+    newCreateTableSql,
+    tableName,
+    tempTableName
+  )
+  operations.push({
+    type: 'create_temp_table',
+    sql: tempCreateSql,
+    description: `Create temporary table "${tempTableName}"`,
+    objectName: tempTableName,
+  })
+
+  // Step 4: Copy data with column mapping
+  const copyDataSql = generateColumnMappedCopyDataSql(
+    tableName,
+    tempTableName,
+    oldColumns,
+    newColumns,
+    columnRenames
+  )
+  operations.push({
+    type: 'copy_data',
+    sql: copyDataSql,
+    description: `Copy data from "${tableName}" to "${tempTableName}"`,
+  })
+
+  // Step 5: Drop original table
+  operations.push({
+    type: 'drop_original',
+    sql: `DROP TABLE ${quoteIdentifier(tableName)}`,
+    description: `Drop original table "${tableName}"`,
+    objectName: tableName,
+  })
+
+  // Step 6: Rename temp table to original name
+  operations.push({
+    type: 'rename_temp',
+    sql: `ALTER TABLE ${quoteIdentifier(tempTableName)} RENAME TO ${quoteIdentifier(tableName)}`,
+    description: `Rename "${tempTableName}" to "${tableName}"`,
+  })
+
+  // Step 7: Recreate user-created indexes (skip auto-indexes)
+  for (const index of dependents.indexes) {
+    if (!index.isAutoIndex && index.sql) {
+      operations.push({
+        type: 'recreate_index',
+        sql: index.sql,
+        description: `Recreate index "${index.name}"`,
+        objectName: index.name,
+      })
+    }
+  }
+
+  // Step 8: Recreate triggers
+  for (const trigger of dependents.triggers) {
+    operations.push({
+      type: 'recreate_trigger',
+      sql: trigger.sql,
+      description: `Recreate trigger "${trigger.name}"`,
+      objectName: trigger.name,
+    })
+  }
+
+  // Step 9: Run FK check
+  operations.push({
+    type: 'fk_check',
+    sql: `PRAGMA foreign_key_check(${quoteIdentifier(tableName)})`,
+    description: 'Verify foreign key integrity',
+  })
+
+  // Step 10: Commit transaction
+  operations.push({
+    type: 'commit_transaction',
+    sql: 'COMMIT',
+    description: 'Commit rebuild transaction',
+  })
+
+  // Step 11: Re-enable foreign keys
+  operations.push({
+    type: 'enable_fk',
+    sql: 'PRAGMA foreign_keys = ON',
+    description: 'Re-enable foreign key enforcement',
+  })
+
+  return {
+    tableName,
+    operations,
+    dependents,
+    affectsOtherTables: dependents.incomingForeignKeys.length > 0,
+  }
 }

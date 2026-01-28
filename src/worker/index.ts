@@ -8,6 +8,7 @@
 import type { WorkerRequest, WorkerResponse } from '../types';
 import { getEngine } from '../lib/db-engine';
 import { getSchemaInfo, getTableInfo, getAllForeignKeys } from '../lib/schema';
+import { requestCancellation } from './query-cancel';
 
 /**
  * Type-safe message event for worker requests
@@ -83,6 +84,22 @@ async function handleMessage(event: WorkerMessageEvent): Promise<void> {
         postResponse({
           type: 'error',
           message: `Failed to query foreign keys: ${message}`,
+          code: 'UNKNOWN',
+        });
+      }
+      break;
+
+    case 'cancel':
+      try {
+        // Request cancellation - the requestId is extracted from the tagged request
+        // in the handleMessage caller if present
+        await requestCancellation();
+        postResponse({ type: 'success' });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'error',
+          message: `Failed to cancel: ${message}`,
           code: 'UNKNOWN',
         });
       }

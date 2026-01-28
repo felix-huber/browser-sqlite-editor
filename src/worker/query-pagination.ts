@@ -219,16 +219,39 @@ async function extractGeneratedExpression(
   const createSql = result.rows[0][0] as string;
 
   // Parse the generated expression from CREATE TABLE
-  // Look for: column_name type GENERATED ALWAYS AS (expression) [STORED|VIRTUAL]
-  // or: column_name type AS (expression) [STORED|VIRTUAL]
+  // Look for: column_name type [GENERATED ALWAYS] AS (expression) [STORED|VIRTUAL]
   const escapedName = columnName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const regex = new RegExp(
-    `["']?${escapedName}["']?\\s+\\w+[^,]*?(?:GENERATED\\s+ALWAYS\\s+)?AS\\s*\\(([^)]+)\\)`,
+    `["']?${escapedName}["']?\\s+\\w+[^,]*?(?:GENERATED\\s+ALWAYS\\s+)?AS\\s*\\(`,
     'i',
   );
   const match = createSql.match(regex);
 
-  return match ? match[1].trim() : null;
+  if (!match) {
+    return null;
+  }
+
+  // Find the matching closing parenthesis, handling nested parens
+  const startIdx = match.index! + match[0].length;
+  let depth = 1;
+  let endIdx = startIdx;
+
+  for (let i = startIdx; i < createSql.length && depth > 0; i++) {
+    if (createSql[i] === '(') {
+      depth++;
+    } else if (createSql[i] === ')') {
+      depth--;
+    }
+    if (depth === 0) {
+      endIdx = i;
+    }
+  }
+
+  if (depth !== 0) {
+    return null; // Unbalanced parentheses
+  }
+
+  return createSql.slice(startIdx, endIdx).trim();
 }
 
 // =============================================================================

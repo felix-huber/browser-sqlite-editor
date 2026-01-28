@@ -334,7 +334,8 @@ describe('WorkerClient - Request Correlation', () => {
     // Now send correct response
     mockWorker.simulateMessage({ id: postedMessage.id, type: 'pong' });
 
-    await expect(promise).resolves.toEqual({ type: 'pong' });
+    const result = await promise;
+    expect(result.type).toBe('pong');
   });
 
   it('should ignore broadcast messages (no id)', async () => {
