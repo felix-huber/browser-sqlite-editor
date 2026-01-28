@@ -18,6 +18,8 @@ import {
   type StorageError,
 } from './quota-errors';
 import { getIDBStorage } from './idb-storage';
+import { importDatabase } from './file-import';
+import { getRegistry } from './db-registry';
 
 /**
  * Type-safe message event for worker requests
@@ -187,6 +189,52 @@ async function handleMessage(event: WorkerMessageEvent): Promise<void> {
             message: `Unexpected error during flushAndClose: ${message}`,
             attempts: 0,
           },
+        });
+      }
+      break;
+
+    case 'import':
+      try {
+        // Initialize registry if needed
+        const registry = getRegistry();
+        if (!registry.isInitialized()) {
+          await registry.init();
+        }
+
+        const storageMode = registry.getStorageMode();
+
+        // Import with progress reporting
+        const importResult = await importDatabase(request.file, {
+          nameHint: request.nameHint,
+          storageMode,
+          onProgress: (percent) => {
+            postResponse({ type: 'progress', percent, message: 'Importing database...' });
+          },
+        });
+
+        if (importResult.success) {
+          postResponse({
+            type: 'success',
+            data: {
+              dbId: importResult.dbId,
+              dbName: importResult.dbName,
+              storageType: importResult.storageType,
+              fileSize: importResult.fileSize,
+            },
+          });
+        } else {
+          postResponse({
+            type: 'error',
+            message: importResult.message,
+            code: importResult.code,
+          });
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'error',
+          message: `Import failed: ${message}`,
+          code: 'UNKNOWN',
         });
       }
       break;
