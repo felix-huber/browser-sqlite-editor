@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { Welcome, type WelcomeProps } from '../Welcome';
 import type { DatabaseEntry } from '../../../types';
 
@@ -189,6 +189,20 @@ describe('Welcome', () => {
   });
 
   describe('Drop zone', () => {
+    // Helper to create SQLite file with valid magic header
+    function createSqliteFile(name: string = 'test.sqlite'): File {
+      const header = new Uint8Array([
+        0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, 0x6f, 0x72, 0x6d, 0x61,
+        0x74, 0x20, 0x33, 0x00,
+      ]);
+      const content = new Uint8Array(100);
+      content.set(header, 0);
+      const blob = new Blob([content.buffer as ArrayBuffer], {
+        type: 'application/x-sqlite3',
+      });
+      return new File([blob], name, { type: 'application/x-sqlite3' });
+    }
+
     it('shows drag-over state when file is dragged over', () => {
       render(<Welcome {...defaultProps} />);
 
@@ -200,7 +214,7 @@ describe('Welcome', () => {
 
       expect(dropZone).toHaveClass('border-navy-600');
       expect(dropZone).toHaveClass('bg-navy-50');
-      expect(screen.getByText('Drop to import')).toBeInTheDocument();
+      expect(screen.getByText('Drop file here')).toBeInTheDocument();
     });
 
     it('resets drag-over state when drag leaves', () => {
@@ -219,14 +233,12 @@ describe('Welcome', () => {
       expect(screen.getByText('Drop a .sqlite file here')).toBeInTheDocument();
     });
 
-    it('accepts valid file types on drop', () => {
-      const onImportFiles = vi.fn();
-      render(<Welcome {...defaultProps} onImportFiles={onImportFiles} />);
+    it('accepts valid SQLite file types on drop', async () => {
+      const onSqliteImport = vi.fn();
+      render(<Welcome {...defaultProps} onSqliteImport={onSqliteImport} />);
 
       const dropZone = screen.getByTestId('drop-zone');
-      const file = new File(['test'], 'test.sqlite', {
-        type: 'application/x-sqlite3',
-      });
+      const file = createSqliteFile('test.sqlite');
 
       fireEvent.drop(dropZone, {
         dataTransfer: {
@@ -235,15 +247,17 @@ describe('Welcome', () => {
         },
       });
 
-      expect(onImportFiles).toHaveBeenCalledWith([file]);
+      await waitFor(() => {
+        expect(onSqliteImport).toHaveBeenCalledWith(file);
+      });
     });
 
-    it('accepts .db files', () => {
-      const onImportFiles = vi.fn();
-      render(<Welcome {...defaultProps} onImportFiles={onImportFiles} />);
+    it('accepts .db files', async () => {
+      const onSqliteImport = vi.fn();
+      render(<Welcome {...defaultProps} onSqliteImport={onSqliteImport} />);
 
       const dropZone = screen.getByTestId('drop-zone');
-      const file = new File(['test'], 'test.db', { type: '' });
+      const file = createSqliteFile('test.db');
 
       fireEvent.drop(dropZone, {
         dataTransfer: {
@@ -252,15 +266,17 @@ describe('Welcome', () => {
         },
       });
 
-      expect(onImportFiles).toHaveBeenCalledWith([file]);
+      await waitFor(() => {
+        expect(onSqliteImport).toHaveBeenCalledWith(file);
+      });
     });
 
-    it('accepts .sqlite3 files', () => {
-      const onImportFiles = vi.fn();
-      render(<Welcome {...defaultProps} onImportFiles={onImportFiles} />);
+    it('accepts .sqlite3 files', async () => {
+      const onSqliteImport = vi.fn();
+      render(<Welcome {...defaultProps} onSqliteImport={onSqliteImport} />);
 
       const dropZone = screen.getByTestId('drop-zone');
-      const file = new File(['test'], 'test.sqlite3', { type: '' });
+      const file = createSqliteFile('test.sqlite3');
 
       fireEvent.drop(dropZone, {
         dataTransfer: {
@@ -269,12 +285,14 @@ describe('Welcome', () => {
         },
       });
 
-      expect(onImportFiles).toHaveBeenCalledWith([file]);
+      await waitFor(() => {
+        expect(onSqliteImport).toHaveBeenCalledWith(file);
+      });
     });
 
-    it('accepts .csv files', () => {
-      const onImportFiles = vi.fn();
-      render(<Welcome {...defaultProps} onImportFiles={onImportFiles} />);
+    it('accepts .csv files', async () => {
+      const onCsvImport = vi.fn();
+      render(<Welcome {...defaultProps} onCsvImport={onCsvImport} />);
 
       const dropZone = screen.getByTestId('drop-zone');
       const file = new File(['a,b,c'], 'data.csv', { type: 'text/csv' });
@@ -286,12 +304,14 @@ describe('Welcome', () => {
         },
       });
 
-      expect(onImportFiles).toHaveBeenCalledWith([file]);
+      await waitFor(() => {
+        expect(onCsvImport).toHaveBeenCalledWith(file);
+      });
     });
 
-    it('accepts .json files', () => {
-      const onImportFiles = vi.fn();
-      render(<Welcome {...defaultProps} onImportFiles={onImportFiles} />);
+    it('accepts .json files', async () => {
+      const onJsonImport = vi.fn();
+      render(<Welcome {...defaultProps} onJsonImport={onJsonImport} />);
 
       const dropZone = screen.getByTestId('drop-zone');
       const file = new File(['{}'], 'data.json', { type: 'application/json' });
@@ -303,12 +323,13 @@ describe('Welcome', () => {
         },
       });
 
-      expect(onImportFiles).toHaveBeenCalledWith([file]);
+      await waitFor(() => {
+        expect(onJsonImport).toHaveBeenCalledWith(file);
+      });
     });
 
-    it('rejects invalid file types on drop', () => {
-      const onImportFiles = vi.fn();
-      render(<Welcome {...defaultProps} onImportFiles={onImportFiles} />);
+    it('shows error toast for invalid file types on drop', async () => {
+      render(<Welcome {...defaultProps} />);
 
       const dropZone = screen.getByTestId('drop-zone');
       const file = new File(['test'], 'test.txt', { type: 'text/plain' });
@@ -320,29 +341,28 @@ describe('Welcome', () => {
         },
       });
 
-      expect(onImportFiles).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(screen.getByTestId('toast-error')).toBeInTheDocument();
+      });
     });
 
-    it('filters mixed valid and invalid files on drop', () => {
+    it('routes SQLite files via onImportFiles fallback', async () => {
       const onImportFiles = vi.fn();
       render(<Welcome {...defaultProps} onImportFiles={onImportFiles} />);
 
       const dropZone = screen.getByTestId('drop-zone');
-      const validFile = new File(['test'], 'test.sqlite', {
-        type: 'application/x-sqlite3',
-      });
-      const invalidFile = new File(['test'], 'test.exe', {
-        type: 'application/x-msdownload',
-      });
+      const file = createSqliteFile('test.sqlite');
 
       fireEvent.drop(dropZone, {
         dataTransfer: {
-          files: [validFile, invalidFile],
+          files: [file],
           types: ['Files'],
         },
       });
 
-      expect(onImportFiles).toHaveBeenCalledWith([validFile]);
+      await waitFor(() => {
+        expect(onImportFiles).toHaveBeenCalledWith([file]);
+      });
     });
   });
 

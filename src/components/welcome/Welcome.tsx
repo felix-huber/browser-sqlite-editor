@@ -4,24 +4,31 @@
  * Shown when no database is selected. Features:
  * - Large database icon
  * - "New Database" and "Import Database" CTAs
- * - Drop zone for drag-and-drop file import
+ * - Drop zone for drag-and-drop file import with file type routing
  * - Keyboard shortcuts (Cmd/Ctrl+N for new database)
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useCallback, useRef, useEffect, useState } from 'react';
 import { useDatabases } from '../../store';
-
-/** Accepted file extensions for import */
-const ACCEPTED_EXTENSIONS = ['.sqlite', '.db', '.sqlite3', '.csv', '.json'];
+import { DropZone } from '../common/DropZone';
 
 /** MIME types for file input accept attribute */
 const ACCEPTED_MIME_TYPES =
   '.sqlite,.db,.sqlite3,.csv,.json,application/x-sqlite3,application/vnd.sqlite3,text/csv,application/json';
 
+/** Accepted file extensions for import (for file picker validation) */
+const ACCEPTED_EXTENSIONS = ['.sqlite', '.db', '.sqlite3', '.csv', '.json'];
+
 export interface WelcomeProps {
   /** Callback when "New Database" is clicked */
   onNewDatabase?: () => void;
-  /** Callback when file(s) are imported via picker or drop */
+  /** Callback when SQLite file is imported (direct database import) */
+  onSqliteImport?: (file: File) => void;
+  /** Callback when CSV file is imported (routes to data import dialog) */
+  onCsvImport?: (file: File) => void;
+  /** Callback when JSON file is imported (routes to data import dialog) */
+  onJsonImport?: (file: File) => void;
+  /** Legacy callback for file(s) import via picker (supports multiple) */
   onImportFiles?: (files: File[]) => void;
   /** Callback when a recent database is selected */
   onSelectDatabase?: (dbName: string) => void;
@@ -46,14 +53,24 @@ function isMac(): boolean {
 
 export function Welcome({
   onNewDatabase,
+  onSqliteImport,
+  onCsvImport,
+  onJsonImport,
   onImportFiles,
   onSelectDatabase,
   showRecentDatabases = true,
 }: WelcomeProps) {
   const databases = useDatabases();
-  const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const dragCounterRef = useRef(0);
+  const [toastMessage, setToastMessage] = useState<{ type: 'error' | 'warning'; text: string } | null>(null);
+
+  // Auto-dismiss toast after 4 seconds
+  useEffect(() => {
+    if (toastMessage) {
+      const timeout = setTimeout(() => setToastMessage(null), 4000);
+      return () => clearTimeout(timeout);
+    }
+  }, [toastMessage]);
 
   // Keyboard shortcut: Cmd/Ctrl+N for new database
   useEffect(() => {
@@ -69,51 +86,56 @@ export function Welcome({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [onNewDatabase]);
 
-  // Handle drag enter
-  const handleDragEnter = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounterRef.current++;
-    if (e.dataTransfer.types.includes('Files')) {
-      setIsDragOver(true);
-    }
-  }, []);
-
-  // Handle drag leave
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounterRef.current--;
-    if (dragCounterRef.current === 0) {
-      setIsDragOver(false);
-    }
-  }, []);
-
-  // Handle drag over (required to allow drop)
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
-
-  // Handle drop
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsDragOver(false);
-      dragCounterRef.current = 0;
-
-      const files = Array.from(e.dataTransfer.files);
-      const validFiles = files.filter(isValidFile);
-
-      if (validFiles.length > 0) {
-        onImportFiles?.(validFiles);
+  // Handle SQLite file from DropZone
+  const handleSqliteFile = useCallback(
+    (file: File) => {
+      if (onSqliteImport) {
+        onSqliteImport(file);
+      } else if (onImportFiles) {
+        // Fallback to legacy handler
+        onImportFiles([file]);
       }
     },
-    [onImportFiles]
+    [onSqliteImport, onImportFiles]
   );
 
-  // Handle file input change
+  // Handle CSV file from DropZone
+  const handleCsvFile = useCallback(
+    (file: File) => {
+      if (onCsvImport) {
+        onCsvImport(file);
+      } else if (onImportFiles) {
+        // Fallback to legacy handler
+        onImportFiles([file]);
+      }
+    },
+    [onCsvImport, onImportFiles]
+  );
+
+  // Handle JSON file from DropZone
+  const handleJsonFile = useCallback(
+    (file: File) => {
+      if (onJsonImport) {
+        onJsonImport(file);
+      } else if (onImportFiles) {
+        // Fallback to legacy handler
+        onImportFiles([file]);
+      }
+    },
+    [onJsonImport, onImportFiles]
+  );
+
+  // Handle error from DropZone
+  const handleDropError = useCallback((message: string) => {
+    setToastMessage({ type: 'error', text: message });
+  }, []);
+
+  // Handle warning from DropZone
+  const handleDropWarning = useCallback((message: string) => {
+    setToastMessage({ type: 'warning', text: message });
+  }, []);
+
+  // Handle file input change (file picker)
   const handleFileInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
@@ -202,63 +224,13 @@ export function Welcome({
         </div>
 
         {/* Drop Zone */}
-        <div
-          className={`w-full p-8 border-2 border-dashed rounded-xl transition-colors ${
-            isDragOver
-              ? 'border-navy-600 bg-navy-50'
-              : 'border-navy-300 hover:border-navy-400'
-          }`}
-          onDragEnter={handleDragEnter}
-          onDragLeave={handleDragLeave}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
-          data-testid="drop-zone"
-          role="region"
-          aria-label="File drop zone"
-        >
-          <div className="flex flex-col items-center gap-3">
-            {isDragOver ? (
-              <>
-                <svg
-                  className="w-8 h-8 text-navy-600"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3-3m0 0l3 3m-3-3v12"
-                  />
-                </svg>
-                <p className="text-navy-600 font-medium">Drop to import</p>
-              </>
-            ) : (
-              <>
-                <svg
-                  className="w-8 h-8 text-navy-400"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                  />
-                </svg>
-                <p className="text-navy-500">Drop a .sqlite file here</p>
-                <p className="text-sm text-navy-400">
-                  Supports .sqlite, .db, .sqlite3, .csv, .json
-                </p>
-              </>
-            )}
-          </div>
-        </div>
+        <DropZone
+          onSqliteFile={handleSqliteFile}
+          onCsvFile={handleCsvFile}
+          onJsonFile={handleJsonFile}
+          onError={handleDropError}
+          onWarning={handleDropWarning}
+        />
 
         {/* Recent Databases */}
         {recentDatabases.length > 0 && (
@@ -296,6 +268,63 @@ export function Welcome({
           </div>
         )}
       </div>
+
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div
+          className={`fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-slide-up ${
+            toastMessage.type === 'error'
+              ? 'bg-red-50 text-red-800 border border-red-200'
+              : 'bg-amber-50 text-amber-800 border border-amber-200'
+          }`}
+          role="alert"
+          data-testid={`toast-${toastMessage.type}`}
+        >
+          {toastMessage.type === 'error' ? (
+            <svg
+              className="w-5 h-5 text-red-500 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+          ) : (
+            <svg
+              className="w-5 h-5 text-amber-500 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
+            </svg>
+          )}
+          <span className="text-sm font-medium">{toastMessage.text}</span>
+          <button
+            onClick={() => setToastMessage(null)}
+            className={`ml-2 p-1 rounded-full transition-colors ${
+              toastMessage.type === 'error'
+                ? 'hover:bg-red-100'
+                : 'hover:bg-amber-100'
+            }`}
+            aria-label="Dismiss"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
