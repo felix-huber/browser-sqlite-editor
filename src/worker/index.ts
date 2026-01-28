@@ -6,6 +6,8 @@
  */
 
 import type { WorkerRequest, WorkerResponse } from '../types';
+import { getEngine } from '../lib/db-engine';
+import { getSchemaInfo, getTableInfo, getAllForeignKeys } from '../lib/schema';
 
 /**
  * Type-safe message event for worker requests
@@ -20,14 +22,70 @@ function postResponse(response: WorkerResponse): void {
 }
 
 /**
+ * Create a query executor bound to the current engine instance
+ */
+function createQueryExecutor() {
+  const engine = getEngine();
+  return async (sql: string, params?: unknown[]) => {
+    return engine.query(sql, params);
+  };
+}
+
+/**
  * Handle incoming messages from the main thread
  */
-function handleMessage(event: WorkerMessageEvent): void {
+async function handleMessage(event: WorkerMessageEvent): Promise<void> {
   const request = event.data;
 
   switch (request.type) {
     case 'ping':
       postResponse({ type: 'pong' });
+      break;
+
+    case 'schema':
+      try {
+        const queryExecutor = createQueryExecutor();
+        const schema = await getSchemaInfo(queryExecutor);
+        postResponse({ type: 'schemaResult', schema });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'error',
+          message: `Failed to get schema: ${message}`,
+          code: 'UNKNOWN',
+        });
+      }
+      break;
+
+    case 'tableInfo':
+      try {
+        const queryExecutor = createQueryExecutor();
+        const tableInfo = await getTableInfo(queryExecutor, request.table);
+        postResponse({ type: 'tableInfoResult', tableInfo });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const code = message.includes('not found') ? 'NOT_FOUND' : 'UNKNOWN';
+        postResponse({
+          type: 'error',
+          message: `Failed to get table info: ${message}`,
+          code,
+        });
+      }
+      break;
+
+    case 'foreignKeys':
+      try {
+        const queryExecutor = createQueryExecutor();
+        const foreignKeys = await getAllForeignKeys(queryExecutor);
+        postResponse({ type: 'foreignKeysResult', foreignKeys });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'error',
+          message: `Failed to query foreign keys: ${message}`,
+          code: 'UNKNOWN',
+        });
+      }
       break;
 
     // Future handlers will be added here as the worker is extended
@@ -41,7 +99,16 @@ function handleMessage(event: WorkerMessageEvent): void {
 }
 
 // Register the message handler
-self.addEventListener('message', handleMessage);
+self.addEventListener('message', (event: WorkerMessageEvent) => {
+  handleMessage(event).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    postResponse({
+      type: 'error',
+      message: `Worker error: ${message}`,
+      code: 'UNKNOWN',
+    });
+  });
+});
 
 // Signal that the worker is ready
 postResponse({ type: 'pong' });
