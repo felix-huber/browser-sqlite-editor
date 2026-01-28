@@ -14,6 +14,7 @@
  */
 
 import type { WorkerErrorCode } from '../types';
+import { isStorageError, setStorageFull } from './quota-errors';
 
 // =============================================================================
 // Constants
@@ -346,6 +347,11 @@ export class IDBStorage {
       const error = err instanceof Error && 'code' in err
         ? err as PersistenceError
         : normalizeIDBError(err, 'flush');
+
+      // Set global storage full flag for quota errors
+      if (isStorageError(err)) {
+        setStorageFull(true);
+      }
 
       // Re-add failed writes to pending (will be retried on next schedule)
       for (const [name, blob] of writes) {

@@ -9,6 +9,14 @@ import type { WorkerRequest, WorkerResponse } from '../types';
 import { getEngine } from '../lib/db-engine';
 import { getSchemaInfo, getTableInfo, getAllForeignKeys } from '../lib/schema';
 import { requestCancellation } from './query-cancel';
+import {
+  isStorageError,
+  normalizeStorageError,
+  setStorageFull,
+  blockDatabaseWrites,
+  getStorageEstimate,
+  type StorageError,
+} from './quota-errors';
 
 /**
  * Type-safe message event for worker requests
@@ -20,6 +28,53 @@ type WorkerMessageEvent = MessageEvent<WorkerRequest>;
  */
 function postResponse(response: WorkerResponse): void {
   self.postMessage(response);
+}
+
+/**
+ * Handle storage errors by posting appropriate response
+ */
+export function handleStorageError(err: StorageError, dbName?: string): void {
+  // Block writes for this database
+  if (dbName) {
+    blockDatabaseWrites(dbName);
+  }
+
+  // Post storage full notification
+  if (dbName) {
+    postResponse({ type: 'storageFull', dbName });
+  }
+
+  // Post error response
+  postResponse({
+    type: 'error',
+    message: err.message,
+    code: err.code,
+  });
+}
+
+/**
+ * Wrap an operation with storage error detection
+ *
+ * @param operation - Async operation to wrap
+ * @param operationName - Name for error messages
+ * @param _dbName - Optional database name to track (reserved for future use)
+ */
+export async function withStorageProtection<T>(
+  operation: () => Promise<T>,
+  operationName: string,
+  _dbName?: string
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (err) {
+    if (isStorageError(err)) {
+      const estimate = await getStorageEstimate();
+      const storageError = normalizeStorageError(err, operationName, estimate);
+      setStorageFull(true);
+      throw storageError;
+    }
+    throw err;
+  }
 }
 
 /**
