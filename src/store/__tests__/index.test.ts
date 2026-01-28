@@ -7,9 +7,10 @@
  * - setReadOnly: updates isReadOnly
  * - setStorageStatus: updates storageStatus
  * - Selectors: return correct derived state
+ * - Database actions: loadRegistry, openDb, closeDb, createDb, deleteDb, renameDb, refreshSchema
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import {
   useDatabaseStore,
@@ -23,6 +24,15 @@ import {
   useLockHolder,
   useDatabases,
   getState,
+  setActionDeps,
+  resetActionDeps,
+  loadRegistry,
+  openDb,
+  closeDb,
+  createDb,
+  deleteDb,
+  renameDb,
+  refreshSchema,
   type SchemaState,
 } from '../index';
 import type { DatabaseEntry } from '../../types';
@@ -583,6 +593,301 @@ describe('Zustand Store - Non-hook Accessors', () => {
       const state = getState();
       expect(state.activeDbId).toBe('test-db');
       expect(state.isReadOnly).toBe(true);
+    });
+  });
+});
+
+// =============================================================================
+// Database Action Tests
+// =============================================================================
+
+describe('Database Actions', () => {
+  // Mock dependencies
+  const mockWorkerClient = {
+    getRegistry: vi.fn(),
+    openDb: vi.fn(),
+    closeDb: vi.fn(),
+    createDb: vi.fn(),
+    deleteDb: vi.fn(),
+    renameDb: vi.fn(),
+    getSchema: vi.fn(),
+  };
+
+  const mockLockManager = {
+    acquireLock: vi.fn(),
+    releaseLock: vi.fn(),
+  };
+
+  beforeEach(() => {
+    // Reset store and mocks before each test
+    useDatabaseStore.getState().reset();
+    vi.resetAllMocks();
+
+    // Inject mock dependencies
+    setActionDeps({
+      workerClient: mockWorkerClient as never,
+      lockManager: mockLockManager as never,
+    });
+  });
+
+  afterEach(() => {
+    resetActionDeps();
+  });
+
+  describe('loadRegistry', () => {
+    it('should populate databases[] from worker response', async () => {
+      const mockRegistry = {
+        v: 1 as const,
+        databases: [mockDatabase1, mockDatabase2],
+      };
+      mockWorkerClient.getRegistry.mockResolvedValue(mockRegistry);
+
+      await loadRegistry();
+
+      expect(mockWorkerClient.getRegistry).toHaveBeenCalledTimes(1);
+      const state = getState();
+      expect(state.databases).toHaveLength(2);
+      expect(state.databases[0].name).toBe('test-db-1');
+      expect(state.databases[1].name).toBe('test-db-2');
+    });
+  });
+
+  describe('openDb', () => {
+    it('should set activeDbId, isReadOnly=false and load schema when lock acquired', async () => {
+      mockLockManager.acquireLock.mockResolvedValue({
+        acquired: true,
+        holderId: null,
+        holderStale: false,
+      });
+      mockWorkerClient.openDb.mockResolvedValue({ isWriter: true });
+      mockWorkerClient.getSchema.mockResolvedValue({
+        tables: ['users', 'orders'],
+        views: ['recent_orders'],
+        indexes: ['idx_user_id'],
+      });
+
+      await openDb('test-db-1');
+
+      expect(mockLockManager.acquireLock).toHaveBeenCalledWith('test-db-1');
+      expect(mockWorkerClient.openDb).toHaveBeenCalledWith('test-db-1');
+      expect(mockWorkerClient.getSchema).toHaveBeenCalledTimes(1);
+
+      const state = getState();
+      expect(state.activeDbId).toBe('test-db-1');
+      expect(state.isReadOnly).toBe(false);
+      expect(state.lockHolder).toBe('self');
+      expect(state.schema).toEqual({
+        tables: ['users', 'orders'],
+        views: ['recent_orders'],
+        indexes: ['idx_user_id'],
+      });
+    });
+
+    it('should set isReadOnly=true when lock not acquired', async () => {
+      mockLockManager.acquireLock.mockResolvedValue({
+        acquired: false,
+        holderId: 'other-tab',
+        holderStale: false,
+      });
+      mockWorkerClient.openDb.mockResolvedValue({ isWriter: false });
+      mockWorkerClient.getSchema.mockResolvedValue({
+        tables: ['users'],
+        views: [],
+        indexes: [],
+      });
+
+      await openDb('test-db-1');
+
+      const state = getState();
+      expect(state.activeDbId).toBe('test-db-1');
+      expect(state.isReadOnly).toBe(true);
+      expect(state.lockHolder).toBe('other');
+    });
+  });
+
+  describe('closeDb', () => {
+    it('should clear state and release lock when lock holder is self', async () => {
+      // Set up initial state with active database
+      const store = useDatabaseStore.getState();
+      store.setActiveDb('test-db-1');
+      store.setLockHolder('self');
+      store.setSchema(mockSchema);
+
+      mockWorkerClient.closeDb.mockResolvedValue(undefined);
+      mockLockManager.releaseLock.mockResolvedValue(undefined);
+
+      await closeDb();
+
+      expect(mockLockManager.releaseLock).toHaveBeenCalledWith('test-db-1');
+      expect(mockWorkerClient.closeDb).toHaveBeenCalledTimes(1);
+
+      const state = getState();
+      expect(state.activeDbId).toBeNull();
+      expect(state.schema).toBeNull();
+      expect(state.isReadOnly).toBe(false);
+      expect(state.lockHolder).toBeNull();
+    });
+
+    it('should not release lock when lock holder is other', async () => {
+      // Set up initial state with active database but lock held by other
+      const store = useDatabaseStore.getState();
+      store.setActiveDb('test-db-1');
+      store.setLockHolder('other');
+
+      mockWorkerClient.closeDb.mockResolvedValue(undefined);
+
+      await closeDb();
+
+      expect(mockLockManager.releaseLock).not.toHaveBeenCalled();
+      expect(mockWorkerClient.closeDb).toHaveBeenCalledTimes(1);
+    });
+
+    it('should do nothing when no active database', async () => {
+      await closeDb();
+
+      expect(mockLockManager.releaseLock).not.toHaveBeenCalled();
+      expect(mockWorkerClient.closeDb).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createDb', () => {
+    it('should call worker, add to registry, and open new DB', async () => {
+      const newDb: DatabaseEntry = {
+        name: 'new-db',
+        file: 'new_db.sqlite',
+        createdAt: '2026-01-28T12:00:00.000Z',
+        lastOpenedAt: '2026-01-28T12:00:00.000Z',
+        fkEnforced: true,
+      };
+
+      mockWorkerClient.createDb.mockResolvedValue(undefined);
+      mockWorkerClient.getRegistry.mockResolvedValue({
+        v: 1 as const,
+        databases: [newDb],
+      });
+      mockLockManager.acquireLock.mockResolvedValue({
+        acquired: true,
+        holderId: null,
+        holderStale: false,
+      });
+      mockWorkerClient.openDb.mockResolvedValue({ isWriter: true });
+      mockWorkerClient.getSchema.mockResolvedValue({
+        tables: [],
+        views: [],
+        indexes: [],
+      });
+
+      await createDb('new-db');
+
+      expect(mockWorkerClient.createDb).toHaveBeenCalledWith('new-db');
+      expect(mockWorkerClient.getRegistry).toHaveBeenCalledTimes(1);
+      expect(mockWorkerClient.openDb).toHaveBeenCalledWith('new-db');
+
+      const state = getState();
+      expect(state.databases).toHaveLength(1);
+      expect(state.databases[0].name).toBe('new-db');
+      expect(state.activeDbId).toBe('new-db');
+    });
+  });
+
+  describe('deleteDb', () => {
+    it('should call worker and remove from registry', async () => {
+      // Set up initial state with databases
+      useDatabaseStore.getState().setDatabases([mockDatabase1, mockDatabase2]);
+
+      mockWorkerClient.deleteDb.mockResolvedValue(undefined);
+
+      await deleteDb('test-db-1');
+
+      expect(mockWorkerClient.deleteDb).toHaveBeenCalledWith('test-db-1');
+
+      const state = getState();
+      expect(state.databases).toHaveLength(1);
+      expect(state.databases[0].name).toBe('test-db-2');
+    });
+
+    it('should close database first if it is active', async () => {
+      // Set up initial state with active database
+      const store = useDatabaseStore.getState();
+      store.setDatabases([mockDatabase1]);
+      store.setActiveDb('test-db-1');
+      store.setLockHolder('self');
+
+      mockWorkerClient.closeDb.mockResolvedValue(undefined);
+      mockLockManager.releaseLock.mockResolvedValue(undefined);
+      mockWorkerClient.deleteDb.mockResolvedValue(undefined);
+
+      await deleteDb('test-db-1');
+
+      // Should have closed first
+      expect(mockWorkerClient.closeDb).toHaveBeenCalledTimes(1);
+      expect(mockLockManager.releaseLock).toHaveBeenCalledWith('test-db-1');
+      expect(mockWorkerClient.deleteDb).toHaveBeenCalledWith('test-db-1');
+
+      const state = getState();
+      expect(state.databases).toHaveLength(0);
+      expect(state.activeDbId).toBeNull();
+    });
+  });
+
+  describe('renameDb', () => {
+    it('should update registry entry name', async () => {
+      // Set up initial state
+      useDatabaseStore.getState().setDatabases([mockDatabase1]);
+
+      mockWorkerClient.renameDb.mockResolvedValue(undefined);
+
+      await renameDb('test-db-1', 'renamed-db');
+
+      expect(mockWorkerClient.renameDb).toHaveBeenCalledWith('test-db-1', 'renamed-db');
+
+      const state = getState();
+      expect(state.databases).toHaveLength(1);
+      expect(state.databases[0].name).toBe('renamed-db');
+    });
+
+    it('should update activeDbId if renaming active database', async () => {
+      // Set up initial state with active database
+      const store = useDatabaseStore.getState();
+      store.setDatabases([mockDatabase1]);
+      store.setActiveDb('test-db-1');
+
+      mockWorkerClient.renameDb.mockResolvedValue(undefined);
+
+      await renameDb('test-db-1', 'renamed-db');
+
+      const state = getState();
+      expect(state.activeDbId).toBe('renamed-db');
+    });
+  });
+
+  describe('refreshSchema', () => {
+    it('should update tables/views/indexes for active DB', async () => {
+      // Set up initial state with active database
+      useDatabaseStore.getState().setActiveDb('test-db-1');
+
+      mockWorkerClient.getSchema.mockResolvedValue({
+        tables: ['products', 'customers'],
+        views: ['order_summary'],
+        indexes: ['idx_product_id', 'idx_customer_id'],
+      });
+
+      await refreshSchema();
+
+      expect(mockWorkerClient.getSchema).toHaveBeenCalledTimes(1);
+
+      const state = getState();
+      expect(state.schema).toEqual({
+        tables: ['products', 'customers'],
+        views: ['order_summary'],
+        indexes: ['idx_product_id', 'idx_customer_id'],
+      });
+    });
+
+    it('should do nothing when no active database', async () => {
+      await refreshSchema();
+
+      expect(mockWorkerClient.getSchema).not.toHaveBeenCalled();
     });
   });
 });

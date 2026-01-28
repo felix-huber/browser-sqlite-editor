@@ -6,6 +6,9 @@
  * - Active database and schema
  * - Lock state for multi-tab coordination
  * - Storage health status
+ *
+ * Also exports async actions for database operations:
+ * - loadRegistry, openDb, closeDb, createDb, deleteDb, renameDb, refreshSchema
  */
 
 import { create } from 'zustand';
@@ -15,6 +18,8 @@ import type {
   StorageStatus,
   LockHolder,
 } from '../types';
+import { getWorkerClient, type WorkerClient } from '../lib/worker-client';
+import { getLockManager, type WebLockManager } from '../worker/web-locks';
 
 // =============================================================================
 // Store State Types
@@ -212,3 +217,222 @@ export function getState(): DatabaseStoreState {
  * Subscribe to store changes
  */
 export const subscribe = useDatabaseStore.subscribe;
+
+// =============================================================================
+// Database Action Dependencies (for testing)
+// =============================================================================
+
+/**
+ * Dependencies for database actions (allows injection for testing)
+ */
+export interface DatabaseActionDeps {
+  workerClient: WorkerClient;
+  lockManager: WebLockManager;
+}
+
+/** Default dependencies using singletons */
+const defaultDeps: DatabaseActionDeps = {
+  get workerClient() {
+    return getWorkerClient();
+  },
+  get lockManager() {
+    return getLockManager();
+  },
+};
+
+/** Current dependencies (can be overridden for testing) */
+let _deps: DatabaseActionDeps = defaultDeps;
+
+/**
+ * Set dependencies for database actions (for testing)
+ */
+export function setActionDeps(deps: Partial<DatabaseActionDeps>): void {
+  _deps = { ...defaultDeps, ...deps };
+}
+
+/**
+ * Reset dependencies to defaults
+ */
+export function resetActionDeps(): void {
+  _deps = defaultDeps;
+}
+
+/**
+ * Get current dependencies (for testing inspection)
+ */
+export function getActionDeps(): DatabaseActionDeps {
+  return _deps;
+}
+
+// =============================================================================
+// Database Actions
+// =============================================================================
+
+/**
+ * Load the database registry from the worker and update the store
+ *
+ * Fetches the registry from the worker and populates the databases[] array.
+ */
+export async function loadRegistry(): Promise<void> {
+  const registry = await _deps.workerClient.getRegistry();
+  useDatabaseStore.getState().setDatabases(registry.databases);
+}
+
+/**
+ * Open a database by ID
+ *
+ * 1. Acquires a lock (exclusive if available, otherwise read-only)
+ * 2. Opens the database via the worker
+ * 3. Loads the schema
+ * 4. Updates activeDbId, isReadOnly, lockHolder, and schema in the store
+ *
+ * @param id Database ID to open
+ */
+export async function openDb(id: string): Promise<void> {
+  const store = useDatabaseStore.getState();
+
+  // Try to acquire the write lock
+  const lockResult = await _deps.lockManager.acquireLock(id);
+
+  // Open the database via worker
+  await _deps.workerClient.openDb(id);
+
+  // Determine lock state
+  const isWriter = lockResult.acquired;
+  const isReadOnly = !isWriter;
+  const lockHolder: LockHolder = isWriter ? 'self' : 'other';
+
+  // Set active database and read-only state
+  store.setActiveDb(id);
+  store.setReadOnly(isReadOnly);
+  store.setLockHolder(lockHolder);
+
+  // Load schema
+  const schema = await _deps.workerClient.getSchema();
+  store.setSchema({
+    tables: schema.tables,
+    views: schema.views,
+    indexes: schema.indexes,
+  });
+}
+
+/**
+ * Close the currently active database
+ *
+ * 1. Releases the lock if held
+ * 2. Closes the database via the worker
+ * 3. Clears activeDbId, schema, and lock state in the store
+ */
+export async function closeDb(): Promise<void> {
+  const store = useDatabaseStore.getState();
+  const activeDbId = store.activeDbId;
+
+  if (!activeDbId) {
+    return; // Nothing to close
+  }
+
+  // Release the lock if we hold it
+  if (store.lockHolder === 'self') {
+    await _deps.lockManager.releaseLock(activeDbId);
+  }
+
+  // Close the database via worker
+  await _deps.workerClient.closeDb();
+
+  // Clear state
+  store.setActiveDb(null);
+  store.setSchema(null);
+  store.setReadOnly(false);
+  store.setLockHolder(null);
+}
+
+/**
+ * Create a new database
+ *
+ * 1. Creates the database via the worker
+ * 2. Reloads the registry to get the new entry
+ * 3. Opens the new database
+ *
+ * @param name Name for the new database
+ */
+export async function createDb(name: string): Promise<void> {
+  // Create via worker
+  await _deps.workerClient.createDb(name);
+
+  // Reload registry to get the new entry
+  await loadRegistry();
+
+  // Open the newly created database
+  await openDb(name);
+}
+
+/**
+ * Delete a database
+ *
+ * 1. Closes the database if it's currently active
+ * 2. Deletes the database storage via the worker
+ * 3. Removes from the registry
+ *
+ * @param id Database ID to delete
+ */
+export async function deleteDb(id: string): Promise<void> {
+  const store = useDatabaseStore.getState();
+
+  // Close if this is the active database
+  if (store.activeDbId === id) {
+    await closeDb();
+  }
+
+  // Delete via worker (handles storage deletion)
+  await _deps.workerClient.deleteDb(id);
+
+  // Remove from local registry state
+  const updatedDatabases = store.databases.filter((db) => db.name !== id);
+  store.setDatabases(updatedDatabases);
+}
+
+/**
+ * Rename a database
+ *
+ * Updates the database name in storage and registry.
+ *
+ * @param id Current database ID/name
+ * @param newName New name for the database
+ */
+export async function renameDb(id: string, newName: string): Promise<void> {
+  const store = useDatabaseStore.getState();
+
+  // Rename via worker (handles storage rename)
+  await _deps.workerClient.renameDb(id, newName);
+
+  // Update local registry state
+  const updatedDatabases = store.databases.map((db) =>
+    db.name === id ? { ...db, name: newName } : db
+  );
+  store.setDatabases(updatedDatabases);
+
+  // If this was the active database, update activeDbId
+  if (store.activeDbId === id) {
+    store.setActiveDb(newName);
+  }
+}
+
+/**
+ * Refresh the schema for the active database
+ *
+ * Reloads tables, views, and indexes from the worker.
+ */
+export async function refreshSchema(): Promise<void> {
+  const store = useDatabaseStore.getState();
+
+  if (!store.activeDbId) {
+    return; // No active database
+  }
+
+  const schema = await _deps.workerClient.getSchema();
+  store.setSchema({
+    tables: schema.tables,
+    views: schema.views,
+    indexes: schema.indexes,
+  });
+}
