@@ -17,6 +17,7 @@ import {
   getStorageEstimate,
   type StorageError,
 } from './quota-errors';
+import { getIDBStorage } from './idb-storage';
 
 /**
  * Type-safe message event for worker requests
@@ -156,6 +157,36 @@ async function handleMessage(event: WorkerMessageEvent): Promise<void> {
           type: 'error',
           message: `Failed to cancel: ${message}`,
           code: 'UNKNOWN',
+        });
+      }
+      break;
+
+    case 'flushAndClose':
+      try {
+        const storage = getIDBStorage();
+        const result = await storage.flushAndClose(request.dbId);
+
+        postResponse({
+          type: 'flushAndCloseResult',
+          success: result.success,
+          error: result.error
+            ? {
+                code: result.error.code,
+                message: result.error.message,
+                attempts: result.error.attempts,
+              }
+            : undefined,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'flushAndCloseResult',
+          success: false,
+          error: {
+            code: 'IDB_FLUSH_FAILED',
+            message: `Unexpected error during flushAndClose: ${message}`,
+            attempts: 0,
+          },
         });
       }
       break;

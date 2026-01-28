@@ -17,6 +17,29 @@ import type { WorkerErrorCode } from '../types';
 import { isStorageError, setStorageFull } from './quota-errors';
 
 // =============================================================================
+// FlushAndClose Types
+// =============================================================================
+
+/**
+ * Result of flushAndClose operation
+ */
+export interface FlushAndCloseResult {
+  success: boolean;
+  error?: FlushAndCloseError;
+}
+
+/**
+ * Error from flushAndClose operation - deterministic for UI prompt
+ */
+export interface FlushAndCloseError {
+  code: 'IDB_FLUSH_FAILED' | 'QUOTA_EXCEEDED';
+  message: string;
+  /** Number of attempts made before failure */
+  attempts: number;
+  cause?: unknown;
+}
+
+// =============================================================================
 // Constants
 // =============================================================================
 
@@ -202,6 +225,7 @@ async function withRetry<T>(
  * - Debounced writes (2s idle)
  * - Explicit flush for critical operations
  * - Retry with exponential backoff
+ * - Queued flushAndClose for safe database switching
  */
 export class IDBStorage {
   /** Pending blob data to be flushed (keyed by database name) */
@@ -215,6 +239,9 @@ export class IDBStorage {
 
   /** Callback for persistence errors */
   private onError: ((error: PersistenceError) => void) | null = null;
+
+  /** Queue for flushAndClose operations (to handle concurrent requests) */
+  private flushAndCloseQueue: Map<string, Promise<FlushAndCloseResult>> = new Map();
 
   /**
    * Set error callback for surfacing persistence failures
@@ -463,6 +490,144 @@ export class IDBStorage {
   }
 
   /**
+   * Flush pending writes for a database and close its connection.
+   *
+   * This is the explicit worker API for safely switching/closing databases:
+   * - Flushes any pending snapshot writes for the specified database
+   * - Awaits IDB transaction commit
+   * - Retries with exponential backoff (3 attempts)
+   * - Returns deterministic IDB_FLUSH_FAILED error on persistent failure
+   *
+   * Handles concurrent requests by queuing them - if a flushAndClose is already
+   * in progress for this database, subsequent calls will wait for it to complete.
+   *
+   * @param dbId Database identifier to flush and close
+   * @returns FlushAndCloseResult with success or deterministic error for UI prompt
+   */
+  async flushAndClose(dbId: string): Promise<FlushAndCloseResult> {
+    // Check if there's already a flushAndClose in progress for this database
+    const existingOperation = this.flushAndCloseQueue.get(dbId);
+    if (existingOperation) {
+      // Wait for the existing operation to complete
+      return existingOperation;
+    }
+
+    // Create the operation and add to queue
+    const operation = this.doFlushAndClose(dbId);
+    this.flushAndCloseQueue.set(dbId, operation);
+
+    try {
+      return await operation;
+    } finally {
+      // Remove from queue when done
+      this.flushAndCloseQueue.delete(dbId);
+    }
+  }
+
+  /**
+   * Internal implementation of flushAndClose with retry logic
+   */
+  private async doFlushAndClose(dbId: string): Promise<FlushAndCloseResult> {
+    let lastError: FlushAndCloseError | undefined;
+    let attempts = 0;
+
+    // Get the pending write for this specific database (if any)
+    const pendingBlob = this.pendingWrites.get(dbId);
+
+    // If no pending writes for this db, nothing to flush - success
+    if (!pendingBlob) {
+      return { success: true };
+    }
+
+    // Cancel any pending debounce timer for this write
+    if (this.debounceTimer !== null) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+
+    // Remove from pending writes (we'll handle it directly)
+    this.pendingWrites.delete(dbId);
+
+    // Retry loop with exponential backoff
+    for (attempts = 1; attempts <= MAX_RETRY_ATTEMPTS; attempts++) {
+      try {
+        const db = await openDatabase();
+
+        try {
+          const tx = db.transaction(IDB_STORE_NAME, 'readwrite');
+          const store = tx.objectStore(IDB_STORE_NAME);
+
+          const entry: StoredDatabase = {
+            name: dbId,
+            blob: pendingBlob,
+            updatedAt: new Date().toISOString(),
+          };
+
+          // Put the entry
+          await new Promise<void>((resolve, reject) => {
+            const request = store.put(entry);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+          });
+
+          // Wait for transaction to fully commit
+          await new Promise<void>((resolve, reject) => {
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+          });
+
+          // Success - transaction committed
+          return { success: true };
+        } finally {
+          db.close();
+        }
+      } catch (err) {
+        // Normalize the error
+        if (err instanceof DOMException && err.name === 'QuotaExceededError') {
+          // Quota exceeded - don't retry, return immediately
+          setStorageFull(true);
+          return {
+            success: false,
+            error: {
+              code: 'QUOTA_EXCEEDED',
+              message: `Storage quota exceeded while saving database "${dbId}". Please free up space.`,
+              attempts,
+              cause: err,
+            },
+          };
+        }
+
+        // Store error for potential return after all retries
+        lastError = {
+          code: 'IDB_FLUSH_FAILED',
+          message: `Failed to save database "${dbId}" after ${attempts} attempt(s): ${err instanceof Error ? err.message : String(err)}`,
+          attempts,
+          cause: err,
+        };
+
+        // Wait before retry (except on last attempt)
+        if (attempts < MAX_RETRY_ATTEMPTS) {
+          await sleep(getBackoffDelay(attempts - 1));
+        }
+      }
+    }
+
+    // All retries exhausted - re-add to pending writes so data isn't lost
+    this.pendingWrites.set(dbId, pendingBlob);
+
+    // Return the deterministic error for UI to show "switch anyway" prompt
+    return {
+      success: false,
+      error: lastError ?? {
+        code: 'IDB_FLUSH_FAILED',
+        message: `Failed to save database "${dbId}" after ${MAX_RETRY_ATTEMPTS} attempts.`,
+        attempts: MAX_RETRY_ATTEMPTS,
+      },
+    };
+  }
+
+  /**
    * Check if there are pending writes
    */
   hasPendingWrites(): boolean {
@@ -470,10 +635,30 @@ export class IDBStorage {
   }
 
   /**
+   * Check if there are pending writes for a specific database
+   *
+   * @param name Database name
+   * @returns true if there are pending writes for this database
+   */
+  hasPendingWritesFor(name: string): boolean {
+    return this.pendingWrites.has(name);
+  }
+
+  /**
    * Get pending write count (for testing)
    */
   getPendingWriteCount(): number {
     return this.pendingWrites.size;
+  }
+
+  /**
+   * Check if a flushAndClose operation is in progress for a database
+   *
+   * @param name Database name
+   * @returns true if flushAndClose is in progress
+   */
+  isFlushAndCloseInProgress(name: string): boolean {
+    return this.flushAndCloseQueue.has(name);
   }
 
   /**
@@ -485,6 +670,7 @@ export class IDBStorage {
       this.debounceTimer = null;
     }
     this.pendingWrites.clear();
+    this.flushAndCloseQueue.clear();
     this.onError = null;
   }
 }
@@ -531,4 +717,5 @@ export const _testing = {
   openDatabase,
   getBackoffDelay,
   normalizeIDBError,
+  sleep,
 };

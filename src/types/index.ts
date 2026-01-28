@@ -41,7 +41,8 @@ export type WorkerRequest =
   | { type: 'deleteDb'; name: string }
   | { type: 'renameDb'; oldName: string; newName: string }
   | { type: 'getRegistry' }
-  | { type: 'flushSnapshot' }; // For IndexedDB mode: flush pending snapshot
+  | { type: 'flushSnapshot' } // For IndexedDB mode: flush pending snapshot
+  | { type: 'flushAndClose'; dbId: string }; // Flush pending writes and close database connection
 
 /**
  * Error codes returned by worker
@@ -57,6 +58,7 @@ export type WorkerErrorCode =
   | 'CONSTRAINT_VIOLATION'
   | 'SYNTAX_ERROR'
   | 'PERSISTENCE_FAILED'
+  | 'IDB_FLUSH_FAILED'
   | 'UNKNOWN';
 
 /**
@@ -74,7 +76,20 @@ export type WorkerResponse =
   | { type: 'tableInfoResult'; tableInfo: TableInfo }
   | { type: 'queryResult'; result: QueryResult }
   | { type: 'foreignKeysResult'; foreignKeys: ForeignKeyInfo[] }
-  | { type: 'registryResult'; registry: DatabaseRegistry };
+  | { type: 'registryResult'; registry: DatabaseRegistry }
+  | { type: 'flushAndCloseResult'; success: boolean; error?: FlushAndCloseError };
+
+/**
+ * Error from flushAndClose operation - deterministic for UI prompt
+ */
+export interface FlushAndCloseError {
+  /** Error code - IDB_FLUSH_FAILED for retry exhausted, QUOTA_EXCEEDED for quota issues */
+  code: 'IDB_FLUSH_FAILED' | 'QUOTA_EXCEEDED';
+  /** Human-readable error message */
+  message: string;
+  /** Number of attempts made before failure */
+  attempts: number;
+}
 
 /**
  * Result of a SQL query execution
