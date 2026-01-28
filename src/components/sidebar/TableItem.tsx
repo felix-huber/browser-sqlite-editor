@@ -1,0 +1,159 @@
+/**
+ * TableItem Component
+ *
+ * Individual tree item for tables, views, and indexes.
+ * Features:
+ * - Distinct icons for each type
+ * - Active/selected state highlighting
+ * - Optional row count badge (for tables)
+ * - Keyboard navigation support
+ */
+
+import { useCallback } from 'react';
+
+export type SchemaItemType = 'table' | 'view' | 'index';
+
+export interface TableItemProps {
+  /** Item name */
+  name: string;
+  /** Item type (table, view, or index) */
+  type: SchemaItemType;
+  /** Whether this item is currently selected */
+  isSelected?: boolean;
+  /** Optional row count for tables */
+  rowCount?: number;
+  /** Optional target table name for indexes */
+  targetTable?: string;
+  /** Click handler */
+  onClick?: () => void;
+}
+
+export function TableItem({
+  name,
+  type,
+  isSelected = false,
+  rowCount,
+  targetTable,
+  onClick,
+}: TableItemProps) {
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onClick?.();
+      }
+    },
+    [onClick]
+  );
+
+  return (
+    <li
+      className={`flex items-center gap-2 px-2 py-1 rounded cursor-pointer transition-colors text-sm ${
+        isSelected
+          ? 'bg-navy-100 text-navy-900'
+          : 'hover:bg-navy-50 text-navy-600'
+      }`}
+      onClick={onClick}
+      onKeyDown={handleKeyDown}
+      tabIndex={0}
+      role="treeitem"
+      aria-selected={isSelected}
+      data-testid={`item-${type}-${name}`}
+    >
+      {/* Type Icon */}
+      <ItemIcon type={type} />
+
+      {/* Item Name */}
+      <span className="truncate flex-1">{name}</span>
+
+      {/* Optional Badge */}
+      {type === 'table' && rowCount !== undefined && (
+        <span
+          className="text-xs text-navy-400 bg-navy-100 px-1.5 py-0.5 rounded"
+          data-testid={`row-count-${name}`}
+        >
+          {formatRowCount(rowCount)}
+        </span>
+      )}
+
+      {/* Target table for indexes */}
+      {type === 'index' && targetTable && (
+        <span
+          className="text-xs text-navy-400"
+          data-testid={`target-table-${name}`}
+        >
+          → {targetTable}
+        </span>
+      )}
+    </li>
+  );
+}
+
+interface ItemIconProps {
+  type: SchemaItemType;
+}
+
+function ItemIcon({ type }: ItemIconProps) {
+  switch (type) {
+    case 'table':
+      return (
+        <span className="text-navy-400" aria-hidden="true">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+            />
+          </svg>
+        </span>
+      );
+    case 'view':
+      return (
+        <span className="text-navy-400" aria-hidden="true">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+            />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+            />
+          </svg>
+        </span>
+      );
+    case 'index':
+      return (
+        <span className="text-navy-400" aria-hidden="true">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+            />
+          </svg>
+        </span>
+      );
+  }
+}
+
+/**
+ * Format row count for display
+ */
+function formatRowCount(count: number): string {
+  if (count >= 1000000) {
+    return `${(count / 1000000).toFixed(1)}M`;
+  }
+  if (count >= 1000) {
+    return `${(count / 1000).toFixed(1)}K`;
+  }
+  return count.toLocaleString();
+}
+
+export default TableItem;
