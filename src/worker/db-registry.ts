@@ -89,6 +89,137 @@ export interface StorageAdapter {
   readRegistry: (mode: StorageMode) => Promise<RegistryData | null>;
   writeRegistry: (mode: StorageMode, data: RegistryData) => Promise<void>;
   listFiles: (mode: StorageMode) => Promise<string[]>;
+  renameFile?: (mode: StorageMode, oldName: string, newName: string) => Promise<void>;
+  fileExists?: (mode: StorageMode, name: string) => Promise<boolean>;
+}
+
+// =============================================================================
+// Name Validation
+// =============================================================================
+
+/** Windows reserved names (case-insensitive) */
+const WINDOWS_RESERVED_NAMES = new Set([
+  'con', 'prn', 'aux', 'nul',
+  'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9',
+  'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9',
+]);
+
+/** Maximum name length (filesystem limit) */
+const MAX_NAME_LENGTH = 255;
+
+/**
+ * Validation error codes for rename operations
+ */
+export type RenameErrorCode =
+  | 'INVALID_NAME'
+  | 'NAME_EXISTS'
+  | 'NAME_EMPTY'
+  | 'NAME_TOO_LONG'
+  | 'PATH_SEPARATOR'
+  | 'HIDDEN_FILE'
+  | 'RESERVED_NAME'
+  | 'PATH_TRAVERSAL'
+  | 'NOT_FOUND'
+  | 'RENAME_FAILED';
+
+/**
+ * Result of a rename operation
+ */
+export interface RenameResult {
+  success: boolean;
+  error?: {
+    code: RenameErrorCode;
+    message: string;
+  };
+}
+
+/**
+ * Validate a database name for rename operations
+ *
+ * Rules:
+ * - Reject empty or whitespace-only names
+ * - Reject names with path separators: / and \
+ * - Reject names starting with . (hidden files)
+ * - Reject reserved names: CON, PRN, NUL, AUX, COM1-9, LPT1-9 (Windows)
+ * - Reject names with .. (path traversal)
+ * - Max length: 255 characters
+ *
+ * @param name - Name to validate
+ * @returns Validation result with error details if invalid
+ */
+export function validateDatabaseName(name: string): RenameResult {
+  // Trim the name for validation
+  const trimmed = name.trim();
+
+  // Check for empty or whitespace-only
+  if (!trimmed || trimmed.length === 0) {
+    return {
+      success: false,
+      error: {
+        code: 'NAME_EMPTY',
+        message: 'Database name cannot be empty or whitespace-only',
+      },
+    };
+  }
+
+  // Check max length
+  if (trimmed.length > MAX_NAME_LENGTH) {
+    return {
+      success: false,
+      error: {
+        code: 'NAME_TOO_LONG',
+        message: `Database name cannot exceed ${MAX_NAME_LENGTH} characters`,
+      },
+    };
+  }
+
+  // Check for path separators
+  if (trimmed.includes('/') || trimmed.includes('\\')) {
+    return {
+      success: false,
+      error: {
+        code: 'PATH_SEPARATOR',
+        message: 'Database name cannot contain path separators (/ or \\)',
+      },
+    };
+  }
+
+  // Check for path traversal sequences (check before hidden file check)
+  if (trimmed.includes('..')) {
+    return {
+      success: false,
+      error: {
+        code: 'PATH_TRAVERSAL',
+        message: 'Database name cannot contain ".." sequences',
+      },
+    };
+  }
+
+  // Check for hidden file (starts with .)
+  if (trimmed.startsWith('.')) {
+    return {
+      success: false,
+      error: {
+        code: 'HIDDEN_FILE',
+        message: 'Database name cannot start with a dot',
+      },
+    };
+  }
+
+  // Check for Windows reserved names (case-insensitive)
+  // Also check with common extensions like .sqlite
+  const baseName = trimmed.split('.')[0].toLowerCase();
+  if (WINDOWS_RESERVED_NAMES.has(baseName)) {
+    return {
+      success: false,
+      error: {
+        code: 'RESERVED_NAME',
+        message: `"${baseName.toUpperCase()}" is a reserved name and cannot be used`,
+      },
+    };
+  }
+
+  return { success: true };
 }
 
 // =============================================================================
@@ -214,6 +345,65 @@ async function opfsFileExists(filename: string): Promise<boolean> {
   }
 }
 
+/**
+ * Rename a file in OPFS
+ *
+ * Since OPFS doesn't have a native rename API, we:
+ * 1. Read the old file
+ * 2. Write to the new file
+ * 3. Delete the old file
+ */
+async function renameOpfsFile(oldFilename: string, newFilename: string): Promise<void> {
+  const dir = await getOpfsRoot();
+
+  // Get the old file
+  const oldHandle = await dir.getFileHandle(oldFilename);
+  const file = await oldHandle.getFile();
+  const data = await file.arrayBuffer();
+
+  // Create the new file and write data
+  const newHandle = await dir.getFileHandle(newFilename, { create: true });
+  const writable = await newHandle.createWritable();
+  try {
+    await writable.write(data);
+  } finally {
+    await writable.close();
+  }
+
+  // Delete the old file
+  await dir.removeEntry(oldFilename);
+}
+
+/**
+ * Rename the .erd.json sidecar file in OPFS (if it exists)
+ */
+async function renameOpfsSidecar(oldBasename: string, newBasename: string): Promise<void> {
+  const dir = await getOpfsRoot();
+  const oldSidecar = `${oldBasename}.erd.json`;
+  const newSidecar = `${newBasename}.erd.json`;
+
+  try {
+    // Check if sidecar exists
+    const oldHandle = await dir.getFileHandle(oldSidecar);
+    const file = await oldHandle.getFile();
+    const data = await file.arrayBuffer();
+
+    // Create new sidecar
+    const newHandle = await dir.getFileHandle(newSidecar, { create: true });
+    const writable = await newHandle.createWritable();
+    try {
+      await writable.write(data);
+    } finally {
+      await writable.close();
+    }
+
+    // Delete old sidecar
+    await dir.removeEntry(oldSidecar);
+  } catch {
+    // Sidecar doesn't exist, that's fine
+  }
+}
+
 // =============================================================================
 // IndexedDB Operations
 // =============================================================================
@@ -328,6 +518,73 @@ async function idbDatabaseExists(name: string): Promise<boolean> {
   return databases.includes(name);
 }
 
+/**
+ * Rename a database in IDB
+ *
+ * IndexedDB stores databases with a 'name' keyPath, so we:
+ * 1. Read the old entry
+ * 2. Create a new entry with the new name
+ * 3. Delete the old entry
+ */
+async function renameIdbDatabase(oldName: string, newName: string): Promise<void> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('idb-sqlite', 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = (event) => {
+      const database = (event.target as IDBOpenDBRequest).result;
+      if (!database.objectStoreNames.contains('databases')) {
+        database.createObjectStore('databases', { keyPath: 'name' });
+      }
+    };
+  });
+
+  try {
+    const tx = db.transaction('databases', 'readwrite');
+    const store = tx.objectStore('databases');
+
+    // Get the old entry
+    const oldEntry = await new Promise<{ name: string; blob: Blob; updatedAt: string } | undefined>(
+      (resolve, reject) => {
+        const request = store.get(oldName);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      }
+    );
+
+    if (!oldEntry) {
+      throw new Error(`Database "${oldName}" not found`);
+    }
+
+    // Create new entry with new name
+    await new Promise<void>((resolve, reject) => {
+      const request = store.put({
+        name: newName,
+        blob: oldEntry.blob,
+        updatedAt: new Date().toISOString(),
+      });
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+
+    // Delete old entry
+    await new Promise<void>((resolve, reject) => {
+      const request = store.delete(oldName);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+
+    // Wait for transaction to complete
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
 // =============================================================================
 // Default Storage Adapter
 // =============================================================================
@@ -349,6 +606,28 @@ const defaultStorageAdapter: StorageAdapter = {
   },
   listFiles: async (mode) => {
     return mode === 'opfs' ? listOpfsFiles() : listIdbDatabases();
+  },
+  renameFile: async (mode, oldName, newName) => {
+    if (mode === 'opfs') {
+      // For OPFS, we need to rename the .sqlite file
+      const oldFilename = toFilename(oldName);
+      const newFilename = toFilename(newName);
+      await renameOpfsFile(oldFilename, newFilename);
+      // Also rename the sidecar
+      await renameOpfsSidecar(
+        oldFilename.replace(/\.sqlite$/, ''),
+        newFilename.replace(/\.sqlite$/, '')
+      );
+    } else {
+      await renameIdbDatabase(oldName, newName);
+    }
+  },
+  fileExists: async (mode, name) => {
+    if (mode === 'opfs') {
+      return opfsFileExists(toFilename(name));
+    } else {
+      return idbDatabaseExists(name);
+    }
   },
 };
 
@@ -452,8 +731,10 @@ export class DatabaseRegistry {
 
     for (const filename of actualFiles) {
       if (!registeredNames.has(filename)) {
-        // Derive name from filename
-        const name = filename.replace(/\.sqlite$/, '').replace(/_/g, ' ');
+        // Derive name from filename (only transform for OPFS)
+        const name = this.storageMode === 'opfs'
+          ? filename.replace(/\.sqlite$/, '').replace(/_/g, ' ')
+          : filename;
         const newEntry: RegistryEntry = {
           id: generateId(),
           name,
@@ -621,6 +902,98 @@ export class DatabaseRegistry {
     this.data.databases = [];
     await this.save();
   }
+
+  /**
+   * Rename a database
+   *
+   * This operation:
+   * 1. Validates the new name
+   * 2. Checks the new name doesn't already exist
+   * 3. Renames the storage file (OPFS) or entry (IDB)
+   * 4. Updates the registry entry
+   * 5. Triggers query history migration
+   *
+   * @param id Database ID to rename
+   * @param newName New name for the database
+   * @returns Result with success/error
+   */
+  async renameDatabase(id: string, newName: string): Promise<RenameResult> {
+    // Step 1: Find the entry
+    const entry = this.data.databases.find((e) => e.id === id);
+    if (!entry) {
+      return {
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: `Database with ID "${id}" not found`,
+        },
+      };
+    }
+
+    const oldName = entry.name;
+
+    // Same name? No-op success
+    if (oldName === newName.trim()) {
+      return { success: true };
+    }
+
+    // Step 2: Validate the new name
+    const validation = validateDatabaseName(newName);
+    if (!validation.success) {
+      return validation;
+    }
+
+    const trimmedNewName = newName.trim();
+
+    // Step 3: Check if new name already exists
+    const existingEntry = this.data.databases.find(
+      (e) => e.name.toLowerCase() === trimmedNewName.toLowerCase() && e.id !== id
+    );
+    if (existingEntry) {
+      return {
+        success: false,
+        error: {
+          code: 'NAME_EXISTS',
+          message: `A database named "${trimmedNewName}" already exists`,
+        },
+      };
+    }
+
+    // Step 4: Check if the target file already exists in storage
+    if (this.adapter.fileExists) {
+      const fileExists = await this.adapter.fileExists(this.storageMode, trimmedNewName);
+      if (fileExists) {
+        return {
+          success: false,
+          error: {
+            code: 'NAME_EXISTS',
+            message: `A file named "${trimmedNewName}" already exists in storage`,
+          },
+        };
+      }
+    }
+
+    // Step 5: Rename the storage file
+    if (this.adapter.renameFile) {
+      try {
+        await this.adapter.renameFile(this.storageMode, oldName, trimmedNewName);
+      } catch (err) {
+        return {
+          success: false,
+          error: {
+            code: 'RENAME_FAILED',
+            message: `Failed to rename file: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        };
+      }
+    }
+
+    // Step 6: Update the registry entry
+    entry.name = trimmedNewName;
+    await this.save();
+
+    return { success: true };
+  }
 }
 
 // =============================================================================
@@ -656,6 +1029,8 @@ export const _testing = {
   IDB_REGISTRY_DB,
   IDB_REGISTRY_STORE,
   IDB_VERSION,
+  MAX_NAME_LENGTH,
+  WINDOWS_RESERVED_NAMES,
   generateId,
   now,
   toFilename,
@@ -664,9 +1039,12 @@ export const _testing = {
   writeOpfsRegistry,
   listOpfsFiles,
   opfsFileExists,
+  renameOpfsFile,
+  renameOpfsSidecar,
   readIdbRegistry,
   writeIdbRegistry,
   listIdbDatabases,
   idbDatabaseExists,
+  renameIdbDatabase,
   defaultStorageAdapter,
 };

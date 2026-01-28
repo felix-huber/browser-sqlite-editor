@@ -16,6 +16,7 @@ import {
   DatabaseRegistry,
   getRegistry,
   resetRegistry,
+  validateDatabaseName,
   _testing,
   type RegistryEntry,
   type RegistryData,
@@ -31,6 +32,9 @@ interface MockStorageState {
   fileList: string[];
   opfsAvailable: boolean;
   throwOnRead: boolean;
+  existingFiles: Set<string>;
+  renamedFiles: Map<string, string>;
+  throwOnRename: boolean;
 }
 
 function createMockAdapter(state: MockStorageState): StorageAdapter {
@@ -46,6 +50,20 @@ function createMockAdapter(state: MockStorageState): StorageAdapter {
       state.registryData = data;
     }),
     listFiles: vi.fn(async () => state.fileList),
+    renameFile: vi.fn(async (_mode, oldName: string, newName: string) => {
+      if (state.throwOnRename) {
+        throw new Error('Simulated rename failure');
+      }
+      state.renamedFiles.set(oldName, newName);
+      // Update fileList
+      const idx = state.fileList.indexOf(oldName);
+      if (idx !== -1) {
+        state.fileList[idx] = newName;
+      }
+    }),
+    fileExists: vi.fn(async (_mode, name: string) => {
+      return state.existingFiles.has(name);
+    }),
   };
 }
 
@@ -61,6 +79,9 @@ beforeEach(() => {
     fileList: [],
     opfsAvailable: false,
     throwOnRead: false,
+    existingFiles: new Set(),
+    renamedFiles: new Map(),
+    throwOnRename: false,
   };
   resetRegistry();
 });
@@ -361,9 +382,10 @@ describe('DatabaseRegistry - Self-Healing', () => {
   });
 
   describe('Discovery', () => {
-    it('should add registry entries for files without entries', async () => {
+    it('should add registry entries for files without entries (OPFS)', async () => {
       mockState.registryData = { databases: [] };
       mockState.fileList = ['discovered.sqlite', 'another.sqlite'];
+      mockState.opfsAvailable = true; // OPFS mode uses .sqlite extension
 
       const adapter = createMockAdapter(mockState);
       const registry = new DatabaseRegistry(adapter);
@@ -376,6 +398,25 @@ describe('DatabaseRegistry - Self-Healing', () => {
       const names = list.map((e) => e.name);
       expect(names).toContain('discovered');
       expect(names).toContain('another');
+    });
+
+    it('should add registry entries for files without entries (IDB)', async () => {
+      mockState.registryData = { databases: [] };
+      mockState.fileList = ['my database', 'another_db']; // IDB uses raw names
+      mockState.opfsAvailable = false; // IDB mode
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      const result = await registry.init();
+
+      expect(result.discovered).toHaveLength(2);
+      expect(registry.count()).toBe(2);
+
+      const list = registry.listDatabases();
+      const names = list.map((e) => e.name);
+      // IDB mode preserves names exactly as stored
+      expect(names).toContain('my database');
+      expect(names).toContain('another_db');
     });
 
     it('should not duplicate existing entries', async () => {
@@ -661,5 +702,260 @@ describe('DatabaseRegistry - Type Contracts', () => {
 
     expect(data.databases).toHaveLength(1);
     expect(data.databases[0].storageType).toBe('opfs');
+  });
+});
+
+// =============================================================================
+// Name Validation Tests
+// =============================================================================
+
+describe('validateDatabaseName', () => {
+  it('should accept valid names', () => {
+    expect(validateDatabaseName('my_database').success).toBe(true);
+    expect(validateDatabaseName('My Database').success).toBe(true);
+    expect(validateDatabaseName('test-123').success).toBe(true);
+    expect(validateDatabaseName('database (1)').success).toBe(true);
+  });
+
+  it('should reject empty names', () => {
+    const result = validateDatabaseName('');
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('NAME_EMPTY');
+  });
+
+  it('should reject whitespace-only names', () => {
+    const result = validateDatabaseName('   ');
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('NAME_EMPTY');
+  });
+
+  it('should reject names with forward slash', () => {
+    const result = validateDatabaseName('my/database');
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('PATH_SEPARATOR');
+  });
+
+  it('should reject names with backslash', () => {
+    const result = validateDatabaseName('my\\database');
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('PATH_SEPARATOR');
+  });
+
+  it('should reject names starting with dot', () => {
+    const result = validateDatabaseName('.hidden');
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('HIDDEN_FILE');
+  });
+
+  it('should reject path traversal sequences', () => {
+    const result = validateDatabaseName('..parent');
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('PATH_TRAVERSAL');
+
+    const result2 = validateDatabaseName('foo..bar');
+    expect(result2.success).toBe(false);
+    expect(result2.error?.code).toBe('PATH_TRAVERSAL');
+  });
+
+  it('should reject Windows reserved names', () => {
+    const reservedNames = ['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM9', 'LPT1', 'LPT9'];
+    for (const name of reservedNames) {
+      const result = validateDatabaseName(name);
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('RESERVED_NAME');
+    }
+
+    // Case-insensitive
+    expect(validateDatabaseName('con').success).toBe(false);
+    expect(validateDatabaseName('Con').success).toBe(false);
+  });
+
+  it('should reject names exceeding max length', () => {
+    const longName = 'a'.repeat(256);
+    const result = validateDatabaseName(longName);
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('NAME_TOO_LONG');
+  });
+
+  it('should accept names at max length', () => {
+    const maxName = 'a'.repeat(255);
+    const result = validateDatabaseName(maxName);
+    expect(result.success).toBe(true);
+  });
+});
+
+// =============================================================================
+// Rename Database Tests
+// =============================================================================
+
+describe('DatabaseRegistry - renameDatabase', () => {
+  describe('successful rename', () => {
+    it('should rename "a" to "b": success, registry updated', async () => {
+      mockState.fileList = ['a'];
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      // Register database 'a'
+      const id = await registry.registerDatabase('a', 'idb');
+
+      // Rename to 'b'
+      const result = await registry.renameDatabase(id, 'b');
+
+      expect(result.success).toBe(true);
+
+      // Check registry is updated
+      const entry = registry.getDatabaseById(id);
+      expect(entry?.name).toBe('b');
+
+      // Check file was renamed
+      expect(mockState.renamedFiles.get('a')).toBe('b');
+    });
+
+    it('should trim whitespace from new name', async () => {
+      mockState.fileList = ['test'];
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const id = await registry.registerDatabase('test', 'idb');
+      const result = await registry.renameDatabase(id, '  new name  ');
+
+      expect(result.success).toBe(true);
+      expect(registry.getDatabaseById(id)?.name).toBe('new name');
+    });
+
+    it('should succeed when renaming to same name (no-op)', async () => {
+      mockState.fileList = ['test'];
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const id = await registry.registerDatabase('test', 'idb');
+      const result = await registry.renameDatabase(id, 'test');
+
+      expect(result.success).toBe(true);
+      // No rename should have occurred
+      expect(mockState.renamedFiles.size).toBe(0);
+    });
+  });
+
+  describe('validation errors', () => {
+    it('should return NAME_EXISTS error for existing name', async () => {
+      mockState.fileList = ['a', 'b'];
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      await registry.registerDatabase('a', 'idb');
+      const idB = await registry.registerDatabase('b', 'idb');
+
+      const result = await registry.renameDatabase(idB, 'a');
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('NAME_EXISTS');
+    });
+
+    it('should return INVALID_NAME error for "/" in name', async () => {
+      mockState.fileList = ['test'];
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const id = await registry.registerDatabase('test', 'idb');
+      const result = await registry.renameDatabase(id, 'new/name');
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('PATH_SEPARATOR');
+    });
+
+    it('should return INVALID_NAME error for ".." in name', async () => {
+      mockState.fileList = ['test'];
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const id = await registry.registerDatabase('test', 'idb');
+      const result = await registry.renameDatabase(id, '..parent');
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('PATH_TRAVERSAL');
+    });
+
+    it('should return NOT_FOUND for unknown ID', async () => {
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const result = await registry.renameDatabase('nonexistent-id', 'new-name');
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('NOT_FOUND');
+    });
+  });
+
+  describe('storage errors', () => {
+    it('should return NAME_EXISTS when target file already exists in storage', async () => {
+      mockState.fileList = ['a'];
+      mockState.existingFiles.add('b'); // File exists but not in registry
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const id = await registry.registerDatabase('a', 'idb');
+      const result = await registry.renameDatabase(id, 'b');
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('NAME_EXISTS');
+    });
+
+    it('should return RENAME_FAILED when file rename fails', async () => {
+      mockState.fileList = ['a'];
+      mockState.throwOnRename = true;
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const id = await registry.registerDatabase('a', 'idb');
+      const result = await registry.renameDatabase(id, 'b');
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('RENAME_FAILED');
+    });
+  });
+
+  describe('sidecar handling', () => {
+    it('should succeed even when sidecar is missing (sidecar optional)', async () => {
+      // The mock adapter doesn't actually handle sidecars,
+      // but the default adapter silently ignores missing sidecars
+      mockState.fileList = ['test'];
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const id = await registry.registerDatabase('test', 'idb');
+      const result = await registry.renameDatabase(id, 'renamed');
+
+      expect(result.success).toBe(true);
+    });
+  });
+});
+
+// =============================================================================
+// Constants Tests for Rename
+// =============================================================================
+
+describe('Rename Constants', () => {
+  it('should have correct max name length', () => {
+    expect(_testing.MAX_NAME_LENGTH).toBe(255);
+  });
+
+  it('should have Windows reserved names defined', () => {
+    expect(_testing.WINDOWS_RESERVED_NAMES).toContain('con');
+    expect(_testing.WINDOWS_RESERVED_NAMES).toContain('prn');
+    expect(_testing.WINDOWS_RESERVED_NAMES).toContain('aux');
+    expect(_testing.WINDOWS_RESERVED_NAMES).toContain('nul');
+    expect(_testing.WINDOWS_RESERVED_NAMES).toContain('com1');
+    expect(_testing.WINDOWS_RESERVED_NAMES).toContain('lpt1');
   });
 });
