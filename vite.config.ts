@@ -1,10 +1,19 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import { visualizer } from 'rollup-plugin-visualizer'
 
 export default defineConfig({
   plugins: [
     react(),
+    // Generate bundle analysis when ANALYZE=true
+    process.env.ANALYZE === 'true' && visualizer({
+      filename: 'dist/stats.html',
+      open: false,
+      gzipSize: true,
+      brotliSize: true,
+      template: 'treemap',
+    }),
     VitePWA({
       registerType: 'prompt',
       includeAssets: ['icons/**/*'],
@@ -57,5 +66,5 @@ export default defineConfig({
         clientsClaim: true, // Control clients after activation
       },
     }),
-  ],
+  ].filter(Boolean),
 })

@@ -6,38 +6,63 @@ import {
   BackgroundVariant,
   useNodesState,
   useEdgesState,
+  addEdge,
   type Node,
-  type Edge,
+  type OnConnect,
+  type IsValidConnection,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import { tableBoxNodeTypes, type TableBoxData, type TableBoxNodeType } from './TableBox'
+import { joinEdgeTypes, type JoinEdgeType, type JoinType } from './JoinEdge'
 
 /** Maximum number of tables allowed on canvas */
 const MAX_TABLES = 10
 
-/** Node data for a table on the query builder canvas */
-export interface TableBoxNodeData extends Record<string, unknown> {
-  tableName: string
-  columns: string[]
-  selectedColumns: string[]
-}
+/** Combined node types for React Flow */
+const nodeTypes = tableBoxNodeTypes
+
+/** Combined edge types for React Flow */
+const edgeTypes = joinEdgeTypes
+
+/** Re-exported node data interface for backwards compatibility */
+export interface TableBoxNodeData extends TableBoxData {}
 
 export type TableBoxNode = Node<TableBoxNodeData>
+
+/** Join configuration for external consumption */
+export interface JoinConfig {
+  /** Unique edge ID */
+  id: string
+  /** Source table name */
+  sourceTable: string
+  /** Source column name */
+  sourceColumn: string
+  /** Target table name */
+  targetTable: string
+  /** Target column name */
+  targetColumn: string
+  /** Join type */
+  joinType: JoinType
+}
 
 interface QueryBuilderProps {
   /** List of available table names from the database schema */
   tables: string[]
   /** Callback when tables on canvas change */
   onTablesChange?: (tableNames: string[]) => void
+  /** Callback when joins change */
+  onJoinsChange?: (joins: JoinConfig[]) => void
 }
 
 /**
  * Visual query builder component with table list panel and React Flow canvas
  */
-export function QueryBuilder({ tables, onTablesChange }: QueryBuilderProps) {
-  const [nodes, setNodes, onNodesChange] = useNodesState<TableBoxNode>([])
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
+export function QueryBuilder({ tables, onTablesChange, onJoinsChange }: QueryBuilderProps) {
+  const [nodes, setNodes, onNodesChange] = useNodesState<TableBoxNodeType>([])
+  const [edges, setEdges, onEdgesChange] = useEdgesState<JoinEdgeType>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [showLimitWarning, setShowLimitWarning] = useState(false)
+  const [connectionError, setConnectionError] = useState<string | null>(null)
 
   // Filter tables based on search query
   const filteredTables = useMemo(() => {
@@ -82,12 +107,17 @@ export function QueryBuilder({ tables, onTablesChange }: QueryBuilderProps) {
         y: event.clientY - reactFlowBounds.top - 50,
       }
 
-      const newNode: TableBoxNode = {
+      // Generate table alias (t1, t2, etc.)
+      const existingCount = nodes.length
+      const alias = `t${existingCount + 1}`
+
+      const newNode: TableBoxNodeType = {
         id: `table-${tableName}-${Date.now()}`,
-        type: 'default',
+        type: 'tableBox',
         position,
         data: {
           tableName,
+          alias,
           columns: [], // Will be populated when connected to schema
           selectedColumns: [],
         },
@@ -113,7 +143,142 @@ export function QueryBuilder({ tables, onTablesChange }: QueryBuilderProps) {
     setNodes([])
     setEdges([])
     onTablesChange?.([])
-  }, [setNodes, setEdges, onTablesChange])
+    onJoinsChange?.([])
+  }, [setNodes, setEdges, onTablesChange, onJoinsChange])
+
+  // Helper to extract column name from handle ID (e.g., "column_name-source" -> "column_name")
+  const extractColumnFromHandle = useCallback((handleId: string | null | undefined): string => {
+    if (!handleId) return ''
+    // Handle ID format is "columnName-source" or "columnName-target"
+    return handleId.replace(/-(?:source|target)$/, '')
+  }, [])
+
+  // Helper to get table name from node ID
+  const getTableNameFromNode = useCallback(
+    (nodeId: string): string => {
+      const node = nodes.find((n) => n.id === nodeId)
+      return node?.data.tableName ?? ''
+    },
+    [nodes]
+  )
+
+  // Notify parent of join changes
+  const notifyJoinsChange = useCallback(
+    (currentEdges: JoinEdgeType[]) => {
+      if (!onJoinsChange) return
+
+      const joins: JoinConfig[] = currentEdges.map((edge) => ({
+        id: edge.id,
+        sourceTable: getTableNameFromNode(edge.source),
+        sourceColumn: edge.data?.sourceColumn ?? '',
+        targetTable: getTableNameFromNode(edge.target),
+        targetColumn: edge.data?.targetColumn ?? '',
+        joinType: edge.data?.joinType ?? 'INNER',
+      }))
+
+      onJoinsChange(joins)
+    },
+    [onJoinsChange, getTableNameFromNode]
+  )
+
+  // Validate connection - prevent self-join on same column
+  const isValidConnection: IsValidConnection<JoinEdgeType> = useCallback(
+    (connection) => {
+      const { source, target, sourceHandle, targetHandle } = connection
+
+      // Must have all required fields
+      if (!source || !target || !sourceHandle || !targetHandle) return false
+
+      const sourceColumn = extractColumnFromHandle(sourceHandle)
+      const targetColumn = extractColumnFromHandle(targetHandle)
+
+      // Prevent self-join on the exact same column
+      if (source === target && sourceColumn === targetColumn) {
+        setConnectionError('Cannot join a column to itself')
+        setTimeout(() => setConnectionError(null), 2000)
+        return false
+      }
+
+      return true
+    },
+    [extractColumnFromHandle]
+  )
+
+  // Handle new connection (join creation)
+  const handleConnect: OnConnect = useCallback(
+    (connection) => {
+      const { source, target, sourceHandle, targetHandle } = connection
+
+      if (!source || !target || !sourceHandle || !targetHandle) return
+
+      const sourceColumn = extractColumnFromHandle(sourceHandle)
+      const targetColumn = extractColumnFromHandle(targetHandle)
+      const edgeId = `join-${source}-${sourceColumn}-${target}-${targetColumn}`
+
+      // Check for duplicate edge
+      const isDuplicate = edges.some((e) => e.id === edgeId)
+      if (isDuplicate) return
+
+      const newEdge: JoinEdgeType = {
+        id: edgeId,
+        source,
+        target,
+        sourceHandle,
+        targetHandle,
+        type: 'joinEdge',
+        data: {
+          joinType: 'INNER',
+          sourceColumn,
+          targetColumn,
+          onJoinTypeChange: handleJoinTypeChange,
+          onDelete: handleDeleteEdge,
+        },
+      }
+
+      setEdges((eds) => {
+        const updated = addEdge(newEdge, eds) as JoinEdgeType[]
+        notifyJoinsChange(updated)
+        return updated
+      })
+    },
+    [edges, setEdges, extractColumnFromHandle, notifyJoinsChange]
+  )
+
+  // Handle join type change
+  const handleJoinTypeChange = useCallback(
+    (edgeId: string, newJoinType: JoinType) => {
+      setEdges((eds) => {
+        const updated = eds.map((edge) =>
+          edge.id === edgeId
+            ? {
+                ...edge,
+                data: {
+                  ...edge.data,
+                  joinType: newJoinType,
+                  onJoinTypeChange: handleJoinTypeChange,
+                  onDelete: handleDeleteEdge,
+                },
+              }
+            : edge
+        ) as JoinEdgeType[]
+        notifyJoinsChange(updated)
+        return updated
+      })
+    },
+    [setEdges, notifyJoinsChange]
+  )
+
+  // Handle edge deletion
+  const handleDeleteEdge = useCallback(
+    (edgeId: string) => {
+      setEdges((eds) => {
+        const updated = eds.filter((edge) => edge.id !== edgeId)
+        notifyJoinsChange(updated)
+        return updated
+      })
+    },
+    [setEdges, notifyJoinsChange]
+  )
 
   return (
     <div className="h-full w-full flex" data-testid="query-builder">
@@ -205,9 +370,19 @@ export function QueryBuilder({ tables, onTablesChange }: QueryBuilderProps) {
                 Maximum {MAX_TABLES} tables allowed
               </span>
             )}
+            {connectionError && (
+              <span className="text-xs text-red-600" data-testid="connection-error">
+                {connectionError}
+              </span>
+            )}
             <span className="text-xs text-navy-500">
               {nodes.length} / {MAX_TABLES} tables
             </span>
+            {edges.length > 0 && (
+              <span className="text-xs text-navy-500" data-testid="join-count">
+                {edges.length} join{edges.length !== 1 ? 's' : ''}
+              </span>
+            )}
             <button
               onClick={handleClear}
               disabled={nodes.length === 0}
@@ -229,8 +404,12 @@ export function QueryBuilder({ tables, onTablesChange }: QueryBuilderProps) {
           <ReactFlow
             nodes={nodes}
             edges={edges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
+            onConnect={handleConnect}
+            isValidConnection={isValidConnection}
             fitView
             fitViewOptions={{ padding: 0.2 }}
             minZoom={0.5}
