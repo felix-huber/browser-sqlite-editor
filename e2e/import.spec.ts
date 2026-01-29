@@ -914,8 +914,8 @@ test.describe('UI Import Tests', () => {
       await expect(statusBar).toContainText('SQLite WASM');
     });
 
-    test('sidebar shows no database loaded message', async ({ page }) => {
-      const sidebarMessage = page.locator('text=No database loaded');
+    test('sidebar shows no databases message', async ({ page }) => {
+      const sidebarMessage = page.locator('text=No databases');
       await expect(sidebarMessage).toBeVisible();
     });
   });

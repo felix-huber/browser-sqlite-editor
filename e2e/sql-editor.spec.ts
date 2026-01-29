@@ -830,8 +830,8 @@ test.describe('SQL Editor Integration Tests', () => {
     await expect(statusBar).toContainText('Ready');
   });
 
-  test('sidebar shows no database loaded message', async ({ page }) => {
-    const sidebarMessage = page.locator('text=No database loaded');
+  test('sidebar shows no databases message', async ({ page }) => {
+    const sidebarMessage = page.locator('text=No databases');
     await expect(sidebarMessage).toBeVisible();
   });
 });

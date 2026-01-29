@@ -28,15 +28,35 @@ import {
 } from './schema-modification';
 
 /**
- * Type-safe message event for worker requests
+ * Tagged request with correlation ID from main thread
  */
-type WorkerMessageEvent = MessageEvent<WorkerRequest>;
+interface TaggedRequest {
+  id: number;
+  request: WorkerRequest;
+}
 
 /**
- * Post a typed response back to the main thread
+ * Type-safe message event for worker requests
+ */
+type WorkerMessageEvent = MessageEvent<TaggedRequest>;
+
+/**
+ * Current request ID for correlation (set before handling each message)
+ */
+let currentRequestId: number | undefined;
+
+/**
+ * Post a typed response back to the main thread with correlation ID
  */
 function postResponse(response: WorkerResponse): void {
-  self.postMessage(response);
+  self.postMessage({ ...response, id: currentRequestId });
+}
+
+/**
+ * Post a broadcast event (no correlation ID - not a response to a request)
+ */
+function postBroadcast(event: WorkerResponse): void {
+  self.postMessage(event);
 }
 
 /**
@@ -48,9 +68,9 @@ export function handleStorageError(err: StorageError, dbName?: string): void {
     blockDatabaseWrites(dbName);
   }
 
-  // Post storage full notification
+  // Post storage full notification (broadcast, not a response)
   if (dbName) {
-    postResponse({ type: 'storageFull', dbName });
+    postBroadcast({ type: 'storageFull', dbName });
   }
 
   // Post error response
@@ -100,7 +120,8 @@ function createQueryExecutor() {
  * Handle incoming messages from the main thread
  */
 async function handleMessage(event: WorkerMessageEvent): Promise<void> {
-  const request = event.data;
+  const { id, request } = event.data;
+  currentRequestId = id;
 
   switch (request.type) {
     case 'ping':
@@ -588,5 +609,5 @@ self.addEventListener('message', (event: WorkerMessageEvent) => {
   });
 });
 
-// Signal that the worker is ready
-postResponse({ type: 'pong' });
+// Signal that the worker is ready (no request ID for this initial broadcast)
+self.postMessage({ type: 'ready' });

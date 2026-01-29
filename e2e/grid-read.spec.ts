@@ -702,9 +702,9 @@ test.describe('Grid Integration Tests', () => {
     await expect(statusBar).toContainText('SQLite WASM');
   });
 
-  test('sidebar shows no database loaded initially', async ({ page }) => {
-    // Sidebar should show "No database loaded" when starting fresh
-    const sidebarMessage = page.locator('text=No database loaded');
+  test('sidebar shows no databases initially', async ({ page }) => {
+    // Sidebar should show "No databases" when starting fresh
+    const sidebarMessage = page.locator('text=No databases');
     await expect(sidebarMessage).toBeVisible();
   });
 
