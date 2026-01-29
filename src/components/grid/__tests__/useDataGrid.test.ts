@@ -2,16 +2,19 @@
  * Tests for useDataGrid hook and utilities
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
+import { act } from '@testing-library/react';
 import {
   useDataGrid,
   createColumnDefs,
   generatePaginationClause,
   generatePaginatedQuery,
+  generateOrderByClause,
   ROW_HEIGHT,
   DEFAULT_PAGE_SIZE,
   type PaginationState,
+  type SortState,
 } from '../useDataGrid';
 import type { TableInfo, ColumnInfo } from '../../../types';
 
@@ -319,6 +322,242 @@ describe('generatePaginatedQuery', () => {
 
     expect(result.sql).toBe('SELECT "id", "name" FROM "users" LIMIT ?');
     expect(result.sql).not.toContain('rowid');
+  });
+});
+
+// =============================================================================
+// Sorting Tests
+// =============================================================================
+
+describe('generateOrderByClause', () => {
+  it('returns empty string for empty sort state', () => {
+    const result = generateOrderByClause([]);
+    expect(result).toBe('');
+  });
+
+  it('generates single column ORDER BY ASC', () => {
+    const sortState: SortState = [{ column: 'name', direction: 'asc' }];
+    const result = generateOrderByClause(sortState);
+    expect(result).toBe('"name" ASC');
+  });
+
+  it('generates single column ORDER BY DESC', () => {
+    const sortState: SortState = [{ column: 'age', direction: 'desc' }];
+    const result = generateOrderByClause(sortState);
+    expect(result).toBe('"age" DESC');
+  });
+
+  it('generates multi-column ORDER BY', () => {
+    const sortState: SortState = [
+      { column: 'name', direction: 'asc' },
+      { column: 'age', direction: 'desc' },
+    ];
+    const result = generateOrderByClause(sortState);
+    expect(result).toBe('"name" ASC, "age" DESC');
+  });
+
+  it('escapes column names with quotes', () => {
+    const sortState: SortState = [{ column: 'column"name', direction: 'asc' }];
+    const result = generateOrderByClause(sortState);
+    expect(result).toBe('"column""name" ASC');
+  });
+});
+
+describe('generatePaginatedQuery with sorting', () => {
+  it('includes ORDER BY clause when sort state is provided', () => {
+    const pagination: PaginationState = {
+      cursorRowId: null,
+      pageSize: 50,
+      direction: 'forward',
+    };
+    const sortState: SortState = [{ column: 'name', direction: 'asc' }];
+
+    const result = generatePaginatedQuery('users', ['id', 'name'], pagination, false, sortState);
+
+    expect(result.sql).toContain('ORDER BY "name" ASC');
+    expect(result.sql).toContain('LIMIT ?');
+  });
+
+  it('includes multi-column ORDER BY', () => {
+    const pagination: PaginationState = {
+      cursorRowId: null,
+      pageSize: 50,
+      direction: 'forward',
+    };
+    const sortState: SortState = [
+      { column: 'name', direction: 'asc' },
+      { column: 'age', direction: 'desc' },
+    ];
+
+    const result = generatePaginatedQuery('users', ['id', 'name', 'age'], pagination, false, sortState);
+
+    expect(result.sql).toContain('ORDER BY "name" ASC, "age" DESC');
+  });
+});
+
+describe('useDataGrid sorting', () => {
+  it('initializes with empty sort state', () => {
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: [],
+      }),
+    );
+
+    expect(result.current.sortState).toEqual([]);
+  });
+
+  it('handles single click to sort ASC', () => {
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: [],
+      }),
+    );
+
+    act(() => {
+      result.current.handleSortClick('name', false);
+    });
+
+    expect(result.current.sortState).toEqual([{ column: 'name', direction: 'asc' }]);
+    expect(result.current.getSortDirection('name')).toBe('asc');
+  });
+
+  it('handles second click to sort DESC', () => {
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: [],
+      }),
+    );
+
+    act(() => {
+      result.current.handleSortClick('name', false);
+    });
+
+    act(() => {
+      result.current.handleSortClick('name', false);
+    });
+
+    expect(result.current.sortState).toEqual([{ column: 'name', direction: 'desc' }]);
+    expect(result.current.getSortDirection('name')).toBe('desc');
+  });
+
+  it('handles third click to remove sort', () => {
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: [],
+      }),
+    );
+
+    act(() => {
+      result.current.handleSortClick('name', false);
+    });
+
+    act(() => {
+      result.current.handleSortClick('name', false);
+    });
+
+    act(() => {
+      result.current.handleSortClick('name', false);
+    });
+
+    expect(result.current.sortState).toEqual([]);
+    expect(result.current.getSortDirection('name')).toBeNull();
+  });
+
+  it('handles shift+click to add secondary sort', () => {
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: [],
+      }),
+    );
+
+    // First click - primary sort
+    act(() => {
+      result.current.handleSortClick('name', false);
+    });
+
+    // Shift+click - add secondary sort
+    act(() => {
+      result.current.handleSortClick('age', true);
+    });
+
+    expect(result.current.sortState).toEqual([
+      { column: 'name', direction: 'asc' },
+      { column: 'age', direction: 'asc' },
+    ]);
+  });
+
+  it('returns sort index for multi-column sort', () => {
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: [],
+      }),
+    );
+
+    act(() => {
+      result.current.handleSortClick('name', false);
+    });
+
+    act(() => {
+      result.current.handleSortClick('age', true);
+    });
+
+    expect(result.current.getSortIndex('name')).toBe(1);
+    expect(result.current.getSortIndex('age')).toBe(2);
+    expect(result.current.getSortIndex('email')).toBeNull();
+  });
+
+  it('returns null sort index for single-column sort', () => {
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: [],
+      }),
+    );
+
+    act(() => {
+      result.current.handleSortClick('name', false);
+    });
+
+    // For single column sort, index should be null (not displayed)
+    expect(result.current.getSortIndex('name')).toBeNull();
+  });
+
+  it('uses external sort state when provided', () => {
+    const externalSortState: SortState = [{ column: 'email', direction: 'desc' }];
+
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: [],
+        sortState: externalSortState,
+      }),
+    );
+
+    expect(result.current.sortState).toEqual(externalSortState);
+    expect(result.current.getSortDirection('email')).toBe('desc');
+  });
+
+  it('calls onSortChange when sort changes with external state', () => {
+    const onSortChange = vi.fn();
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: [],
+        onSortChange,
+      }),
+    );
+
+    act(() => {
+      result.current.handleSortClick('name', false);
+    });
+
+    expect(onSortChange).toHaveBeenCalledWith([{ column: 'name', direction: 'asc' }]);
   });
 });
 

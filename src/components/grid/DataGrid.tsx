@@ -12,7 +12,7 @@
  */
 
 import { memo, useCallback, useMemo, useState, useRef, useEffect } from 'react';
-import { useDataGrid, ROW_HEIGHT, type DataRow, type UseDataGridOptions } from './useDataGrid';
+import { useDataGrid, ROW_HEIGHT, type DataRow, type UseDataGridOptions, type SortState, type SortDirection } from './useDataGrid';
 import { useGridVirtualizer } from './useGridVirtualizer';
 import type { TableInfo } from '../../types';
 
@@ -51,6 +51,10 @@ export interface DataGridProps {
   onSelectionChange?: (selectedRowIndices: Set<number>) => void;
   /** Called when column widths change */
   onColumnResize?: (columnId: string, width: number) => void;
+  /** Sort state for columns */
+  sortState?: SortState;
+  /** Called when sort state changes */
+  onSortChange?: (sortState: SortState) => void;
 }
 
 // =============================================================================
@@ -147,6 +151,9 @@ interface ColumnHeaderProps {
   width: number;
   isResizing: boolean;
   onResizeStart: () => void;
+  sortDirection: SortDirection | null;
+  sortIndex: number | null;
+  onSortClick: (addToSort: boolean) => void;
 }
 
 const ColumnHeader = memo(function ColumnHeader({
@@ -158,11 +165,24 @@ const ColumnHeader = memo(function ColumnHeader({
   width,
   isResizing,
   onResizeStart,
+  sortDirection,
+  sortIndex,
+  onSortClick,
 }: ColumnHeaderProps) {
+  const handleClick = (e: React.MouseEvent) => {
+    // Don't trigger sort if clicking on resize handle
+    const target = e.target as HTMLElement;
+    if (target.classList.contains('cursor-col-resize')) return;
+    onSortClick(e.shiftKey);
+  };
+
   return (
     <div
-      className="flex items-center gap-1 px-2 h-full overflow-hidden"
+      className="flex items-center gap-1 px-2 h-full overflow-hidden cursor-pointer select-none hover:bg-gray-200"
       style={{ width }}
+      onClick={handleClick}
+      role="columnheader"
+      aria-sort={sortDirection === 'asc' ? 'ascending' : sortDirection === 'desc' ? 'descending' : 'none'}
     >
       {/* Type indicator */}
       <span
@@ -176,6 +196,18 @@ const ColumnHeader = memo(function ColumnHeader({
       <span className="truncate font-medium" title={name}>
         {name}
       </span>
+
+      {/* Sort indicator */}
+      {sortDirection && (
+        <span
+          className="text-blue-600 flex-shrink-0 font-bold text-sm"
+          data-testid={`sort-indicator-${name}`}
+          title={`Sorted ${sortDirection === 'asc' ? 'ascending' : 'descending'}${sortIndex ? ` (${sortIndex})` : ''}`}
+        >
+          {sortDirection === 'asc' ? '▲' : '▼'}
+          {sortIndex && <sup className="text-xs">{sortIndex}</sup>}
+        </span>
+      )}
 
       {/* Primary key indicator */}
       {isPrimaryKey && (
@@ -201,10 +233,12 @@ const ColumnHeader = memo(function ColumnHeader({
         }`}
         onMouseDown={(e) => {
           e.preventDefault();
+          e.stopPropagation();
           onResizeStart();
         }}
         onTouchStart={(e) => {
           e.preventDefault();
+          e.stopPropagation();
           onResizeStart();
         }}
       />
@@ -281,6 +315,8 @@ export const DataGrid = memo(function DataGrid({
   className = '',
   onSelectionChange,
   onColumnResize,
+  sortState: externalSortState,
+  onSortChange,
 }: DataGridProps) {
   // Column widths state
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
@@ -297,11 +333,13 @@ export const DataGrid = memo(function DataGrid({
       tableInfo,
       data,
       isReadOnly,
+      sortState: externalSortState,
+      onSortChange,
     }),
-    [tableInfo, data, isReadOnly]
+    [tableInfo, data, isReadOnly, externalSortState, onSortChange]
   );
 
-  const { table, columns, isEmpty } = useDataGrid(dataGridOptions);
+  const { table, columns, isEmpty, handleSortClick, getSortDirection, getSortIndex } = useDataGrid(dataGridOptions);
 
   // Set up virtualizer
   const { containerRef, virtualItems, totalHeight } = useGridVirtualizer({
@@ -313,15 +351,17 @@ export const DataGrid = memo(function DataGrid({
   // Initialize column widths when columns change
   useEffect(() => {
     if (columns.length > 0) {
-      const newWidths: Record<string, number> = {};
-      columns.forEach((col) => {
-        if (col.id && !(col.id in columnWidths)) {
-          newWidths[col.id] = DEFAULT_COLUMN_WIDTH;
-        }
+      setColumnWidths((prev) => {
+        const newWidths: Record<string, number> = {};
+        let hasNewColumns = false;
+        columns.forEach((col) => {
+          if (col.id && !(col.id in prev)) {
+            newWidths[col.id] = DEFAULT_COLUMN_WIDTH;
+            hasNewColumns = true;
+          }
+        });
+        return hasNewColumns ? { ...prev, ...newWidths } : prev;
       });
-      if (Object.keys(newWidths).length > 0) {
-        setColumnWidths((prev) => ({ ...prev, ...newWidths }));
-      }
     }
   }, [columns]);
 
@@ -338,13 +378,13 @@ export const DataGrid = memo(function DataGrid({
   useEffect(() => {
     if (!resizingColumn) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
+    const handleMove = (clientX: number) => {
       if (resizeStartX.current === 0) {
-        resizeStartX.current = e.clientX;
+        resizeStartX.current = clientX;
         return;
       }
 
-      const delta = e.clientX - resizeStartX.current;
+      const delta = clientX - resizeStartX.current;
       const newWidth = Math.max(MIN_COLUMN_WIDTH, resizeStartWidth.current + delta);
 
       setColumnWidths((prev) => ({
@@ -353,19 +393,32 @@ export const DataGrid = memo(function DataGrid({
       }));
     };
 
-    const handleMouseUp = () => {
+    const handleEnd = () => {
       if (resizingColumn && onColumnResize) {
         onColumnResize(resizingColumn, columnWidths[resizingColumn] || DEFAULT_COLUMN_WIDTH);
       }
       setResizingColumn(null);
     };
 
+    const handleMouseMove = (e: MouseEvent) => handleMove(e.clientX);
+    const handleMouseUp = () => handleEnd();
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length > 0) {
+        handleMove(e.touches[0].clientX);
+      }
+    };
+    const handleTouchEnd = () => handleEnd();
+
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('touchmove', handleTouchMove);
+    document.addEventListener('touchend', handleTouchEnd);
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', handleTouchEnd);
     };
   }, [resizingColumn, onColumnResize, columnWidths]);
 
@@ -456,6 +509,7 @@ export const DataGrid = memo(function DataGrid({
             headerGroup.headers.map((header) => {
               const meta = header.column.columnDef.meta;
               const width = columnWidths[header.column.id] || DEFAULT_COLUMN_WIDTH;
+              const columnId = header.column.id;
               return (
                 <div
                   key={header.id}
@@ -469,8 +523,11 @@ export const DataGrid = memo(function DataGrid({
                     isGenerated={meta?.isGenerated || false}
                     generatedType={meta?.generatedType || null}
                     width={width}
-                    isResizing={resizingColumn === header.column.id}
-                    onResizeStart={() => handleResizeStart(header.column.id)}
+                    isResizing={resizingColumn === columnId}
+                    onResizeStart={() => handleResizeStart(columnId)}
+                    sortDirection={getSortDirection(columnId)}
+                    sortIndex={getSortIndex(columnId)}
+                    onSortClick={(addToSort) => handleSortClick(columnId, addToSort)}
                   />
                 </div>
               );

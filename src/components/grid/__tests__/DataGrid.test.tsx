@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { DataGrid, type DataGridProps } from '../DataGrid';
-import { ROW_HEIGHT } from '../useDataGrid';
+import { ROW_HEIGHT, type SortState } from '../useDataGrid';
 import type { TableInfo, ColumnInfo } from '../../../types';
 
 // =============================================================================
@@ -459,6 +459,112 @@ describe('DataGrid', () => {
       render(<DataGrid tableInfo={tableWithTypes} data={data} height={400} />);
 
       expect(screen.getByText('?')).toBeInTheDocument();
+    });
+  });
+
+  describe('Column Sorting', () => {
+    it('renders no sort indicator initially', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      // Sort indicators use ▲ or ▼ characters
+      expect(screen.queryByText('▲')).not.toBeInTheDocument();
+      expect(screen.queryByText('▼')).not.toBeInTheDocument();
+    });
+
+    it('shows ASC indicator after clicking header', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      // Find and click a column header
+      const nameHeader = screen.getByText('name');
+      fireEvent.click(nameHeader);
+
+      // Should show ascending indicator
+      expect(screen.getByText('▲')).toBeInTheDocument();
+    });
+
+    it('shows DESC indicator after clicking header twice', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      const nameHeader = screen.getByText('name');
+      fireEvent.click(nameHeader);
+      fireEvent.click(nameHeader);
+
+      // Should show descending indicator
+      expect(screen.getByText('▼')).toBeInTheDocument();
+    });
+
+    it('removes indicator after clicking header three times', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      const nameHeader = screen.getByText('name');
+      fireEvent.click(nameHeader);
+      fireEvent.click(nameHeader);
+      fireEvent.click(nameHeader);
+
+      // Sort indicator should be removed
+      expect(screen.queryByText('▲')).not.toBeInTheDocument();
+      expect(screen.queryByText('▼')).not.toBeInTheDocument();
+    });
+
+    it('calls onSortChange when sort changes', () => {
+      const onSortChange = vi.fn();
+      render(<DataGrid {...defaultProps} onSortChange={onSortChange} />);
+
+      const nameHeader = screen.getByText('name');
+      fireEvent.click(nameHeader);
+
+      expect(onSortChange).toHaveBeenCalledWith([{ column: 'name', direction: 'asc' }]);
+    });
+
+    it('adds to sort array with shift+click', () => {
+      // Use controlled component pattern to test multi-column sort
+      let currentSortState: SortState = [];
+      const onSortChange = vi.fn((newState: SortState) => {
+        currentSortState = newState;
+      });
+
+      const { rerender } = render(
+        <DataGrid {...defaultProps} sortState={currentSortState} onSortChange={onSortChange} />
+      );
+
+      // First click - primary sort
+      const nameHeader = screen.getByText('name');
+      fireEvent.click(nameHeader);
+
+      // Rerender with updated state
+      rerender(
+        <DataGrid {...defaultProps} sortState={currentSortState} onSortChange={onSortChange} />
+      );
+
+      // Shift+click - add secondary sort
+      const ageHeader = screen.getByText('age');
+      fireEvent.click(ageHeader, { shiftKey: true });
+
+      expect(onSortChange).toHaveBeenLastCalledWith([
+        { column: 'name', direction: 'asc' },
+        { column: 'age', direction: 'asc' },
+      ]);
+    });
+
+    it('uses external sort state when provided', () => {
+      const externalSortState: SortState = [{ column: 'email', direction: 'desc' }];
+      render(<DataGrid {...defaultProps} sortState={externalSortState} />);
+
+      // Should show descending indicator on email column
+      const emailSortIndicator = screen.getByTestId('sort-indicator-email');
+      expect(emailSortIndicator).toBeInTheDocument();
+      expect(emailSortIndicator).toHaveTextContent('▼');
+    });
+
+    it('shows aria-sort attribute on sorted column', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      const nameHeader = screen.getByText('name');
+      fireEvent.click(nameHeader);
+
+      // Find the column header container with aria-sort
+      const sortedHeader = screen.getByRole('columnheader', { name: /name/i });
+      expect(sortedHeader).toHaveAttribute('aria-sort', 'ascending');
     });
   });
 });

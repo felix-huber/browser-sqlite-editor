@@ -8,7 +8,7 @@
  * - Virtual scrolling support via row height configuration
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import {
   useReactTable,
   getCoreRowModel,
@@ -48,6 +48,20 @@ export interface PaginationState {
   direction: 'forward' | 'backward';
 }
 
+/** Sort direction for a column */
+export type SortDirection = 'asc' | 'desc';
+
+/** Single column sort specification */
+export interface ColumnSort {
+  /** Column name to sort by */
+  column: string;
+  /** Sort direction */
+  direction: SortDirection;
+}
+
+/** Sort state as array for multi-column support */
+export type SortState = ColumnSort[];
+
 /** Options for useDataGrid hook */
 export interface UseDataGridOptions {
   /** Table schema information */
@@ -58,6 +72,10 @@ export interface UseDataGridOptions {
   isReadOnly?: boolean;
   /** Pagination state */
   pagination?: PaginationState;
+  /** Sort state for columns */
+  sortState?: SortState;
+  /** Called when sort state changes */
+  onSortChange?: (sortState: SortState) => void;
 }
 
 /** Return type for useDataGrid hook */
@@ -70,6 +88,14 @@ export interface UseDataGridResult {
   hasData: boolean;
   /** Whether the grid is empty (no schema) */
   isEmpty: boolean;
+  /** Current sort state */
+  sortState: SortState;
+  /** Handle column header click for sorting */
+  handleSortClick: (columnId: string, addToSort: boolean) => void;
+  /** Get sort direction for a column */
+  getSortDirection: (columnId: string) => SortDirection | null;
+  /** Get sort index for multi-column sort (1-based, null if not sorted) */
+  getSortIndex: (columnId: string) => number | null;
 }
 
 // =============================================================================
@@ -108,6 +134,25 @@ export function createColumnDefs(tableInfo: TableInfo | null): ColumnDef<DataRow
 // =============================================================================
 
 /**
+ * Generate ORDER BY clause from sort state
+ *
+ * @param sortState - Array of column sort specifications
+ * @returns SQL ORDER BY clause (without ORDER BY prefix) or empty string
+ */
+export function generateOrderByClause(sortState: SortState): string {
+  if (sortState.length === 0) {
+    return '';
+  }
+
+  return sortState
+    .map(({ column, direction }) => {
+      const escapedColumn = `"${column.replace(/"/g, '""')}"`;
+      return `${escapedColumn} ${direction.toUpperCase()}`;
+    })
+    .join(', ');
+}
+
+/**
  * Generate SQL LIMIT/OFFSET clause for cursor-based pagination
  *
  * Uses rowid for cursor-based pagination which is more efficient than
@@ -140,13 +185,14 @@ export function generatePaginationClause(
 }
 
 /**
- * Generate complete SELECT query with pagination
+ * Generate complete SELECT query with pagination and sorting
  */
 export function generatePaginatedQuery(
   tableName: string,
   columns: string[],
   pagination: PaginationState,
   withoutRowid: boolean = false,
+  sortState: SortState = [],
 ): { sql: string; params: unknown[] } {
   const escapedTable = `"${tableName.replace(/"/g, '""')}"`;
   const escapedColumns = columns.map((c) => `"${c.replace(/"/g, '""')}"`).join(', ');
@@ -160,7 +206,29 @@ export function generatePaginatedQuery(
   // Include rowid for cursor pagination (if not WITHOUT ROWID)
   const selectColumns = withoutRowid ? escapedColumns : `rowid, ${escapedColumns}`;
 
-  const sql = `SELECT ${selectColumns} FROM ${escapedTable} ${paginationSql}`;
+  // Generate ORDER BY clause
+  const orderBy = generateOrderByClause(sortState);
+  const orderByClause = orderBy ? `ORDER BY ${orderBy}` : '';
+
+  // Build the query - ORDER BY comes before LIMIT
+  let sql = `SELECT ${selectColumns} FROM ${escapedTable}`;
+
+  // Handle WHERE clause from pagination (if using cursor)
+  if (paginationSql.startsWith('WHERE')) {
+    const parts = paginationSql.split('ORDER BY');
+    sql += ` ${parts[0].trim()}`;
+    if (orderBy) {
+      sql += ` ${orderByClause}`;
+    } else if (parts[1]) {
+      sql += ` ORDER BY ${parts[1].split('LIMIT')[0].trim()}`;
+    }
+    sql += ` LIMIT ?`;
+  } else {
+    if (orderBy) {
+      sql += ` ${orderByClause}`;
+    }
+    sql += ` ${paginationSql}`;
+  }
 
   return { sql, params };
 }
@@ -176,7 +244,13 @@ export function generatePaginatedQuery(
  * @returns Table instance and derived state
  */
 export function useDataGrid(options: UseDataGridOptions): UseDataGridResult {
-  const { tableInfo, data, isReadOnly = false, pagination } = options;
+  const { tableInfo, data, isReadOnly = false, pagination, sortState: externalSortState, onSortChange } = options;
+
+  // Internal sort state (used if no external state provided)
+  const [internalSortState, setInternalSortState] = useState<SortState>([]);
+
+  // Use external sort state if provided, otherwise use internal
+  const sortState = externalSortState ?? internalSortState;
 
   // Generate column definitions from schema
   const columns = useMemo(() => createColumnDefs(tableInfo), [tableInfo]);
@@ -196,11 +270,93 @@ export function useDataGrid(options: UseDataGridOptions): UseDataGridResult {
   const hasData = data.length > 0;
   const isEmpty = !tableInfo || tableInfo.columns.length === 0;
 
+  /**
+   * Handle column header click for sorting
+   * Click cycles: unsorted → ASC → DESC → unsorted
+   * Shift+click adds to multi-column sort
+   */
+  const handleSortClick = useCallback(
+    (columnId: string, addToSort: boolean) => {
+      const updateSortState = (newState: SortState) => {
+        if (onSortChange) {
+          onSortChange(newState);
+        } else {
+          setInternalSortState(newState);
+        }
+      };
+
+      const existingIndex = sortState.findIndex((s) => s.column === columnId);
+
+      if (addToSort) {
+        // Shift+click: add to multi-column sort
+        if (existingIndex >= 0) {
+          const existing = sortState[existingIndex];
+          if (existing.direction === 'asc') {
+            // ASC → DESC
+            const newState = [...sortState];
+            newState[existingIndex] = { ...existing, direction: 'desc' };
+            updateSortState(newState);
+          } else {
+            // DESC → remove from sort
+            const newState = sortState.filter((_, i) => i !== existingIndex);
+            updateSortState(newState);
+          }
+        } else {
+          // Add new column to sort
+          updateSortState([...sortState, { column: columnId, direction: 'asc' }]);
+        }
+      } else {
+        // Regular click: single column sort
+        if (existingIndex >= 0 && sortState.length === 1) {
+          const existing = sortState[0];
+          if (existing.direction === 'asc') {
+            // ASC → DESC
+            updateSortState([{ column: columnId, direction: 'desc' }]);
+          } else {
+            // DESC → unsorted
+            updateSortState([]);
+          }
+        } else {
+          // Start new sort (replace existing)
+          updateSortState([{ column: columnId, direction: 'asc' }]);
+        }
+      }
+    },
+    [sortState, onSortChange]
+  );
+
+  /**
+   * Get sort direction for a column
+   */
+  const getSortDirection = useCallback(
+    (columnId: string): SortDirection | null => {
+      const sort = sortState.find((s) => s.column === columnId);
+      return sort?.direction ?? null;
+    },
+    [sortState]
+  );
+
+  /**
+   * Get sort index for multi-column sort (1-based, null if not sorted)
+   */
+  const getSortIndex = useCallback(
+    (columnId: string): number | null => {
+      if (sortState.length <= 1) return null;
+      const index = sortState.findIndex((s) => s.column === columnId);
+      return index >= 0 ? index + 1 : null;
+    },
+    [sortState]
+  );
+
   return {
     table,
     columns,
     hasData,
     isEmpty,
+    sortState,
+    handleSortClick,
+    getSortDirection,
+    getSortIndex,
   };
 }
 
