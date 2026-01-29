@@ -24,6 +24,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { parseCSVFile, type ParseResult as CSVParseResult } from '../../lib/csv';
 import { parseJSONFile, type ParseResult as JSONParseResult } from '../../lib/json';
 import { ProgressBar } from '../common/ProgressBar';
+import { ImportPreview, type PreviewColumn } from './ImportPreview';
 
 export type ImportFormat = 'csv' | 'json' | 'auto';
 export type ImportTarget = 'new' | 'append';
@@ -63,7 +64,7 @@ const PROGRESS_THRESHOLD = 100 * 1024;
 type DialogState = 'initial' | 'parsing' | 'preview' | 'importing' | 'error';
 
 interface ParsedData {
-  columns: Array<{ name: string; type: string }>;
+  columns: PreviewColumn[];
   rows: unknown[][];
 }
 
@@ -244,8 +245,15 @@ export function ImportDialog({
         setParseProgress(100);
       }
 
+      // Convert columns to PreviewColumn format (with originalName)
+      const previewColumns: PreviewColumn[] = result.columns.map((col) => ({
+        name: col.name,
+        originalName: 'originalName' in col ? (col as { originalName?: string }).originalName : col.name,
+        type: col.type,
+      }));
+
       setParsedData({
-        columns: result.columns,
+        columns: previewColumns,
         rows: result.rows,
       });
       setDialogState('preview');
@@ -322,8 +330,16 @@ export function ImportDialog({
       }
 
       setParseProgress(100);
+
+      // Convert columns to PreviewColumn format (with originalName)
+      const previewColumns: PreviewColumn[] = result.columns.map((col) => ({
+        name: col.name,
+        originalName: 'originalName' in col ? (col as { originalName?: string }).originalName : col.name,
+        type: col.type,
+      }));
+
       setParsedData({
-        columns: result.columns,
+        columns: previewColumns,
         rows: result.rows,
       });
       setDialogState('preview');
@@ -342,6 +358,27 @@ export function ImportDialog({
       setTableName(generateTableName(file.name));
     }
   }, [existingTables, file]);
+
+  // Handle column changes (type override)
+  const handleColumnsChange = useCallback((newColumns: PreviewColumn[]) => {
+    if (!parsedData) return;
+    setParsedData({
+      ...parsedData,
+      columns: newColumns,
+    });
+  }, [parsedData]);
+
+  // Handle column rename
+  const handleColumnRename = useCallback((index: number, newName: string) => {
+    if (!parsedData) return;
+    const newColumns = parsedData.columns.map((col, i) =>
+      i === index ? { ...col, name: newName } : col
+    );
+    setParsedData({
+      ...parsedData,
+      columns: newColumns,
+    });
+  }, [parsedData]);
 
   // Handle import
   const handleImport = useCallback(async () => {
@@ -713,55 +750,14 @@ export function ImportDialog({
                 )}
               </div>
 
-              {/* Data Preview */}
-              <div>
-                <label className="block text-sm font-medium text-navy-700 mb-2">
-                  Preview ({Math.min(PREVIEW_ROWS, parsedData.rows.length)} of {parsedData.rows.length.toLocaleString()} rows)
-                </label>
-                <div className="border border-navy-200 rounded-lg overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm" data-testid="preview-table">
-                      <thead className="bg-navy-50">
-                        <tr>
-                          {parsedData.columns.map((col, i) => (
-                            <th
-                              key={i}
-                              className="px-3 py-2 text-left font-medium text-navy-700 border-r border-navy-200 last:border-r-0 whitespace-nowrap"
-                            >
-                              {col.name}
-                              <span className="ml-1 text-xs text-navy-400 font-normal">
-                                ({col.type})
-                              </span>
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {parsedData.rows.slice(0, PREVIEW_ROWS).map((row, rowIdx) => (
-                          <tr
-                            key={rowIdx}
-                            className="border-t border-navy-200 hover:bg-navy-50"
-                          >
-                            {row.map((cell, cellIdx) => (
-                              <td
-                                key={cellIdx}
-                                className="px-3 py-2 text-navy-900 border-r border-navy-200 last:border-r-0 max-w-[200px] truncate"
-                                title={cell === null ? 'NULL' : String(cell)}
-                              >
-                                {cell === null ? (
-                                  <span className="text-navy-400 italic">NULL</span>
-                                ) : (
-                                  String(cell)
-                                )}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
+              {/* Data Preview with type overrides */}
+              <ImportPreview
+                columns={parsedData.columns}
+                rows={parsedData.rows}
+                onColumnsChange={handleColumnsChange}
+                onColumnRename={handleColumnRename}
+                maxPreviewRows={PREVIEW_ROWS}
+              />
             </>
           )}
 

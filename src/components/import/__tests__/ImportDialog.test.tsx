@@ -360,10 +360,12 @@ describe('ImportDialog', () => {
       fireEvent.change(fileInput, { target: { files: [file] } });
 
       await waitFor(() => {
-        expect(screen.getByText('id')).toBeInTheDocument();
-        expect(screen.getByText('(INTEGER)')).toBeInTheDocument();
-        expect(screen.getByText('name')).toBeInTheDocument();
-        expect(screen.getByText('(TEXT)')).toBeInTheDocument();
+        // Column names shown
+        expect(screen.getByTestId('column-name-0')).toHaveTextContent('id');
+        expect(screen.getByTestId('column-name-1')).toHaveTextContent('name');
+        // Types shown in dropdowns
+        expect(screen.getByTestId('type-dropdown-0')).toHaveValue('INTEGER');
+        expect(screen.getByTestId('type-dropdown-1')).toHaveValue('TEXT');
       });
     });
 
@@ -376,7 +378,7 @@ describe('ImportDialog', () => {
       fireEvent.change(fileInput, { target: { files: [file] } });
 
       await waitFor(() => {
-        expect(screen.getByText(/2 of 2 rows/)).toBeInTheDocument();
+        expect(screen.getByText(/Previewing 2 of 2 rows/)).toBeInTheDocument();
       });
     });
 
