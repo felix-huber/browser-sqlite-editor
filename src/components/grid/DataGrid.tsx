@@ -125,23 +125,49 @@ interface CellProps {
 }
 
 const CellRenderer = memo(function CellRenderer({ value }: CellProps) {
+  // NULL values: italic gray "(null)" - distinguishable from literal string "null"
   if (value === null) {
-    return <span className="text-gray-400 italic">NULL</span>;
-  }
-
-  if (value instanceof Uint8Array) {
     return (
-      <span className="text-purple-600 font-mono text-xs">
-        BLOB ({value.length} bytes)
+      <span
+        className="italic"
+        style={{ color: '#6b7280' }}
+        aria-label="NULL value"
+        data-testid="cell-null"
+      >
+        (null)
       </span>
     );
   }
 
+  // BLOB values: monospace, gray background, "[BLOB, N bytes]" format
+  if (value instanceof Uint8Array) {
+    const byteCount = value.length;
+    return (
+      <span
+        className="font-mono text-xs px-1 rounded"
+        style={{ backgroundColor: '#f3f4f6', color: '#6b7280' }}
+        aria-label={`Binary data, ${byteCount} bytes`}
+        data-testid="cell-blob"
+      >
+        [BLOB, {byteCount} bytes]
+      </span>
+    );
+  }
+
+  // Numeric values: monospace tabular nums
   if (typeof value === 'number') {
     return <span className="font-mono tabular-nums">{value}</span>;
   }
 
+  // Text values: rendered as-is via React (auto-escapes HTML entities)
+  // This prevents XSS - any HTML/script tags are displayed as literal text
   const stringValue = String(value);
+
+  // Empty string: render empty cell (not NULL)
+  if (stringValue === '') {
+    return <span data-testid="cell-empty"></span>;
+  }
+
   // Truncate long values
   if (stringValue.length > 100) {
     return (
@@ -221,6 +247,20 @@ const FilterPopover = memo(function FilterPopover({
       return;
     }
 
+    // Validate numeric inputs
+    if (typeCategory === 'numeric' && needsValue) {
+      const parsed = parseFloat(value);
+      if (Number.isNaN(parsed)) {
+        return; // Don't apply filters with invalid numeric values
+      }
+    }
+    if (needsSecondValue) {
+      const parsed2 = parseFloat(value2);
+      if (Number.isNaN(parsed2)) {
+        return;
+      }
+    }
+
     const filter: ColumnFilter = {
       column: columnName,
       operator: operator as ColumnFilter['operator'],
@@ -228,14 +268,14 @@ const FilterPopover = memo(function FilterPopover({
 
     if (needsValue) {
       if (typeCategory === 'numeric') {
-        filter.value = parseFloat(value) || 0;
+        filter.value = parseFloat(value);
       } else {
         filter.value = value;
       }
     }
 
     if (needsSecondValue) {
-      filter.value2 = parseFloat(value2) || 0;
+      filter.value2 = parseFloat(value2);
     }
 
     onApplyFilter(filter);
