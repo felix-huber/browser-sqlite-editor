@@ -1,7 +1,8 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { useState, useCallback, useRef, useMemo } from 'react'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
 import type { CodeMirrorEditorHandle, ErrorLocation } from './CodeMirrorEditor'
 import { SqlErrorPanel, parseError } from './SqlErrorPanel'
+import { QueryHistoryDropdown } from './QueryHistoryDropdown'
 import type { QueryResult, SqlError, QueryHistoryItem } from '../../types'
 
 /**
@@ -101,6 +102,10 @@ export interface SqlEditorPanelProps {
   onCancel?: () => void
   /** Query history for dropdown */
   history?: QueryHistoryItem[]
+  /** Callback to delete a history item by index */
+  onHistoryDelete?: (index: number) => void
+  /** Callback to clear all history */
+  onHistoryClear?: () => void
   /** Whether the database is in read-only mode */
   isReadOnly?: boolean
   /** Initial SQL value */
@@ -116,6 +121,8 @@ export function SqlEditorPanel({
   onExecute,
   onCancel,
   history = [],
+  onHistoryDelete,
+  onHistoryClear,
   isReadOnly = false,
   initialValue = '',
   className = '',
@@ -125,10 +132,8 @@ export function SqlEditorPanel({
   const [errors, setErrors] = useState<SqlError[]>([])
   const [results, setResults] = useState<QueryResult | null>(null)
   const [executionTime, setExecutionTime] = useState<number | null>(null)
-  const [showHistory, setShowHistory] = useState(false)
   const [readOnlyWarning, setReadOnlyWarning] = useState<string | null>(null)
 
-  const historyRef = useRef<HTMLDivElement>(null)
   const editorContainerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<CodeMirrorEditorHandle>(null)
 
@@ -150,17 +155,6 @@ export function SqlEditorPanel({
   // Jump to error location in editor
   const handleJumpToLocation = useCallback((line: number, column?: number) => {
     editorRef.current?.jumpToLocation(line, column)
-  }, [])
-
-  // Close history dropdown when clicking outside
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (historyRef.current && !historyRef.current.contains(event.target as Node)) {
-        setShowHistory(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
   const executeQuery = useCallback(async () => {
@@ -232,7 +226,6 @@ export function SqlEditorPanel({
 
   const handleHistorySelect = useCallback((item: QueryHistoryItem) => {
     setSql(item.sql)
-    setShowHistory(false)
     // Clear previous results when loading from history
     setErrors([])
     setResults(null)
@@ -326,59 +319,12 @@ export function SqlEditorPanel({
         <div className="flex-1" />
 
         {/* History dropdown */}
-        {history.length > 0 && (
-          <div className="relative" ref={historyRef}>
-            <button
-              onClick={() => setShowHistory(!showHistory)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-navy-700 bg-white border border-navy-300 rounded hover:bg-navy-50 transition-colors"
-              data-testid="history-button"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-              History
-              <svg
-                className={`w-4 h-4 transition-transform ${showHistory ? 'rotate-180' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 9l-7 7-7-7"
-                />
-              </svg>
-            </button>
-
-            {showHistory && (
-              <div
-                className="absolute right-0 mt-1 w-80 max-h-64 overflow-auto bg-white border border-navy-200 rounded-lg shadow-lg z-10"
-                data-testid="history-dropdown"
-              >
-                {history.map((item, index) => (
-                  <button
-                    key={index}
-                    onClick={() => handleHistorySelect(item)}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-navy-50 border-b border-navy-100 last:border-b-0"
-                    data-testid={`history-item-${index}`}
-                  >
-                    <div className="font-mono text-navy-900 truncate">{item.sql}</div>
-                    <div className="text-xs text-navy-500 mt-0.5">
-                      {new Date(item.executedAt).toLocaleString()}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        <QueryHistoryDropdown
+          history={history}
+          onSelect={handleHistorySelect}
+          onDelete={onHistoryDelete}
+          onClear={onHistoryClear}
+        />
 
         {/* Keyboard shortcut hint */}
         <span className="text-xs text-navy-400">

@@ -4,6 +4,12 @@
  * Manages per-database query history stored in localStorage.
  * Keys are prefixed with "qh:" followed by the database name.
  *
+ * Features:
+ * - Max 50 entries per database (FIFO when full)
+ * - Consecutive deduplication (same query not added twice in a row)
+ * - Max 10KB per query (truncated if larger)
+ * - Quota exceeded handling (removes oldest entries until save succeeds)
+ *
  * Also provides migration utilities for renaming databases.
  */
 
@@ -17,7 +23,10 @@ import type { QueryHistoryItem } from '../types';
 const STORAGE_PREFIX = 'qh:';
 
 /** Maximum history items per database */
-const MAX_HISTORY_ITEMS = 100;
+const MAX_HISTORY_ITEMS = 50;
+
+/** Maximum size of a single query in bytes */
+const MAX_QUERY_SIZE_BYTES = 10 * 1024; // 10KB
 
 // =============================================================================
 // Key Management
@@ -63,7 +72,41 @@ export function loadHistory(dbName: string): QueryHistoryItem[] {
 }
 
 /**
- * Save query history for a database
+ * Truncate a query to max size if needed
+ *
+ * @param sql - SQL query to truncate
+ * @returns Truncated query
+ */
+function truncateQuery(sql: string): string {
+  // Use TextEncoder to get byte length
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(sql);
+
+  if (bytes.length <= MAX_QUERY_SIZE_BYTES) {
+    return sql;
+  }
+
+  // Binary search for the right truncation point
+  let low = 0;
+  let high = sql.length;
+
+  while (low < high) {
+    const mid = Math.floor((low + high + 1) / 2);
+    const truncated = sql.slice(0, mid);
+    if (encoder.encode(truncated).length <= MAX_QUERY_SIZE_BYTES - 3) {
+      // -3 for "..."
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return sql.slice(0, low) + '...';
+}
+
+/**
+ * Save query history for a database with quota exceeded handling.
+ * If save fails due to quota, removes oldest entries until it succeeds.
  *
  * @param dbName - Database name
  * @param history - History items to save
@@ -72,19 +115,47 @@ export function loadHistory(dbName: string): QueryHistoryItem[] {
 export function saveHistory(dbName: string, history: QueryHistoryItem[]): boolean {
   const key = getStorageKey(dbName);
 
-  try {
-    // Limit to max items
-    const trimmed = history.slice(0, MAX_HISTORY_ITEMS);
-    localStorage.setItem(key, JSON.stringify(trimmed));
-    return true;
-  } catch (error) {
-    console.error(`Failed to save query history for "${dbName}":`, error);
-    return false;
+  // Limit to max items
+  let items = history.slice(0, MAX_HISTORY_ITEMS);
+
+  // Try saving, removing oldest entries if quota exceeded
+  while (true) {
+    try {
+      localStorage.setItem(key, JSON.stringify(items));
+      return true;
+    } catch (error) {
+      // Check if it's a quota exceeded error
+      if (
+        error instanceof DOMException &&
+        (error.name === 'QuotaExceededError' || error.code === 22)
+      ) {
+        // If we have items, remove oldest entry and try again
+        if (items.length > 0) {
+          items = items.slice(0, -1);
+          continue;
+        }
+        // Empty array still failed - give up
+        break;
+      }
+      // Other error, log and fail
+      console.error(`Failed to save query history for "${dbName}":`, error);
+      return false;
+    }
   }
+
+  // All entries removed but still can't save - clear the key
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Ignore - we tried our best
+  }
+  return false;
 }
 
 /**
- * Add a query to the history
+ * Add a query to the history.
+ * Only adds if not a duplicate of the most recent query (consecutive deduplication).
+ * Large queries are truncated to 10KB.
  *
  * @param dbName - Database name
  * @param sql - SQL query to add
@@ -93,17 +164,41 @@ export function saveHistory(dbName: string, history: QueryHistoryItem[]): boolea
 export function addToHistory(dbName: string, sql: string): boolean {
   const history = loadHistory(dbName);
 
+  // Truncate query if too large
+  const truncatedSql = truncateQuery(sql);
+
+  // Check for consecutive duplicate (don't add if same as most recent)
+  if (history.length > 0 && history[0].sql === truncatedSql) {
+    return true; // Nothing to do, already at top
+  }
+
   // Add new item at the beginning
   const newItem: QueryHistoryItem = {
-    sql,
+    sql: truncatedSql,
     executedAt: new Date().toISOString(),
   };
 
-  // Remove duplicate if exists (keep the newer one)
-  const filtered = history.filter((item) => item.sql !== sql);
-  filtered.unshift(newItem);
+  history.unshift(newItem);
 
-  return saveHistory(dbName, filtered);
+  return saveHistory(dbName, history);
+}
+
+/**
+ * Remove a specific history item by index
+ *
+ * @param dbName - Database name
+ * @param index - Index of item to remove (0-based)
+ * @returns true if removed successfully
+ */
+export function removeHistoryItem(dbName: string, index: number): boolean {
+  const history = loadHistory(dbName);
+
+  if (index < 0 || index >= history.length) {
+    return false;
+  }
+
+  history.splice(index, 1);
+  return saveHistory(dbName, history);
 }
 
 /**
@@ -197,5 +292,7 @@ export function hasHistory(dbName: string): boolean {
 export const _testing = {
   STORAGE_PREFIX,
   MAX_HISTORY_ITEMS,
+  MAX_QUERY_SIZE_BYTES,
   getStorageKey,
+  truncateQuery,
 };
