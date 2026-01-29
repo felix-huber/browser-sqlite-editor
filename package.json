@@ -30,6 +30,8 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@journeyapps/wa-sqlite": "^1.4.1",
+    "@tanstack/react-table": "^8.20.6",
+    "@tanstack/react-virtual": "^3.11.2",
     "@types/papaparse": "^5.5.2",
     "@xyflow/react": "^12.10.0",
     "papaparse": "^5.5.3",
