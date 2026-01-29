@@ -58,6 +58,10 @@ export interface DatabaseStoreState {
   persistenceStatus: PersistenceStatus;
   /** Last persistence error message (when status is 'error') */
   persistenceError: string | null;
+  /** Number of consecutive failed IDB save attempts */
+  failedSaveAttempts: number;
+  /** Timestamp of last successful save (ISO 8601) */
+  lastSuccessfulSave: string | null;
 }
 
 /**
@@ -80,6 +84,10 @@ export interface DatabaseStoreActions {
   setStorageMode: (mode: StorageMode | null) => void;
   /** Set persistence status */
   setPersistenceStatus: (status: PersistenceStatus, error?: string | null) => void;
+  /** Increment failed save attempts counter */
+  incrementFailedSaveAttempts: () => void;
+  /** Clear failed save attempts and update last successful save timestamp */
+  clearFailedSaveAttempts: () => void;
   /** Reset the store to initial state */
   reset: () => void;
 }
@@ -106,6 +114,8 @@ const initialState: DatabaseStoreState = {
   storageMode: null,
   persistenceStatus: 'saved',
   persistenceError: null,
+  failedSaveAttempts: 0,
+  lastSuccessfulSave: null,
 };
 
 // =============================================================================
@@ -141,6 +151,12 @@ export const useDatabaseStore = create<DatabaseStore>((set) => ({
 
   setPersistenceStatus: (persistenceStatus, error = null) =>
     set({ persistenceStatus, persistenceError: error }),
+
+  incrementFailedSaveAttempts: () =>
+    set((state) => ({ failedSaveAttempts: state.failedSaveAttempts + 1 })),
+
+  clearFailedSaveAttempts: () =>
+    set({ failedSaveAttempts: 0, lastSuccessfulSave: new Date().toISOString() }),
 
   reset: () => set(initialState),
 }));
@@ -244,6 +260,27 @@ export function useCanWrite(): boolean {
   return useDatabaseStore(
     (state) => !state.isReadOnly && state.storageStatus !== 'quota_exceeded'
   );
+}
+
+/**
+ * Get the number of failed save attempts
+ */
+export function useFailedSaveAttempts(): number {
+  return useDatabaseStore((state) => state.failedSaveAttempts);
+}
+
+/**
+ * Get the last successful save timestamp
+ */
+export function useLastSuccessfulSave(): string | null {
+  return useDatabaseStore((state) => state.lastSuccessfulSave);
+}
+
+/**
+ * Check if persistence is in degraded state (after 3+ failed save attempts)
+ */
+export function useIsDegradedPersistence(): boolean {
+  return useDatabaseStore((state) => state.storageStatus === 'degraded');
 }
 
 // =============================================================================
