@@ -11,6 +11,7 @@
 import { useCallback, useRef, useEffect, useState } from 'react';
 import { useDatabases } from '../../store';
 import { DropZone } from '../common/DropZone';
+import { OpenDatabaseButton } from '../layout/OpenDatabaseButton';
 
 /** MIME types for file input accept attribute */
 const ACCEPTED_MIME_TYPES =
@@ -151,11 +152,6 @@ export function Welcome({
     [onImportFiles]
   );
 
-  // Open file picker
-  const handleImportClick = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
-
   const shortcutKey = isMac() ? '⌘N' : 'Ctrl+N';
   const recentDatabases = showRecentDatabases ? databases.slice(0, 5) : [];
 
@@ -204,14 +200,13 @@ export function Welcome({
             <span className="ml-2 text-navy-300 text-sm">{shortcutKey}</span>
           </button>
 
-          <button
-            onClick={handleImportClick}
-            className="px-5 py-2.5 bg-white text-navy-700 font-medium rounded-lg border border-navy-300 hover:bg-navy-50 focus:outline-none focus:ring-2 focus:ring-navy-600 focus:ring-offset-2 transition-colors"
-            data-testid="import-database-button"
-          >
-            Import Database
-          </button>
+          <OpenDatabaseButton
+            onFileSelect={handleSqliteFile}
+            prominent
+            testId="import-database-button"
+          />
 
+          {/* Legacy file input for CSV/JSON imports */}
           <input
             ref={fileInputRef}
             type="file"

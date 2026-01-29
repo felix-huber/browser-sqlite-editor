@@ -1,16 +1,25 @@
 import { useState, type ReactNode } from 'react'
+import { OpenDatabaseButton } from './OpenDatabaseButton'
 
 interface AppShellProps {
   children?: ReactNode
+  /** Callback when a SQLite file is selected via Open Database */
+  onOpenDatabase?: (file: File) => void
+  /** Callback when "New Database" is clicked */
+  onNewDatabase?: () => void
 }
 
-export function AppShell({ children }: AppShellProps) {
+export function AppShell({ children, onOpenDatabase, onNewDatabase }: AppShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   return (
     <div className="h-screen flex flex-col bg-navy-50 text-navy-900">
       {/* Header */}
-      <Header onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)} />
+      <Header
+        onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+        onOpenDatabase={onOpenDatabase}
+        onNewDatabase={onNewDatabase}
+      />
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
@@ -29,7 +38,13 @@ export function AppShell({ children }: AppShellProps) {
   )
 }
 
-function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
+interface HeaderProps {
+  onToggleSidebar: () => void
+  onOpenDatabase?: (file: File) => void
+  onNewDatabase?: () => void
+}
+
+function Header({ onToggleSidebar, onOpenDatabase, onNewDatabase }: HeaderProps) {
   return (
     <header className="h-12 bg-white border-b border-navy-200 flex items-center px-4 gap-4 shrink-0">
       {/* Logo */}
@@ -54,10 +69,12 @@ function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
 
       {/* Actions */}
       <div className="flex items-center gap-1">
-        <button className="px-3 py-1.5 text-sm font-medium text-navy-700 hover:bg-navy-100 rounded transition-colors">
-          Open Database
-        </button>
-        <button className="px-3 py-1.5 text-sm font-medium text-navy-700 hover:bg-navy-100 rounded transition-colors">
+        <OpenDatabaseButton onFileSelect={onOpenDatabase} />
+        <button
+          onClick={onNewDatabase}
+          className="px-3 py-1.5 text-sm font-medium text-navy-700 hover:bg-navy-100 rounded transition-colors"
+          data-testid="header-new-database-button"
+        >
           New Database
         </button>
       </div>

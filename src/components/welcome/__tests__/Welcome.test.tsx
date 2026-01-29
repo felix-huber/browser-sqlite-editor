@@ -61,12 +61,12 @@ describe('Welcome', () => {
     expect(button).toHaveTextContent('New Database');
   });
 
-  it('renders Import Database button', () => {
+  it('renders Open Database button (file picker)', () => {
     render(<Welcome {...defaultProps} />);
 
     const button = screen.getByTestId('import-database-button');
     expect(button).toBeInTheDocument();
-    expect(button).toHaveTextContent('Import Database');
+    expect(button).toHaveTextContent('Open Database');
   });
 
   it('renders drop zone', () => {
@@ -137,11 +137,12 @@ describe('Welcome', () => {
   });
 
   describe('Import Database action', () => {
-    it('opens file picker when Import button is clicked', () => {
+    it('opens file picker when Open Database button is clicked', () => {
       render(<Welcome {...defaultProps} />);
 
-      const fileInput = screen.getByTestId('file-input') as HTMLInputElement;
-      const clickSpy = vi.spyOn(fileInput, 'click');
+      // The OpenDatabaseButton component has its own internal file input
+      const openDbFileInput = screen.getByTestId('open-database-file-input') as HTMLInputElement;
+      const clickSpy = vi.spyOn(openDbFileInput, 'click');
 
       fireEvent.click(screen.getByTestId('import-database-button'));
 
