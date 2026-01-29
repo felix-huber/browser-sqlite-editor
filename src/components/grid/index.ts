@@ -41,6 +41,8 @@ export {
   type UseGridVirtualizerResult,
 } from './useGridVirtualizer';
 
-export { DataGrid, type DataGridProps, type AddRowResult } from './DataGrid';
+export { DataGrid, type DataGridProps, type AddRowResult, type DeleteRowsResult } from './DataGrid';
 
 export { AddRowDialog, type AddRowDialogProps } from './AddRowDialog';
+
+export { DeleteRowsDialog, type DeleteRowsDialogProps } from './DeleteRowsDialog';

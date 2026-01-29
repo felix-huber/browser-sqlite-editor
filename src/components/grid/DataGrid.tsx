@@ -29,6 +29,7 @@ import {
 } from './useDataGrid';
 import { useGridVirtualizer } from './useGridVirtualizer';
 import { AddRowDialog } from './AddRowDialog';
+import { DeleteRowsDialog } from './DeleteRowsDialog';
 import type { TableInfo, ColumnInfo } from '../../types';
 
 // =============================================================================
@@ -59,6 +60,16 @@ export interface AddRowResult {
   needsForm?: boolean;
   /** Error message if failed */
   error?: string;
+}
+
+/** Result of delete rows attempt */
+export interface DeleteRowsResult {
+  /** Whether the delete succeeded */
+  success: boolean;
+  /** Error message if failed */
+  error?: string;
+  /** Number of rows deleted (may differ from requested if some already gone) */
+  deletedCount?: number;
 }
 
 export interface DataGridProps {
@@ -96,6 +107,15 @@ export interface DataGridProps {
   onAddRow?: (values?: Record<string, unknown>) => Promise<AddRowResult>;
   /** Called after a successful row insert with the new row index */
   onRowAdded?: (rowIndex: number) => void;
+  /**
+   * Called when delete rows is requested.
+   * Receives the row indices to delete.
+   */
+  onDeleteRows?: (rowIndices: number[]) => Promise<DeleteRowsResult>;
+  /** Called after rows are deleted with the count of deleted rows */
+  onRowsDeleted?: (count: number) => void;
+  /** Whether the table has foreign key relationships (for cascade warning) */
+  hasForeignKeys?: boolean;
 }
 
 // =============================================================================
@@ -757,7 +777,8 @@ interface GridRowProps {
   row: ReturnType<ReturnType<typeof useDataGrid>['table']['getRowModel']>['rows'][0];
   style: React.CSSProperties;
   isSelected: boolean;
-  onToggleSelect: () => void;
+  isReadOnly: boolean;
+  onToggleSelect: (event: React.MouseEvent) => void;
   columnWidths: Record<string, number>;
   editState: CellEditState | null;
   onCellDoubleClick: (rowIndex: number, columnName: string, e: React.MouseEvent) => void;
@@ -771,6 +792,7 @@ const GridRow = memo(function GridRow({
   row,
   style,
   isSelected,
+  isReadOnly,
   onToggleSelect,
   columnWidths,
   editState,
@@ -798,8 +820,11 @@ const GridRow = memo(function GridRow({
         <input
           type="checkbox"
           checked={isSelected}
-          onChange={onToggleSelect}
-          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          onChange={(e) => onToggleSelect(e.nativeEvent as unknown as React.MouseEvent)}
+          onClick={(e) => onToggleSelect(e)}
+          disabled={isReadOnly}
+          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          data-testid={`row-checkbox-${row.index}`}
         />
       </div>
 
@@ -861,6 +886,9 @@ export const DataGrid = memo(function DataGrid({
   onEditStateChange,
   onAddRow,
   onRowAdded,
+  onDeleteRows,
+  onRowsDeleted,
+  hasForeignKeys = false,
 }: DataGridProps) {
   // Column widths state
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
@@ -870,6 +898,8 @@ export const DataGrid = memo(function DataGrid({
 
   // Selected rows state
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  // Track last clicked row for shift+click range selection
+  const lastClickedRowRef = useRef<number | null>(null);
 
   // Filter state (internal if not controlled)
   const [internalFilterState, setInternalFilterState] = useState<FilterState>([]);
@@ -886,6 +916,11 @@ export const DataGrid = memo(function DataGrid({
   const [showAddRowDialog, setShowAddRowDialog] = useState(false);
   const [addRowError, setAddRowError] = useState<string | null>(null);
   const [isAddingRow, setIsAddingRow] = useState(false);
+
+  // Delete rows dialog state
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Container ref for keyboard handling
   const gridContainerRef = useRef<HTMLDivElement>(null);
@@ -1004,32 +1039,52 @@ export const DataGrid = memo(function DataGrid({
     };
   }, [resizingColumn, onColumnResize, columnWidths]);
 
-  // Handle row selection
+  // Handle row selection (with shift+click range selection support)
   const handleToggleSelect = useCallback(
-    (rowIndex: number) => {
+    (rowIndex: number, event?: React.MouseEvent) => {
+      // Check if read-only - do nothing
+      if (isReadOnly) return;
+
       setSelectedRows((prev) => {
         const next = new Set(prev);
-        if (next.has(rowIndex)) {
-          next.delete(rowIndex);
+
+        // Shift+click: range selection
+        if (event?.shiftKey && lastClickedRowRef.current !== null) {
+          const start = Math.min(lastClickedRowRef.current, rowIndex);
+          const end = Math.max(lastClickedRowRef.current, rowIndex);
+          for (let i = start; i <= end; i++) {
+            next.add(i);
+          }
         } else {
-          next.add(rowIndex);
+          // Normal click: toggle single row
+          if (next.has(rowIndex)) {
+            next.delete(rowIndex);
+          } else {
+            next.add(rowIndex);
+          }
+          // Update last clicked for future shift+clicks
+          lastClickedRowRef.current = rowIndex;
         }
+
         onSelectionChange?.(next);
         return next;
       });
     },
-    [onSelectionChange]
+    [onSelectionChange, isReadOnly]
   );
 
   // Handle select all
   const handleSelectAll = useCallback(() => {
+    // Check if read-only - do nothing
+    if (isReadOnly) return;
+
     setSelectedRows((prev) => {
       const allSelected = prev.size === data.length;
       const next = allSelected ? new Set<number>() : new Set(data.map((_, i) => i));
       onSelectionChange?.(next);
       return next;
     });
-  }, [data.length, onSelectionChange]);
+  }, [data.length, onSelectionChange, isReadOnly]);
 
   // Get filter for a specific column
   const getFilter = useCallback(
@@ -1199,14 +1254,69 @@ export const DataGrid = memo(function DataGrid({
     setIsAddingRow(false);
   }, []);
 
-  // Keyboard shortcut handler for Cmd/Ctrl+Shift+N
+  // Handle delete button click
+  const handleDeleteClick = useCallback(() => {
+    if (selectedRows.size === 0 || isReadOnly || !onDeleteRows) return;
+    setDeleteError(null);
+    setShowDeleteDialog(true);
+  }, [selectedRows.size, isReadOnly, onDeleteRows]);
+
+  // Handle delete confirm
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!onDeleteRows || selectedRows.size === 0) return;
+
+    setIsDeleting(true);
+    setDeleteError(null);
+
+    try {
+      const rowIndices = Array.from(selectedRows).sort((a, b) => b - a); // Sort descending for stable deletion
+      const result = await onDeleteRows(rowIndices);
+
+      if (result.success) {
+        setShowDeleteDialog(false);
+        setSelectedRows(new Set());
+        onSelectionChange?.(new Set());
+        lastClickedRowRef.current = null;
+        onRowsDeleted?.(result.deletedCount ?? rowIndices.length);
+      } else {
+        setDeleteError(result.error || 'Failed to delete rows');
+      }
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete rows');
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [onDeleteRows, selectedRows, onSelectionChange, onRowsDeleted]);
+
+  // Handle delete dialog close
+  const handleDeleteDialogClose = useCallback(() => {
+    setShowDeleteDialog(false);
+    setDeleteError(null);
+    setIsDeleting(false);
+  }, []);
+
+  // Keyboard shortcut handler for Cmd/Ctrl+Shift+N and Delete/Backspace
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Skip if we're in an edit input
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        return;
+      }
+
       // Cmd/Ctrl+Shift+N for add row
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'n') {
         e.preventDefault();
         if (!isReadOnly && onAddRow && !showAddRowDialog) {
           handleAddRowClick();
+        }
+      }
+
+      // Delete or Backspace for delete rows
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedRows.size > 0) {
+        e.preventDefault();
+        if (!isReadOnly && onDeleteRows && !showDeleteDialog) {
+          handleDeleteClick();
         }
       }
     };
@@ -1218,7 +1328,7 @@ export const DataGrid = memo(function DataGrid({
       document.addEventListener('keydown', handleKeyDown);
       return () => document.removeEventListener('keydown', handleKeyDown);
     }
-  }, [isReadOnly, onAddRow, showAddRowDialog, handleAddRowClick]);
+  }, [isReadOnly, onAddRow, showAddRowDialog, handleAddRowClick, onDeleteRows, selectedRows.size, showDeleteDialog, handleDeleteClick]);
 
   // Get rows from table
   const rows = table.getRowModel().rows;
@@ -1247,24 +1357,40 @@ export const DataGrid = memo(function DataGrid({
     return (
       <div ref={gridContainerRef} className={`flex flex-col ${className}`} style={{ height }}>
         {/* Toolbar (even when empty, to allow adding rows) */}
-        {onAddRow && (
+        {(onAddRow || onDeleteRows) && (
           <div
             className="flex-shrink-0 bg-gray-50 border-b border-gray-200 px-3 flex items-center gap-2"
             style={{ height: TOOLBAR_HEIGHT }}
             data-testid="grid-toolbar"
           >
-            <button
-              onClick={handleAddRowClick}
-              disabled={isReadOnly || isAddingRow}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              title={isReadOnly ? 'Database is read-only' : 'Add new row (Cmd/Ctrl+Shift+N)'}
-              data-testid="add-row-button"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              Add Row
-            </button>
+            {onAddRow && (
+              <button
+                onClick={handleAddRowClick}
+                disabled={isReadOnly || isAddingRow}
+                className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                title={isReadOnly ? 'Database is read-only' : 'Add new row (Cmd/Ctrl+Shift+N)'}
+                data-testid="add-row-button"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add Row
+              </button>
+            )}
+            {onDeleteRows && (
+              <button
+                onClick={handleDeleteClick}
+                disabled={isReadOnly || selectedRows.size === 0 || isDeleting}
+                className="flex items-center gap-1 px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                title={isReadOnly ? 'Database is read-only' : selectedRows.size === 0 ? 'Select rows to delete' : `Delete ${selectedRows.size} row(s) (Delete/Backspace)`}
+                data-testid="delete-rows-button"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Delete{selectedRows.size > 0 ? ` (${selectedRows.size})` : ''}
+              </button>
+            )}
           </div>
         )}
 
@@ -1282,6 +1408,17 @@ export const DataGrid = memo(function DataGrid({
           isSubmitting={isAddingRow}
           error={addRowError}
         />
+
+        {/* Delete Rows Dialog */}
+        <DeleteRowsDialog
+          isOpen={showDeleteDialog}
+          rowCount={selectedRows.size}
+          hasForeignKeys={hasForeignKeys}
+          onClose={handleDeleteDialogClose}
+          onConfirm={handleDeleteConfirm}
+          isDeleting={isDeleting}
+          error={deleteError}
+        />
       </div>
     );
   }
@@ -1289,24 +1426,40 @@ export const DataGrid = memo(function DataGrid({
   return (
     <div ref={gridContainerRef} className={`flex flex-col ${className}`} style={{ height }}>
       {/* Toolbar */}
-      {onAddRow && (
+      {(onAddRow || onDeleteRows) && (
         <div
           className="flex-shrink-0 bg-gray-50 border-b border-gray-200 px-3 flex items-center gap-2"
           style={{ height: TOOLBAR_HEIGHT }}
           data-testid="grid-toolbar"
         >
-          <button
-            onClick={handleAddRowClick}
-            disabled={isReadOnly || isAddingRow}
-            className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            title={isReadOnly ? 'Database is read-only' : 'Add new row (Cmd/Ctrl+Shift+N)'}
-            data-testid="add-row-button"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Add Row
-          </button>
+          {onAddRow && (
+            <button
+              onClick={handleAddRowClick}
+              disabled={isReadOnly || isAddingRow}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              title={isReadOnly ? 'Database is read-only' : 'Add new row (Cmd/Ctrl+Shift+N)'}
+              data-testid="add-row-button"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add Row
+            </button>
+          )}
+          {onDeleteRows && (
+            <button
+              onClick={handleDeleteClick}
+              disabled={isReadOnly || selectedRows.size === 0 || isDeleting}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              title={isReadOnly ? 'Database is read-only' : selectedRows.size === 0 ? 'Select rows to delete' : `Delete ${selectedRows.size} row(s) (Delete/Backspace)`}
+              data-testid="delete-rows-button"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Delete{selectedRows.size > 0 ? ` (${selectedRows.size})` : ''}
+            </button>
+          )}
         </div>
       )}
 
@@ -1344,7 +1497,9 @@ export const DataGrid = memo(function DataGrid({
               type="checkbox"
               checked={selectedRows.size === data.length && data.length > 0}
               onChange={handleSelectAll}
-              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              disabled={isReadOnly}
+              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              data-testid="select-all-checkbox"
             />
           </div>
 
@@ -1412,7 +1567,8 @@ export const DataGrid = memo(function DataGrid({
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
                 isSelected={selectedRows.has(virtualRow.index)}
-                onToggleSelect={() => handleToggleSelect(virtualRow.index)}
+                isReadOnly={isReadOnly}
+                onToggleSelect={(e) => handleToggleSelect(virtualRow.index, e)}
                 columnWidths={columnWidths}
                 editState={editState}
                 onCellDoubleClick={handleCellDoubleClick}
@@ -1438,6 +1594,17 @@ export const DataGrid = memo(function DataGrid({
         onSubmit={handleAddRowSubmit}
         isSubmitting={isAddingRow}
         error={addRowError}
+      />
+
+      {/* Delete Rows Dialog */}
+      <DeleteRowsDialog
+        isOpen={showDeleteDialog}
+        rowCount={selectedRows.size}
+        hasForeignKeys={hasForeignKeys}
+        onClose={handleDeleteDialogClose}
+        onConfirm={handleDeleteConfirm}
+        isDeleting={isDeleting}
+        error={deleteError}
       />
     </div>
   );

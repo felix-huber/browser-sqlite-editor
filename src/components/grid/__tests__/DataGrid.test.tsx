@@ -1386,4 +1386,347 @@ describe('DataGrid', () => {
       });
     });
   });
+
+  describe('Delete Rows Functionality', () => {
+    it('renders Delete button when onDeleteRows is provided', () => {
+      const onDeleteRows = vi.fn().mockResolvedValue({ success: true });
+      render(<DataGrid {...defaultProps} onDeleteRows={onDeleteRows} />);
+
+      const deleteButton = screen.getByTestId('delete-rows-button');
+      expect(deleteButton).toBeInTheDocument();
+      expect(deleteButton).toHaveTextContent('Delete');
+    });
+
+    it('does not render Delete button when onDeleteRows is not provided', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      expect(screen.queryByTestId('delete-rows-button')).not.toBeInTheDocument();
+    });
+
+    it('disables Delete button when no rows are selected', () => {
+      const onDeleteRows = vi.fn().mockResolvedValue({ success: true });
+      render(<DataGrid {...defaultProps} onDeleteRows={onDeleteRows} />);
+
+      const deleteButton = screen.getByTestId('delete-rows-button');
+      expect(deleteButton).toBeDisabled();
+    });
+
+    it('disables Delete button in read-only mode', () => {
+      const onDeleteRows = vi.fn().mockResolvedValue({ success: true });
+      render(<DataGrid {...defaultProps} isReadOnly={true} onDeleteRows={onDeleteRows} />);
+
+      const deleteButton = screen.getByTestId('delete-rows-button');
+      expect(deleteButton).toBeDisabled();
+    });
+
+    it('shows selection count in Delete button label', () => {
+      const onDeleteRows = vi.fn().mockResolvedValue({ success: true });
+      render(<DataGrid {...defaultProps} onDeleteRows={onDeleteRows} />);
+
+      // Select first row
+      const checkboxes = screen.getAllByRole('checkbox');
+      if (checkboxes.length > 1) {
+        fireEvent.click(checkboxes[1]);
+
+        const deleteButton = screen.getByTestId('delete-rows-button');
+        expect(deleteButton).toHaveTextContent('Delete (1)');
+      }
+    });
+
+    it('shows confirmation dialog when Delete button is clicked', async () => {
+      const onDeleteRows = vi.fn().mockResolvedValue({ success: true });
+      render(<DataGrid {...defaultProps} onDeleteRows={onDeleteRows} />);
+
+      // Select first row
+      const checkboxes = screen.getAllByRole('checkbox');
+      if (checkboxes.length > 1) {
+        fireEvent.click(checkboxes[1]);
+
+        // Click delete button
+        const deleteButton = screen.getByTestId('delete-rows-button');
+        fireEvent.click(deleteButton);
+
+        // Dialog should appear
+        await vi.waitFor(() => {
+          expect(screen.getByTestId('delete-rows-dialog')).toBeInTheDocument();
+        });
+
+        expect(screen.getByText(/Are you sure you want to delete/)).toBeInTheDocument();
+      }
+    });
+
+    it('calls onDeleteRows when delete is confirmed', async () => {
+      const onDeleteRows = vi.fn().mockResolvedValue({ success: true });
+      const onRowsDeleted = vi.fn();
+      render(
+        <DataGrid
+          {...defaultProps}
+          onDeleteRows={onDeleteRows}
+          onRowsDeleted={onRowsDeleted}
+        />
+      );
+
+      // Select first row
+      const checkboxes = screen.getAllByRole('checkbox');
+      if (checkboxes.length > 1) {
+        fireEvent.click(checkboxes[1]);
+
+        // Click delete button
+        const deleteButton = screen.getByTestId('delete-rows-button');
+        fireEvent.click(deleteButton);
+
+        // Wait for dialog
+        await vi.waitFor(() => {
+          expect(screen.getByTestId('delete-rows-dialog')).toBeInTheDocument();
+        });
+
+        // Click confirm
+        const confirmButton = screen.getByTestId('delete-rows-confirm');
+        fireEvent.click(confirmButton);
+
+        await vi.waitFor(() => {
+          expect(onDeleteRows).toHaveBeenCalledWith([0]);
+          expect(onRowsDeleted).toHaveBeenCalled();
+        });
+      }
+    });
+
+    it('closes dialog when cancel is clicked', async () => {
+      const onDeleteRows = vi.fn().mockResolvedValue({ success: true });
+      render(<DataGrid {...defaultProps} onDeleteRows={onDeleteRows} />);
+
+      // Select first row
+      const checkboxes = screen.getAllByRole('checkbox');
+      if (checkboxes.length > 1) {
+        fireEvent.click(checkboxes[1]);
+
+        // Click delete button
+        const deleteButton = screen.getByTestId('delete-rows-button');
+        fireEvent.click(deleteButton);
+
+        // Wait for dialog
+        await vi.waitFor(() => {
+          expect(screen.getByTestId('delete-rows-dialog')).toBeInTheDocument();
+        });
+
+        // Click cancel
+        const cancelButton = screen.getByTestId('delete-rows-cancel');
+        fireEvent.click(cancelButton);
+
+        // Dialog should close, rows should remain selected
+        await vi.waitFor(() => {
+          expect(screen.queryByTestId('delete-rows-dialog')).not.toBeInTheDocument();
+        });
+
+        // onDeleteRows should not have been called
+        expect(onDeleteRows).not.toHaveBeenCalled();
+      }
+    });
+
+    it('shows error message when delete fails', async () => {
+      const onDeleteRows = vi.fn().mockResolvedValue({
+        success: false,
+        error: 'FOREIGN KEY constraint failed'
+      });
+      render(<DataGrid {...defaultProps} onDeleteRows={onDeleteRows} />);
+
+      // Select first row
+      const checkboxes = screen.getAllByRole('checkbox');
+      if (checkboxes.length > 1) {
+        fireEvent.click(checkboxes[1]);
+
+        // Click delete button
+        const deleteButton = screen.getByTestId('delete-rows-button');
+        fireEvent.click(deleteButton);
+
+        // Wait for dialog
+        await vi.waitFor(() => {
+          expect(screen.getByTestId('delete-rows-dialog')).toBeInTheDocument();
+        });
+
+        // Click confirm
+        const confirmButton = screen.getByTestId('delete-rows-confirm');
+        fireEvent.click(confirmButton);
+
+        // Error should be displayed
+        await vi.waitFor(() => {
+          expect(screen.getByTestId('delete-rows-error')).toHaveTextContent('FOREIGN KEY constraint failed');
+        });
+      }
+    });
+
+    it('shows FK cascade warning when hasForeignKeys is true', async () => {
+      const onDeleteRows = vi.fn().mockResolvedValue({ success: true });
+      render(
+        <DataGrid
+          {...defaultProps}
+          onDeleteRows={onDeleteRows}
+          hasForeignKeys={true}
+        />
+      );
+
+      // Select first row
+      const checkboxes = screen.getAllByRole('checkbox');
+      if (checkboxes.length > 1) {
+        fireEvent.click(checkboxes[1]);
+
+        // Click delete button
+        const deleteButton = screen.getByTestId('delete-rows-button');
+        fireEvent.click(deleteButton);
+
+        // Wait for dialog
+        await vi.waitFor(() => {
+          expect(screen.getByTestId('delete-rows-dialog')).toBeInTheDocument();
+        });
+
+        // FK warning should be shown
+        expect(screen.getByTestId('fk-cascade-warning')).toBeInTheDocument();
+        expect(screen.getByText(/cascade deletions/)).toBeInTheDocument();
+      }
+    });
+
+    it('clears selection after successful delete', async () => {
+      const onDeleteRows = vi.fn().mockResolvedValue({ success: true, deletedCount: 1 });
+      const onSelectionChange = vi.fn();
+      render(
+        <DataGrid
+          {...defaultProps}
+          onDeleteRows={onDeleteRows}
+          onSelectionChange={onSelectionChange}
+        />
+      );
+
+      // Select first row
+      const checkboxes = screen.getAllByRole('checkbox');
+      if (checkboxes.length > 1) {
+        fireEvent.click(checkboxes[1]);
+
+        // Click delete button
+        const deleteButton = screen.getByTestId('delete-rows-button');
+        fireEvent.click(deleteButton);
+
+        // Wait for dialog
+        await vi.waitFor(() => {
+          expect(screen.getByTestId('delete-rows-dialog')).toBeInTheDocument();
+        });
+
+        // Click confirm
+        const confirmButton = screen.getByTestId('delete-rows-confirm');
+        fireEvent.click(confirmButton);
+
+        // Selection should be cleared
+        await vi.waitFor(() => {
+          const emptySet = new Set<number>();
+          expect(onSelectionChange).toHaveBeenLastCalledWith(emptySet);
+        });
+      }
+    });
+
+    it('disables checkboxes when read-only', () => {
+      const onDeleteRows = vi.fn().mockResolvedValue({ success: true });
+      render(
+        <DataGrid
+          {...defaultProps}
+          isReadOnly={true}
+          onDeleteRows={onDeleteRows}
+        />
+      );
+
+      // Select-all checkbox should be disabled
+      const selectAllCheckbox = screen.getByTestId('select-all-checkbox');
+      expect(selectAllCheckbox).toBeDisabled();
+
+      // Individual row checkboxes should be disabled
+      const rowCheckbox = screen.queryByTestId('row-checkbox-0');
+      if (rowCheckbox) {
+        expect(rowCheckbox).toBeDisabled();
+      }
+    });
+
+    it('supports shift+click range selection', () => {
+      const onSelectionChange = vi.fn();
+      render(
+        <DataGrid
+          {...defaultProps}
+          onSelectionChange={onSelectionChange}
+        />
+      );
+
+      const checkboxes = screen.getAllByRole('checkbox');
+      // Should have at least select-all + multiple row checkboxes
+      if (checkboxes.length > 3) {
+        // Click first row (index 1, since 0 is select-all)
+        fireEvent.click(checkboxes[1]);
+
+        // Shift+click third row
+        fireEvent.click(checkboxes[3], { shiftKey: true });
+
+        // Should have selected rows 0, 1, 2 (indices in our virtual list)
+        expect(onSelectionChange).toHaveBeenCalled();
+        const lastCall = onSelectionChange.mock.calls[onSelectionChange.mock.calls.length - 1][0];
+        expect(lastCall.size).toBeGreaterThanOrEqual(2);
+      }
+    });
+
+    it('does not select when checkboxes clicked in read-only mode', () => {
+      const onSelectionChange = vi.fn();
+      render(
+        <DataGrid
+          {...defaultProps}
+          isReadOnly={true}
+          onSelectionChange={onSelectionChange}
+        />
+      );
+
+      // Try to click a row checkbox
+      const rowCheckbox = screen.queryByTestId('row-checkbox-0');
+      if (rowCheckbox) {
+        fireEvent.click(rowCheckbox);
+        // Should not trigger selection change (checkbox is disabled)
+        expect(onSelectionChange).not.toHaveBeenCalled();
+      }
+    });
+
+    it('deletes multiple selected rows', async () => {
+      const onDeleteRows = vi.fn().mockResolvedValue({ success: true, deletedCount: 2 });
+      const onRowsDeleted = vi.fn();
+      render(
+        <DataGrid
+          {...defaultProps}
+          onDeleteRows={onDeleteRows}
+          onRowsDeleted={onRowsDeleted}
+        />
+      );
+
+      // Select multiple rows using select all
+      const selectAllCheckbox = screen.getByTestId('select-all-checkbox');
+      fireEvent.click(selectAllCheckbox);
+
+      // Click delete button
+      const deleteButton = screen.getByTestId('delete-rows-button');
+      expect(deleteButton).toHaveTextContent('Delete (100)');
+      fireEvent.click(deleteButton);
+
+      // Wait for dialog
+      await vi.waitFor(() => {
+        expect(screen.getByTestId('delete-rows-dialog')).toBeInTheDocument();
+      });
+
+      // Should show correct count
+      expect(screen.getByText(/100 rows/)).toBeInTheDocument();
+
+      // Click confirm
+      const confirmButton = screen.getByTestId('delete-rows-confirm');
+      fireEvent.click(confirmButton);
+
+      await vi.waitFor(() => {
+        expect(onDeleteRows).toHaveBeenCalled();
+        // Should receive all 100 row indices in descending order
+        const calledWith = onDeleteRows.mock.calls[0][0];
+        expect(calledWith.length).toBe(100);
+        // Should be sorted descending for stable deletion
+        expect(calledWith[0]).toBeGreaterThan(calledWith[calledWith.length - 1]);
+      });
+    });
+  });
 });
