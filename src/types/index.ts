@@ -42,7 +42,64 @@ export type WorkerRequest =
   | { type: 'renameDb'; oldName: string; newName: string }
   | { type: 'getRegistry' }
   | { type: 'flushSnapshot' } // For IndexedDB mode: flush pending snapshot
-  | { type: 'flushAndClose'; dbId: string }; // Flush pending writes and close database connection
+  | { type: 'flushAndClose'; dbId: string } // Flush pending writes and close database connection
+  // Schema modification operations
+  | { type: 'createTable'; def: TableDefinitionInput; isReadOnly: boolean }
+  | {
+      type: 'alterTable';
+      table: string;
+      action: AlterTableActionInput;
+      isReadOnly: boolean;
+    }
+  | { type: 'dropTable'; table: string; isReadOnly: boolean }
+  | { type: 'dropColumn'; table: string; column: string; isReadOnly: boolean };
+
+/**
+ * Table definition input for createTable worker request
+ */
+export interface TableDefinitionInput {
+  name: string;
+  columns: ColumnDefinitionInput[];
+  primaryKey?: string[];
+  foreignKeys?: ForeignKeyConstraintInput[];
+  withoutRowid?: boolean;
+  strict?: boolean;
+}
+
+/**
+ * Column definition input for schema operations
+ */
+export interface ColumnDefinitionInput {
+  name: string;
+  type: string;
+  notNull?: boolean;
+  defaultValue?: string | null;
+  primaryKey?: number;
+  autoincrement?: boolean;
+  unique?: boolean;
+  generatedAs?: string;
+  generatedType?: 'stored' | 'virtual';
+}
+
+/**
+ * Foreign key constraint input for schema operations
+ */
+export interface ForeignKeyConstraintInput {
+  name?: string;
+  columns: string[];
+  references: string;
+  refColumns: string[];
+  onDelete?: ForeignKeyAction;
+  onUpdate?: ForeignKeyAction;
+}
+
+/**
+ * Alter table action input types
+ */
+export type AlterTableActionInput =
+  | { type: 'addColumn'; column: ColumnDefinitionInput }
+  | { type: 'renameTable'; newName: string }
+  | { type: 'renameColumn'; oldName: string; newName: string }
 
 /**
  * Error codes returned by worker
@@ -59,6 +116,14 @@ export type WorkerErrorCode =
   | 'SYNTAX_ERROR'
   | 'PERSISTENCE_FAILED'
   | 'IDB_FLUSH_FAILED'
+  // Schema modification error codes
+  | 'READ_ONLY'
+  | 'INVALID_NAME'
+  | 'TABLE_NOT_FOUND'
+  | 'COLUMN_NOT_FOUND'
+  | 'TABLE_EXISTS'
+  | 'COLUMN_EXISTS'
+  | 'FOREIGN_KEY_DEPENDENCY'
   | 'UNKNOWN';
 
 /**
@@ -77,7 +142,8 @@ export type WorkerResponse =
   | { type: 'queryResult'; result: QueryResult }
   | { type: 'foreignKeysResult'; foreignKeys: ForeignKeyInfo[] }
   | { type: 'registryResult'; registry: DatabaseRegistry }
-  | { type: 'flushAndCloseResult'; success: boolean; error?: FlushAndCloseError };
+  | { type: 'flushAndCloseResult'; success: boolean; error?: FlushAndCloseError }
+  | { type: 'schemaModificationResult'; success: boolean; error?: SchemaModificationErrorInfo };
 
 /**
  * Error from flushAndClose operation - deterministic for UI prompt
@@ -89,6 +155,18 @@ export interface FlushAndCloseError {
   message: string;
   /** Number of attempts made before failure */
   attempts: number;
+}
+
+/**
+ * Error from schema modification operations
+ */
+export interface SchemaModificationErrorInfo {
+  /** Error code */
+  code: WorkerErrorCode;
+  /** Human-readable error message */
+  message: string;
+  /** Additional details about the error */
+  details?: string;
 }
 
 /**

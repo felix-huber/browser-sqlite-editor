@@ -20,6 +20,12 @@ import {
 import { getIDBStorage } from './idb-storage';
 import { importDatabase } from './file-import';
 import { getRegistry } from './db-registry';
+import {
+  handleCreateTable,
+  handleAlterTable,
+  handleDropTable,
+  handleDropColumn,
+} from './schema-modification';
 
 /**
  * Type-safe message event for worker requests
@@ -235,6 +241,140 @@ async function handleMessage(event: WorkerMessageEvent): Promise<void> {
           type: 'error',
           message: `Import failed: ${message}`,
           code: 'UNKNOWN',
+        });
+      }
+      break;
+
+    case 'createTable':
+      try {
+        const queryExecutor = createQueryExecutor();
+        const result = await handleCreateTable({
+          def: request.def,
+          query: queryExecutor,
+          isReadOnly: request.isReadOnly,
+        });
+
+        postResponse({
+          type: 'schemaModificationResult',
+          success: result.success,
+          error: result.error
+            ? {
+                code: result.error.code,
+                message: result.error.message,
+                details: result.error.details,
+              }
+            : undefined,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'schemaModificationResult',
+          success: false,
+          error: {
+            code: 'UNKNOWN',
+            message: `Create table failed: ${message}`,
+          },
+        });
+      }
+      break;
+
+    case 'alterTable':
+      try {
+        const queryExecutor = createQueryExecutor();
+        const result = await handleAlterTable({
+          table: request.table,
+          action: request.action,
+          query: queryExecutor,
+          isReadOnly: request.isReadOnly,
+        });
+
+        postResponse({
+          type: 'schemaModificationResult',
+          success: result.success,
+          error: result.error
+            ? {
+                code: result.error.code,
+                message: result.error.message,
+                details: result.error.details,
+              }
+            : undefined,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'schemaModificationResult',
+          success: false,
+          error: {
+            code: 'UNKNOWN',
+            message: `Alter table failed: ${message}`,
+          },
+        });
+      }
+      break;
+
+    case 'dropTable':
+      try {
+        const queryExecutor = createQueryExecutor();
+        const result = await handleDropTable({
+          table: request.table,
+          query: queryExecutor,
+          isReadOnly: request.isReadOnly,
+        });
+
+        postResponse({
+          type: 'schemaModificationResult',
+          success: result.success,
+          error: result.error
+            ? {
+                code: result.error.code,
+                message: result.error.message,
+                details: result.error.details,
+              }
+            : undefined,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'schemaModificationResult',
+          success: false,
+          error: {
+            code: 'UNKNOWN',
+            message: `Drop table failed: ${message}`,
+          },
+        });
+      }
+      break;
+
+    case 'dropColumn':
+      try {
+        const queryExecutor = createQueryExecutor();
+        const result = await handleDropColumn({
+          table: request.table,
+          column: request.column,
+          query: queryExecutor,
+          isReadOnly: request.isReadOnly,
+        });
+
+        postResponse({
+          type: 'schemaModificationResult',
+          success: result.success,
+          error: result.error
+            ? {
+                code: result.error.code,
+                message: result.error.message,
+                details: result.error.details,
+              }
+            : undefined,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'schemaModificationResult',
+          success: false,
+          error: {
+            code: 'UNKNOWN',
+            message: `Drop column failed: ${message}`,
+          },
         });
       }
       break;
