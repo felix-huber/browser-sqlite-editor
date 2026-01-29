@@ -21,6 +21,15 @@ import { ColumnRow } from './ColumnRow';
 import type { DesignerColumnDraft, TableInfo } from '../../types';
 
 // =============================================================================
+// Drag and Drop State
+// =============================================================================
+
+interface DragState {
+  draggedId: string | null;
+  dropTargetId: string | null;
+}
+
+// =============================================================================
 // Constants
 // =============================================================================
 
@@ -110,6 +119,8 @@ function tableInfoToColumns(tableInfo: TableInfo): DesignerColumnDraft[] {
     defaultValue: col.dfltValue,
     isExisting: true,
     originalName: col.name,
+    generated: col.generated,
+    generatedExpression: null, // Would need to parse CREATE TABLE statement to get this
   }));
 }
 
@@ -232,6 +243,9 @@ export function TableDesigner({
   const [tableNameError, setTableNameError] = useState<string | null>(null);
   const [hasInteracted, setHasInteracted] = useState(false);
 
+  // Drag and drop state
+  const [dragState, setDragState] = useState<DragState>({ draggedId: null, dropTargetId: null });
+
   // Track dirty state
   const [isDirty, setIsDirty] = useState(false);
   const initialStateRef = useRef<{ tableName: string; columns: DesignerColumnDraft[] } | null>(null);
@@ -337,6 +351,48 @@ export function TableDesigner({
   const handleToggleDeleteConfirm = useCallback((id: string, show: boolean) => {
     setDeleteConfirmId(show ? id : null);
   }, []);
+
+  // Drag and drop handlers
+  const createDragHandlers = useCallback(
+    (columnId: string) => ({
+      onDragStart: (e: React.DragEvent) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', columnId);
+        setDragState({ draggedId: columnId, dropTargetId: null });
+      },
+      onDragEnd: () => {
+        setDragState({ draggedId: null, dropTargetId: null });
+      },
+      onDragOver: (e: React.DragEvent) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (dragState.draggedId && dragState.draggedId !== columnId) {
+          setDragState((prev) => ({ ...prev, dropTargetId: columnId }));
+        }
+      },
+      onDrop: (e: React.DragEvent) => {
+        e.preventDefault();
+        const draggedId = e.dataTransfer.getData('text/plain');
+        if (draggedId && draggedId !== columnId) {
+          setColumns((prev) => {
+            const draggedIndex = prev.findIndex((c) => c.id === draggedId);
+            const dropIndex = prev.findIndex((c) => c.id === columnId);
+            if (draggedIndex === -1 || dropIndex === -1) return prev;
+
+            const newColumns = [...prev];
+            const [draggedCol] = newColumns.splice(draggedIndex, 1);
+            newColumns.splice(dropIndex, 0, draggedCol);
+            return newColumns;
+          });
+        }
+        setDragState({ draggedId: null, dropTargetId: null });
+      },
+    }),
+    [dragState.draggedId]
+  );
+
+  // Get all column names for validation
+  const columnNames = useMemo(() => columns.map((c) => c.name), [columns]);
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -449,6 +505,10 @@ export function TableDesigner({
               onToggleDeleteConfirm={handleToggleDeleteConfirm}
               isNew={newColumnId === column.id}
               index={index + 1}
+              existingColumnNames={columnNames}
+              dragHandleProps={!isReadOnly ? createDragHandlers(column.id) : undefined}
+              isDragging={dragState.draggedId === column.id}
+              isDropTarget={dragState.dropTargetId === column.id}
             />
           ))}
         </div>

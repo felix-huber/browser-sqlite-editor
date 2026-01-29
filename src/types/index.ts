@@ -456,6 +456,10 @@ export interface DesignerColumnDraft {
   isExisting: boolean;
   /** Original name if renamed */
   originalName?: string;
+  /** Generated column type: 'stored', 'virtual', or null for regular columns */
+  generated?: 'stored' | 'virtual' | null;
+  /** Generated column expression (the AS (...) part) */
+  generatedExpression?: string | null;
 }
 
 /**
