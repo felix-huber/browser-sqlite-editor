@@ -5,6 +5,7 @@ import { sql, SQLite } from '@codemirror/lang-sql'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
+import { sqlAutocomplete, createEmptySchema, type AutocompleteSchema } from './sqlAutocomplete'
 
 /**
  * Custom theme matching app design tokens (navy/amber palette)
@@ -171,6 +172,59 @@ const errorHighlightTheme = EditorView.theme({
   },
 });
 
+/** Theme extension for autocomplete popup */
+const autocompleteTheme = EditorView.theme({
+  '.cm-tooltip.cm-tooltip-autocomplete': {
+    backgroundColor: '#102a43', // navy-900
+    border: '1px solid #334e68', // navy-700
+    borderRadius: '6px',
+    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.3)',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul': {
+    fontFamily: "'Inter', monospace",
+    fontSize: '13px',
+    maxHeight: '300px',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > li': {
+    padding: '4px 8px',
+    color: '#d9e2ec', // navy-100
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+    backgroundColor: '#334e68', // navy-700
+    color: '#f0f4f8', // navy-50
+  },
+  '.cm-completionLabel': {
+    color: '#d9e2ec', // navy-100
+  },
+  '.cm-completionDetail': {
+    color: '#627d98', // navy-500
+    fontStyle: 'italic',
+    marginLeft: '8px',
+  },
+  '.cm-completionIcon': {
+    marginRight: '6px',
+  },
+  '.cm-completionIcon-keyword': {
+    color: '#fbbf24', // amber-400
+  },
+  '.cm-completionIcon-class': {
+    color: '#60a5fa', // blue-400
+  },
+  '.cm-completionIcon-interface': {
+    color: '#a78bfa', // purple-400
+  },
+  '.cm-completionIcon-property': {
+    color: '#34d399', // green-400
+  },
+  '.cm-completionIcon-function': {
+    color: '#f472b6', // pink-400 - for generated columns
+  },
+  '.cm-completion-generated': {
+    color: '#f472b6', // pink-400
+    marginLeft: '2px',
+  },
+});
+
 export interface CodeMirrorEditorProps {
   /** Current value of the editor */
   value: string
@@ -186,6 +240,8 @@ export interface CodeMirrorEditorProps {
   placeholder?: string
   /** Error locations to highlight */
   errorLocations?: ErrorLocation[]
+  /** Schema for autocomplete (table/column names) */
+  autocompleteSchema?: AutocompleteSchema
 }
 
 /** Handle for imperative editor methods */
@@ -210,10 +266,17 @@ export const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEdi
     className = '',
     placeholder,
     errorLocations,
+    autocompleteSchema,
   }, ref) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const readOnlyCompartment = useRef(new Compartment())
+  const schemaRef = useRef<AutocompleteSchema>(autocompleteSchema ?? createEmptySchema())
+
+  // Keep schema ref updated
+  if (autocompleteSchema) {
+    schemaRef.current = autocompleteSchema
+  }
 
   // Store latest onChange in ref to avoid recreating extensions
   const onChangeRef = useRef(onChange)
@@ -269,10 +332,12 @@ export const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEdi
     const extensions: Extension[] = [
       editorTheme,
       errorHighlightTheme,
+      autocompleteTheme,
       errorDecorations,
       syntaxHighlighting(sqlHighlightStyle),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       sql({ dialect: SQLite }),
+      sqlAutocomplete(() => schemaRef.current),
       history(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       highlightActiveLine(),

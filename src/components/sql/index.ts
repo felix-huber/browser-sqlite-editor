@@ -1,5 +1,11 @@
 export { CodeMirrorEditor } from './CodeMirrorEditor'
 export type { CodeMirrorEditorProps, CodeMirrorEditorHandle, ErrorLocation } from './CodeMirrorEditor'
+export {
+  sqlAutocomplete,
+  createSqlCompletionSource,
+  createEmptySchema,
+  type AutocompleteSchema,
+} from './sqlAutocomplete'
 export { SqlEditorPanel } from './SqlEditorPanel'
 export type { SqlEditorPanelProps } from './SqlEditorPanel'
 export { QueryHistoryDropdown } from './QueryHistoryDropdown'
