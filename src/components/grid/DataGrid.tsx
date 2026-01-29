@@ -30,6 +30,13 @@ import {
 import { useGridVirtualizer } from './useGridVirtualizer';
 import { AddRowDialog } from './AddRowDialog';
 import { DeleteRowsDialog } from './DeleteRowsDialog';
+import {
+  CellContextMenu,
+  copyCellValue,
+  parsePastedValue,
+  generateBlobFilename,
+  downloadBlob,
+} from './CellContextMenu';
 import type { TableInfo, ColumnInfo } from '../../types';
 
 // =============================================================================
@@ -770,6 +777,20 @@ const ColumnHeader = memo(function ColumnHeader({
 });
 
 // =============================================================================
+// Context Menu State
+// =============================================================================
+
+interface CellContextMenuState {
+  isOpen: boolean;
+  x: number;
+  y: number;
+  rowIndex: number;
+  columnName: string;
+  cellValue: CellValue;
+  columnInfo: ColumnInfo | null;
+}
+
+// =============================================================================
 // Row Component
 // =============================================================================
 
@@ -782,6 +803,7 @@ interface GridRowProps {
   columnWidths: Record<string, number>;
   editState: CellEditState | null;
   onCellDoubleClick: (rowIndex: number, columnName: string, e: React.MouseEvent) => void;
+  onCellContextMenu: (rowIndex: number, columnName: string, cellValue: CellValue, e: React.MouseEvent) => void;
   onUpdateEditValue: (value: string) => void;
   onCommitEdit: () => Promise<boolean>;
   onCancelEdit: () => void;
@@ -797,6 +819,7 @@ const GridRow = memo(function GridRow({
   columnWidths,
   editState,
   onCellDoubleClick,
+  onCellContextMenu,
   onUpdateEditValue,
   onCommitEdit,
   onCancelEdit,
@@ -835,6 +858,7 @@ const GridRow = memo(function GridRow({
         const columnType = cell.column.columnDef.meta?.type || 'TEXT';
         const isCellEditing = isRowEditing && editState?.columnName === columnName;
         const isDirty = isCellEditing && editState?.isDirty;
+        const cellValue = cell.getValue() as CellValue;
 
         return (
           <div
@@ -844,10 +868,11 @@ const GridRow = memo(function GridRow({
             }`}
             style={{ width, height: ROW_HEIGHT, lineHeight: `${ROW_HEIGHT}px` }}
             onDoubleClick={(e) => onCellDoubleClick(row.index, columnName, e)}
+            onContextMenu={(e) => onCellContextMenu(row.index, columnName, cellValue, e)}
             data-testid={`cell-${row.index}-${columnName}`}
           >
             <EditableCell
-              value={cell.getValue()}
+              value={cellValue}
               columnType={columnType}
               editState={editState}
               isEditing={isCellEditing}
@@ -921,6 +946,17 @@ export const DataGrid = memo(function DataGrid({
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Cell context menu state
+  const [contextMenu, setContextMenu] = useState<CellContextMenuState>({
+    isOpen: false,
+    x: 0,
+    y: 0,
+    rowIndex: -1,
+    columnName: '',
+    cellValue: null,
+    columnInfo: null,
+  });
 
   // Container ref for keyboard handling
   const gridContainerRef = useRef<HTMLDivElement>(null);
@@ -1181,6 +1217,120 @@ export const DataGrid = memo(function DataGrid({
     },
     [columns, data.length, isColumnEditable, startEdit]
   );
+
+  // ==========================================================================
+  // Cell Context Menu Handlers
+  // ==========================================================================
+
+  // Open context menu on right-click
+  const handleCellContextMenu = useCallback(
+    (rowIndex: number, columnName: string, cellValue: CellValue, e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const columnInfo = tableInfo?.columns.find((c) => c.name === columnName) ?? null;
+
+      setContextMenu({
+        isOpen: true,
+        x: e.clientX,
+        y: e.clientY,
+        rowIndex,
+        columnName,
+        cellValue,
+        columnInfo,
+      });
+    },
+    [tableInfo]
+  );
+
+  // Close context menu
+  const handleContextMenuClose = useCallback(() => {
+    setContextMenu((prev) => ({ ...prev, isOpen: false }));
+  }, []);
+
+  // Copy cell value to clipboard
+  const handleContextMenuCopy = useCallback(async () => {
+    try {
+      await copyCellValue(contextMenu.cellValue);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+    handleContextMenuClose();
+  }, [contextMenu.cellValue, handleContextMenuClose]);
+
+  // Paste from clipboard
+  const handleContextMenuPaste = useCallback(async () => {
+    if (!onCellEdit || isReadOnly || !contextMenu.columnInfo) {
+      handleContextMenuClose();
+      return;
+    }
+
+    // Check if column is editable
+    const isGenerated = contextMenu.columnInfo.generated !== null;
+    if (isGenerated) {
+      handleContextMenuClose();
+      return;
+    }
+
+    try {
+      const text = await navigator.clipboard.readText();
+      const parsedValue = parsePastedValue(text, contextMenu.columnInfo.type);
+      await onCellEdit(contextMenu.rowIndex, contextMenu.columnName, parsedValue);
+    } catch (err) {
+      console.error('Failed to paste:', err);
+    }
+    handleContextMenuClose();
+  }, [onCellEdit, isReadOnly, contextMenu, handleContextMenuClose]);
+
+  // Set cell to NULL
+  const handleContextMenuSetNull = useCallback(async () => {
+    if (!onCellEdit || isReadOnly || !contextMenu.columnInfo) {
+      handleContextMenuClose();
+      return;
+    }
+
+    // Check if column is editable
+    const isGenerated = contextMenu.columnInfo.generated !== null;
+    if (isGenerated) {
+      handleContextMenuClose();
+      return;
+    }
+
+    try {
+      await onCellEdit(contextMenu.rowIndex, contextMenu.columnName, null);
+    } catch (err) {
+      console.error('Failed to set NULL:', err);
+    }
+    handleContextMenuClose();
+  }, [onCellEdit, isReadOnly, contextMenu, handleContextMenuClose]);
+
+  // Save BLOB as file
+  const handleContextMenuSaveBlob = useCallback(() => {
+    if (!(contextMenu.cellValue instanceof Uint8Array)) {
+      handleContextMenuClose();
+      return;
+    }
+
+    const filename = generateBlobFilename(contextMenu.columnName, contextMenu.rowIndex);
+    downloadBlob(contextMenu.cellValue, filename);
+    handleContextMenuClose();
+  }, [contextMenu, handleContextMenuClose]);
+
+  // Delete the row from context menu
+  const handleContextMenuDeleteRow = useCallback(() => {
+    if (isReadOnly || !onDeleteRows) {
+      handleContextMenuClose();
+      return;
+    }
+
+    // Select the row and show delete dialog
+    setSelectedRows(new Set([contextMenu.rowIndex]));
+    onSelectionChange?.(new Set([contextMenu.rowIndex]));
+    lastClickedRowRef.current = contextMenu.rowIndex;
+    setDeleteError(null);
+    setShowDeleteDialog(true);
+    handleContextMenuClose();
+  }, [isReadOnly, onDeleteRows, contextMenu.rowIndex, onSelectionChange, handleContextMenuClose]);
 
   // Get columns that require user input (NOT NULL without DEFAULT, not generated)
   const requiredColumns = useMemo((): ColumnInfo[] => {
@@ -1572,6 +1722,7 @@ export const DataGrid = memo(function DataGrid({
                 columnWidths={columnWidths}
                 editState={editState}
                 onCellDoubleClick={handleCellDoubleClick}
+                onCellContextMenu={handleCellContextMenu}
                 onUpdateEditValue={updateEditValue}
                 onCommitEdit={commitEdit}
                 onCancelEdit={cancelEdit}
@@ -1606,6 +1757,24 @@ export const DataGrid = memo(function DataGrid({
         isDeleting={isDeleting}
         error={deleteError}
       />
+
+      {/* Cell Context Menu */}
+      {contextMenu.isOpen && (
+        <CellContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={handleContextMenuClose}
+          cellValue={contextMenu.cellValue}
+          columnInfo={contextMenu.columnInfo}
+          rowIndex={contextMenu.rowIndex}
+          isReadOnly={isReadOnly}
+          onCopy={handleContextMenuCopy}
+          onPaste={handleContextMenuPaste}
+          onSetNull={handleContextMenuSetNull}
+          onSaveBlob={handleContextMenuSaveBlob}
+          onDeleteRow={handleContextMenuDeleteRow}
+        />
+      )}
     </div>
   );
 });

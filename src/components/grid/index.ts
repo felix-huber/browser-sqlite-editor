@@ -46,3 +46,12 @@ export { DataGrid, type DataGridProps, type AddRowResult, type DeleteRowsResult 
 export { AddRowDialog, type AddRowDialogProps } from './AddRowDialog';
 
 export { DeleteRowsDialog, type DeleteRowsDialogProps } from './DeleteRowsDialog';
+
+export {
+  CellContextMenu,
+  copyCellValue,
+  parsePastedValue,
+  generateBlobFilename,
+  downloadBlob,
+  type CellContextMenuProps,
+} from './CellContextMenu';
