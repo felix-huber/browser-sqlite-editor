@@ -1073,4 +1073,317 @@ describe('DataGrid', () => {
       }
     });
   });
+
+  describe('Add Row Functionality', () => {
+    // Mock table with all columns having defaults (INTEGER PRIMARY KEY has implicit default)
+    const tableWithDefaults: TableInfo = {
+      name: 'items',
+      isView: false,
+      isVirtual: false,
+      withoutRowid: false,
+      columns: [
+        { cid: 0, name: 'id', type: 'INTEGER', notnull: false, dfltValue: null, pk: 1, generated: null, hidden: false },
+        { cid: 1, name: 'name', type: 'TEXT', notnull: false, dfltValue: "'default name'", pk: 0, generated: null, hidden: false },
+        { cid: 2, name: 'count', type: 'INTEGER', notnull: false, dfltValue: '0', pk: 0, generated: null, hidden: false },
+      ],
+      indexes: [],
+      createSql: 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT DEFAULT "default name", count INTEGER DEFAULT 0)',
+    };
+
+    // Mock table with NOT NULL no default
+    const tableWithRequired: TableInfo = {
+      name: 'products',
+      isView: false,
+      isVirtual: false,
+      withoutRowid: false,
+      columns: [
+        { cid: 0, name: 'id', type: 'INTEGER', notnull: false, dfltValue: null, pk: 1, generated: null, hidden: false },
+        { cid: 1, name: 'name', type: 'TEXT', notnull: true, dfltValue: null, pk: 0, generated: null, hidden: false },
+        { cid: 2, name: 'price', type: 'REAL', notnull: true, dfltValue: null, pk: 0, generated: null, hidden: false },
+        { cid: 3, name: 'description', type: 'TEXT', notnull: false, dfltValue: null, pk: 0, generated: null, hidden: false },
+      ],
+      indexes: [],
+      createSql: 'CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL, price REAL NOT NULL, description TEXT)',
+    };
+
+    // Mock table with generated column
+    const tableWithGenerated: TableInfo = {
+      name: 'orders',
+      isView: false,
+      isVirtual: false,
+      withoutRowid: false,
+      columns: [
+        { cid: 0, name: 'id', type: 'INTEGER', notnull: false, dfltValue: null, pk: 1, generated: null, hidden: false },
+        { cid: 1, name: 'quantity', type: 'INTEGER', notnull: true, dfltValue: null, pk: 0, generated: null, hidden: false },
+        { cid: 2, name: 'unit_price', type: 'REAL', notnull: true, dfltValue: null, pk: 0, generated: null, hidden: false },
+        { cid: 3, name: 'total', type: 'REAL', notnull: false, dfltValue: null, pk: 0, generated: 'stored', hidden: false },
+      ],
+      indexes: [],
+      createSql: 'CREATE TABLE orders (id INTEGER PRIMARY KEY, quantity INTEGER NOT NULL, unit_price REAL NOT NULL, total REAL GENERATED ALWAYS AS (quantity * unit_price) STORED)',
+    };
+
+    it('renders Add Row button when onAddRow is provided', () => {
+      const onAddRow = vi.fn().mockResolvedValue({ success: true });
+      render(<DataGrid {...defaultProps} onAddRow={onAddRow} />);
+
+      const addRowButton = screen.getByTestId('add-row-button');
+      expect(addRowButton).toBeInTheDocument();
+      expect(addRowButton).toHaveTextContent('Add Row');
+    });
+
+    it('does not render Add Row button when onAddRow is not provided', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      expect(screen.queryByTestId('add-row-button')).not.toBeInTheDocument();
+    });
+
+    it('disables Add Row button in read-only mode', () => {
+      const onAddRow = vi.fn().mockResolvedValue({ success: true });
+      render(<DataGrid {...defaultProps} isReadOnly={true} onAddRow={onAddRow} />);
+
+      const addRowButton = screen.getByTestId('add-row-button');
+      expect(addRowButton).toBeDisabled();
+    });
+
+    it('calls onAddRow when Add Row button is clicked (table with all defaults)', async () => {
+      const onAddRow = vi.fn().mockResolvedValue({ success: true });
+      const onRowAdded = vi.fn();
+      render(
+        <DataGrid
+          tableInfo={tableWithDefaults}
+          data={[{ id: 1, name: 'Test', count: 5 }]}
+          height={400}
+          onAddRow={onAddRow}
+          onRowAdded={onRowAdded}
+        />
+      );
+
+      const addRowButton = screen.getByTestId('add-row-button');
+      fireEvent.click(addRowButton);
+
+      await vi.waitFor(() => {
+        expect(onAddRow).toHaveBeenCalledWith();
+      });
+    });
+
+    it('shows form when DEFAULT VALUES insert fails (NOT NULL no default)', async () => {
+      const onAddRow = vi.fn().mockResolvedValue({ success: false, needsForm: true });
+      render(
+        <DataGrid
+          tableInfo={tableWithRequired}
+          data={[]}
+          height={400}
+          onAddRow={onAddRow}
+        />
+      );
+
+      const addRowButton = screen.getByTestId('add-row-button');
+      fireEvent.click(addRowButton);
+
+      await vi.waitFor(() => {
+        expect(screen.getByTestId('add-row-dialog')).toBeInTheDocument();
+      });
+
+      // Check that required fields are shown
+      expect(screen.getByTestId('field-name')).toBeInTheDocument();
+      expect(screen.getByTestId('field-price')).toBeInTheDocument();
+    });
+
+    it('excludes generated columns from the form', async () => {
+      const onAddRow = vi.fn().mockResolvedValue({ success: false, needsForm: true });
+      render(
+        <DataGrid
+          tableInfo={tableWithGenerated}
+          data={[]}
+          height={400}
+          onAddRow={onAddRow}
+        />
+      );
+
+      const addRowButton = screen.getByTestId('add-row-button');
+      fireEvent.click(addRowButton);
+
+      await vi.waitFor(() => {
+        expect(screen.getByTestId('add-row-dialog')).toBeInTheDocument();
+      });
+
+      // Generated column 'total' should not appear in the form
+      expect(screen.queryByTestId('field-total')).not.toBeInTheDocument();
+
+      // Regular required columns should appear
+      expect(screen.getByTestId('field-quantity')).toBeInTheDocument();
+      expect(screen.getByTestId('field-unit_price')).toBeInTheDocument();
+
+      // Should show generated columns info
+      expect(screen.getByTestId('generated-columns-info')).toBeInTheDocument();
+    });
+
+    it('blocks form submit when required field is empty', async () => {
+      const onAddRow = vi.fn()
+        .mockResolvedValueOnce({ success: false, needsForm: true })
+        .mockResolvedValueOnce({ success: true });
+
+      render(
+        <DataGrid
+          tableInfo={tableWithRequired}
+          data={[]}
+          height={400}
+          onAddRow={onAddRow}
+        />
+      );
+
+      // Open dialog
+      fireEvent.click(screen.getByTestId('add-row-button'));
+
+      await vi.waitFor(() => {
+        expect(screen.getByTestId('add-row-dialog')).toBeInTheDocument();
+      });
+
+      // Try to submit without filling required fields
+      const submitButton = screen.getByTestId('add-row-submit');
+      fireEvent.click(submitButton);
+
+      // onAddRow should not be called again (form validation should block)
+      await vi.waitFor(() => {
+        // The onAddRow was called once to determine needsForm
+        expect(onAddRow).toHaveBeenCalledTimes(1);
+      });
+
+      // Submit button should be disabled when required fields are empty
+      expect(submitButton).toBeDisabled();
+    });
+
+    it('submits form with values when required fields are filled', async () => {
+      const onAddRow = vi.fn()
+        .mockResolvedValueOnce({ success: false, needsForm: true })
+        .mockResolvedValueOnce({ success: true });
+
+      render(
+        <DataGrid
+          tableInfo={tableWithRequired}
+          data={[]}
+          height={400}
+          onAddRow={onAddRow}
+        />
+      );
+
+      // Open dialog
+      fireEvent.click(screen.getByTestId('add-row-button'));
+
+      await vi.waitFor(() => {
+        expect(screen.getByTestId('add-row-dialog')).toBeInTheDocument();
+      });
+
+      // Fill required fields
+      fireEvent.change(screen.getByTestId('field-name'), { target: { value: 'Test Product' } });
+      fireEvent.change(screen.getByTestId('field-price'), { target: { value: '19.99' } });
+
+      // Submit
+      fireEvent.click(screen.getByTestId('add-row-submit'));
+
+      await vi.waitFor(() => {
+        expect(onAddRow).toHaveBeenCalledTimes(2);
+        expect(onAddRow).toHaveBeenLastCalledWith({
+          name: 'Test Product',
+          price: 19.99,
+        });
+      });
+    });
+
+    it('closes dialog when Cancel is clicked', async () => {
+      const onAddRow = vi.fn().mockResolvedValue({ success: false, needsForm: true });
+
+      render(
+        <DataGrid
+          tableInfo={tableWithRequired}
+          data={[]}
+          height={400}
+          onAddRow={onAddRow}
+        />
+      );
+
+      // Open dialog
+      fireEvent.click(screen.getByTestId('add-row-button'));
+
+      await vi.waitFor(() => {
+        expect(screen.getByTestId('add-row-dialog')).toBeInTheDocument();
+      });
+
+      // Click cancel
+      fireEvent.click(screen.getByTestId('add-row-cancel'));
+
+      await vi.waitFor(() => {
+        expect(screen.queryByTestId('add-row-dialog')).not.toBeInTheDocument();
+      });
+    });
+
+    it('shows error message when insert fails', async () => {
+      const onAddRow = vi.fn()
+        .mockResolvedValueOnce({ success: false, needsForm: true })
+        .mockResolvedValueOnce({ success: false, error: 'Unique constraint violated' });
+
+      render(
+        <DataGrid
+          tableInfo={tableWithRequired}
+          data={[]}
+          height={400}
+          onAddRow={onAddRow}
+        />
+      );
+
+      // Open dialog
+      fireEvent.click(screen.getByTestId('add-row-button'));
+
+      await vi.waitFor(() => {
+        expect(screen.getByTestId('add-row-dialog')).toBeInTheDocument();
+      });
+
+      // Fill fields
+      fireEvent.change(screen.getByTestId('field-name'), { target: { value: 'Duplicate' } });
+      fireEvent.change(screen.getByTestId('field-price'), { target: { value: '10' } });
+
+      // Submit
+      fireEvent.click(screen.getByTestId('add-row-submit'));
+
+      await vi.waitFor(() => {
+        expect(screen.getByTestId('add-row-error')).toHaveTextContent('Unique constraint violated');
+      });
+    });
+
+    it('shows toolbar even when data is empty (to allow adding first row)', () => {
+      const onAddRow = vi.fn().mockResolvedValue({ success: true });
+      render(
+        <DataGrid
+          tableInfo={mockTableInfo}
+          data={[]}
+          height={400}
+          onAddRow={onAddRow}
+        />
+      );
+
+      expect(screen.getByTestId('grid-toolbar')).toBeInTheDocument();
+      expect(screen.getByTestId('add-row-button')).toBeInTheDocument();
+    });
+
+    it('calls onRowAdded after successful insert', async () => {
+      const onAddRow = vi.fn().mockResolvedValue({ success: true });
+      const onRowAdded = vi.fn();
+
+      render(
+        <DataGrid
+          tableInfo={tableWithDefaults}
+          data={[{ id: 1, name: 'Test', count: 5 }]}
+          height={400}
+          onAddRow={onAddRow}
+          onRowAdded={onRowAdded}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('add-row-button'));
+
+      await vi.waitFor(() => {
+        expect(onRowAdded).toHaveBeenCalledWith(1); // Index of new row
+      });
+    });
+  });
 });

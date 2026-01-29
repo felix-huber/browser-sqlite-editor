@@ -28,7 +28,8 @@ import {
   type CellEditState,
 } from './useDataGrid';
 import { useGridVirtualizer } from './useGridVirtualizer';
-import type { TableInfo } from '../../types';
+import { AddRowDialog } from './AddRowDialog';
+import type { TableInfo, ColumnInfo } from '../../types';
 
 // =============================================================================
 // Constants
@@ -49,6 +50,16 @@ const CHECKBOX_COLUMN_WIDTH = 40;
 // =============================================================================
 // Types
 // =============================================================================
+
+/** Result of add row attempt */
+export interface AddRowResult {
+  /** Whether the insert succeeded */
+  success: boolean;
+  /** If failed, whether a form is needed for required fields */
+  needsForm?: boolean;
+  /** Error message if failed */
+  error?: string;
+}
 
 export interface DataGridProps {
   /** Table schema information */
@@ -77,6 +88,14 @@ export interface DataGridProps {
   onCellEdit?: (rowIndex: number, columnName: string, newValue: CellValue) => Promise<boolean>;
   /** Called when edit mode changes (for tracking unsaved edits) */
   onEditStateChange?: (isEditing: boolean) => void;
+  /**
+   * Called when add row is requested.
+   * If values is undefined, attempt DEFAULT VALUES insert.
+   * If values is provided, insert with those values.
+   */
+  onAddRow?: (values?: Record<string, unknown>) => Promise<AddRowResult>;
+  /** Called after a successful row insert with the new row index */
+  onRowAdded?: (rowIndex: number) => void;
 }
 
 // =============================================================================
@@ -314,14 +333,11 @@ const EditableCell = memo(function EditableCell({
     );
   }
 
-  // Use number input for numeric columns
-  const inputType = typeCategory === 'numeric' ? 'text' : 'text';
-
   return (
     <div className="edit-input-container absolute inset-0 z-10">
       <input
         ref={inputRef as React.RefObject<HTMLInputElement>}
-        type={inputType}
+        type="text"
         value={currentValue}
         onChange={(e) => onUpdateValue(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -826,6 +842,9 @@ const GridRow = memo(function GridRow({
 // Main DataGrid Component
 // =============================================================================
 
+/** Toolbar height in pixels */
+const TOOLBAR_HEIGHT = 40;
+
 export const DataGrid = memo(function DataGrid({
   tableInfo,
   data,
@@ -840,6 +859,8 @@ export const DataGrid = memo(function DataGrid({
   onFilterChange,
   onCellEdit,
   onEditStateChange,
+  onAddRow,
+  onRowAdded,
 }: DataGridProps) {
   // Column widths state
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
@@ -860,6 +881,14 @@ export const DataGrid = memo(function DataGrid({
     visible: false,
     position: { x: 0, y: 0 },
   });
+
+  // Add row dialog state
+  const [showAddRowDialog, setShowAddRowDialog] = useState(false);
+  const [addRowError, setAddRowError] = useState<string | null>(null);
+  const [isAddingRow, setIsAddingRow] = useState(false);
+
+  // Container ref for keyboard handling
+  const gridContainerRef = useRef<HTMLDivElement>(null);
 
   // Set up data grid hook
   const dataGridOptions: UseDataGridOptions = useMemo(
@@ -1098,6 +1127,99 @@ export const DataGrid = memo(function DataGrid({
     [columns, data.length, isColumnEditable, startEdit]
   );
 
+  // Get columns that require user input (NOT NULL without DEFAULT, not generated)
+  const requiredColumns = useMemo((): ColumnInfo[] => {
+    if (!tableInfo) return [];
+    return tableInfo.columns.filter((col) => {
+      // Skip generated columns
+      if (col.generated !== null) return false;
+      // Include columns that are NOT NULL and have no default
+      if (col.notnull && col.dfltValue === null) return true;
+      return false;
+    });
+  }, [tableInfo]);
+
+  // Handle add row button click
+  const handleAddRowClick = useCallback(async () => {
+    if (!onAddRow || isReadOnly) return;
+
+    setIsAddingRow(true);
+    setAddRowError(null);
+
+    try {
+      // First try DEFAULT VALUES insert
+      const result = await onAddRow();
+
+      if (result.success) {
+        // Success! New row added
+        onRowAdded?.(data.length); // Index of new row
+        setIsAddingRow(false);
+      } else if (result.needsForm) {
+        // Need to show form for required fields
+        setShowAddRowDialog(true);
+        setIsAddingRow(false);
+      } else {
+        // Other error
+        setAddRowError(result.error || 'Failed to add row');
+        setIsAddingRow(false);
+      }
+    } catch (err) {
+      setAddRowError(err instanceof Error ? err.message : 'Failed to add row');
+      setIsAddingRow(false);
+    }
+  }, [onAddRow, isReadOnly, data.length, onRowAdded]);
+
+  // Handle add row dialog submit
+  const handleAddRowSubmit = useCallback(async (values: Record<string, unknown>) => {
+    if (!onAddRow) return;
+
+    setIsAddingRow(true);
+    setAddRowError(null);
+
+    try {
+      const result = await onAddRow(values);
+
+      if (result.success) {
+        setShowAddRowDialog(false);
+        onRowAdded?.(data.length);
+      } else {
+        setAddRowError(result.error || 'Failed to add row');
+      }
+    } catch (err) {
+      setAddRowError(err instanceof Error ? err.message : 'Failed to add row');
+    } finally {
+      setIsAddingRow(false);
+    }
+  }, [onAddRow, data.length, onRowAdded]);
+
+  // Handle add row dialog close
+  const handleAddRowDialogClose = useCallback(() => {
+    setShowAddRowDialog(false);
+    setAddRowError(null);
+    setIsAddingRow(false);
+  }, []);
+
+  // Keyboard shortcut handler for Cmd/Ctrl+Shift+N
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Cmd/Ctrl+Shift+N for add row
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        if (!isReadOnly && onAddRow && !showAddRowDialog) {
+          handleAddRowClick();
+        }
+      }
+    };
+
+    // Only listen when grid is focused or exists
+    const container = gridContainerRef.current;
+    if (container) {
+      // Use document for global shortcut
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [isReadOnly, onAddRow, showAddRowDialog, handleAddRowClick]);
+
   // Get rows from table
   const rows = table.getRowModel().rows;
 
@@ -1123,17 +1245,71 @@ export const DataGrid = memo(function DataGrid({
 
   if (data.length === 0) {
     return (
-      <div
-        className={`flex items-center justify-center text-gray-500 ${className}`}
-        style={{ height }}
-      >
-        No data
+      <div ref={gridContainerRef} className={`flex flex-col ${className}`} style={{ height }}>
+        {/* Toolbar (even when empty, to allow adding rows) */}
+        {onAddRow && (
+          <div
+            className="flex-shrink-0 bg-gray-50 border-b border-gray-200 px-3 flex items-center gap-2"
+            style={{ height: TOOLBAR_HEIGHT }}
+            data-testid="grid-toolbar"
+          >
+            <button
+              onClick={handleAddRowClick}
+              disabled={isReadOnly || isAddingRow}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              title={isReadOnly ? 'Database is read-only' : 'Add new row (Cmd/Ctrl+Shift+N)'}
+              data-testid="add-row-button"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add Row
+            </button>
+          </div>
+        )}
+
+        <div className="flex-1 flex items-center justify-center text-gray-500">
+          No data
+        </div>
+
+        {/* Add Row Dialog */}
+        <AddRowDialog
+          isOpen={showAddRowDialog}
+          requiredColumns={requiredColumns}
+          allColumns={tableInfo?.columns ?? []}
+          onClose={handleAddRowDialogClose}
+          onSubmit={handleAddRowSubmit}
+          isSubmitting={isAddingRow}
+          error={addRowError}
+        />
       </div>
     );
   }
 
   return (
-    <div className={`flex flex-col ${className}`} style={{ height }}>
+    <div ref={gridContainerRef} className={`flex flex-col ${className}`} style={{ height }}>
+      {/* Toolbar */}
+      {onAddRow && (
+        <div
+          className="flex-shrink-0 bg-gray-50 border-b border-gray-200 px-3 flex items-center gap-2"
+          style={{ height: TOOLBAR_HEIGHT }}
+          data-testid="grid-toolbar"
+        >
+          <button
+            onClick={handleAddRowClick}
+            disabled={isReadOnly || isAddingRow}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            title={isReadOnly ? 'Database is read-only' : 'Add new row (Cmd/Ctrl+Shift+N)'}
+            data-testid="add-row-button"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Add Row
+          </button>
+        </div>
+      )}
+
       {/* Filter status bar (shown when filters active) */}
       {filterState.length > 0 && (
         <div
@@ -1252,6 +1428,17 @@ export const DataGrid = memo(function DataGrid({
 
       {/* Tooltip for blocked edit attempts */}
       <Tooltip message={tooltip.message} visible={tooltip.visible} position={tooltip.position} />
+
+      {/* Add Row Dialog */}
+      <AddRowDialog
+        isOpen={showAddRowDialog}
+        requiredColumns={requiredColumns}
+        allColumns={tableInfo?.columns ?? []}
+        onClose={handleAddRowDialogClose}
+        onSubmit={handleAddRowSubmit}
+        isSubmitting={isAddingRow}
+        error={addRowError}
+      />
     </div>
   );
 });

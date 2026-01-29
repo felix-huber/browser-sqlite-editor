@@ -41,4 +41,6 @@ export {
   type UseGridVirtualizerResult,
 } from './useGridVirtualizer';
 
-export { DataGrid, type DataGridProps } from './DataGrid';
+export { DataGrid, type DataGridProps, type AddRowResult } from './DataGrid';
+
+export { AddRowDialog, type AddRowDialogProps } from './AddRowDialog';
