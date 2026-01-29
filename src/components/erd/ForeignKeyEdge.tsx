@@ -28,6 +28,10 @@ export interface ForeignKeyEdgeData extends Record<string, unknown> {
   isOptional: boolean
   /** Callback when edge is deleted */
   onEdgeDelete?: (edgeId: string) => void
+  /** Callback when context menu is requested (right-click) */
+  onContextMenu?: (edgeId: string, position: { x: number; y: number }) => void
+  /** Callback when edge edit is requested */
+  onEdgeEdit?: (edgeId: string) => void
 }
 
 /** FK edge type for React Flow */
@@ -269,6 +273,25 @@ function ForeignKeyEdgeComponent({
     [id, data]
   )
 
+  // Context menu handler (right-click)
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      data?.onContextMenu?.(id, { x: e.clientX, y: e.clientY })
+    },
+    [id, data]
+  )
+
+  // Double-click to edit
+  const handleDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      data?.onEdgeEdit?.(id)
+    },
+    [id, data]
+  )
+
   return (
     <>
       {/* Main edge path */}
@@ -284,7 +307,7 @@ function ForeignKeyEdgeComponent({
         interactionWidth={20}
       />
 
-      {/* Hover detection overlay */}
+      {/* Hover detection overlay with context menu support */}
       <path
         d={edgePath}
         fill="none"
@@ -292,7 +315,9 @@ function ForeignKeyEdgeComponent({
         strokeWidth={20}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
-        style={{ pointerEvents: 'stroke' }}
+        onContextMenu={handleContextMenu}
+        onDoubleClick={handleDoubleClick}
+        style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
         data-testid={`fk-edge-hitbox-${id}`}
       />
 
@@ -340,6 +365,8 @@ function ForeignKeyEdgeComponent({
           }}
           onMouseEnter={() => setIsHovered(true)}
           onMouseLeave={() => setIsHovered(false)}
+          onContextMenu={handleContextMenu}
+          onDoubleClick={handleDoubleClick}
           title={tooltipText}
           data-testid={`fk-edge-label-${id}`}
         >

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useState, useMemo } from 'react'
 import {
   ReactFlow,
   Controls,
@@ -23,6 +23,10 @@ import {
   type TableInfo,
   type ColumnInfo,
 } from './FKValidationDialog'
+import { FKEdgeContextMenu } from './FKEdgeContextMenu'
+import { FKEditDialog } from './FKEditDialog'
+import { FKDeleteDialog } from './FKDeleteDialog'
+import { foreignKeyEdgeTypes, type ForeignKeyEdgeData } from './ForeignKeyEdge'
 
 /** Node data for a database table */
 export interface TableNodeData extends Record<string, unknown> {
@@ -73,8 +77,43 @@ interface ERDCanvasProps {
     onDelete: ForeignKeyAction,
     onUpdate: ForeignKeyAction
   ) => Promise<boolean>
+  /** Called when FK edit is confirmed. Returns true if successful. */
+  onEditFK?: (
+    childTable: string,
+    childColumn: string,
+    parentTable: string,
+    parentColumn: string,
+    onDelete: ForeignKeyAction,
+    onUpdate: ForeignKeyAction
+  ) => Promise<boolean>
+  /** Called when FK delete is confirmed. Returns true if successful. */
+  onDeleteFK?: (
+    childTable: string,
+    childColumn: string,
+    parentTable: string,
+    parentColumn: string
+  ) => Promise<boolean>
+  /** Called when "Show in Table Designer" is clicked */
+  onShowInDesigner?: (tableName: string) => void
   /** Called to show a toast message */
   onShowToast?: (message: string, type: 'error' | 'success' | 'warning') => void
+}
+
+/** Context menu state */
+interface ContextMenuState {
+  isOpen: boolean
+  position: { x: number; y: number }
+  edgeId: string | null
+}
+
+/** FK info for dialogs */
+interface FKDialogInfo {
+  childTable: string
+  childColumn: string
+  parentTable: string
+  parentColumn: string
+  onDelete: ForeignKeyAction
+  onUpdate: ForeignKeyAction
 }
 
 const defaultNodes: TableNode[] = []
@@ -98,17 +137,37 @@ export function ERDCanvas({
   onNodesChange: onNodesChangeCallback,
   onEdgesChange: onEdgesChangeCallback,
   onCreateFK,
+  onEditFK,
+  onDeleteFK,
+  onShowInDesigner,
   onShowToast,
 }: ERDCanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
 
-  // FK Validation dialog state
+  // FK Validation dialog state (for creation)
   const [showFKDialog, setShowFKDialog] = useState(false)
   const [pendingFK, setPendingFK] = useState<PendingFKInfo | null>(null)
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
   const [isValidating, setIsValidating] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({
+    isOpen: false,
+    position: { x: 0, y: 0 },
+    edgeId: null,
+  })
+
+  // Edit dialog state
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [editingFK, setEditingFK] = useState<FKDialogInfo | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
+
+  // Delete dialog state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deletingFK, setDeletingFK] = useState<FKDialogInfo | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   /**
    * Handle connection attempt - intercept and show validation dialog
@@ -260,6 +319,276 @@ export function ERDCanvas({
     }
   }, [isCreating])
 
+  /**
+   * Get FK data from edge ID
+   */
+  const getFKDataFromEdge = useCallback(
+    (edgeId: string): FKDialogInfo | null => {
+      const edge = edges.find((e) => e.id === edgeId)
+      if (!edge || !edge.data) return null
+
+      const data = edge.data as ForeignKeyEdgeData
+      return {
+        childTable: data.childTable,
+        childColumn: data.childColumn,
+        parentTable: data.parentTable,
+        parentColumn: data.parentColumn,
+        onDelete: data.onDelete ?? 'NO ACTION',
+        onUpdate: data.onUpdate ?? 'NO ACTION',
+      }
+    },
+    [edges]
+  )
+
+  /**
+   * Handle context menu request from edge
+   */
+  const handleEdgeContextMenu = useCallback(
+    (edgeId: string, position: { x: number; y: number }) => {
+      setContextMenu({
+        isOpen: true,
+        position,
+        edgeId,
+      })
+    },
+    []
+  )
+
+  /**
+   * Close context menu
+   */
+  const closeContextMenu = useCallback(() => {
+    setContextMenu({ isOpen: false, position: { x: 0, y: 0 }, edgeId: null })
+  }, [])
+
+  /**
+   * Handle edit FK from context menu
+   */
+  const handleEditFromContextMenu = useCallback(() => {
+    if (!contextMenu.edgeId) return
+
+    const fkData = getFKDataFromEdge(contextMenu.edgeId)
+    if (fkData) {
+      setEditingFK(fkData)
+      setEditDialogOpen(true)
+    }
+    closeContextMenu()
+  }, [contextMenu.edgeId, getFKDataFromEdge, closeContextMenu])
+
+  /**
+   * Handle delete FK from context menu
+   */
+  const handleDeleteFromContextMenu = useCallback(() => {
+    if (!contextMenu.edgeId) return
+
+    const fkData = getFKDataFromEdge(contextMenu.edgeId)
+    if (fkData) {
+      setDeletingFK(fkData)
+      setDeleteDialogOpen(true)
+    }
+    closeContextMenu()
+  }, [contextMenu.edgeId, getFKDataFromEdge, closeContextMenu])
+
+  /**
+   * Handle show in table designer from context menu
+   */
+  const handleShowInDesignerFromContextMenu = useCallback(() => {
+    if (!contextMenu.edgeId) return
+
+    const fkData = getFKDataFromEdge(contextMenu.edgeId)
+    if (fkData) {
+      onShowInDesigner?.(fkData.childTable)
+    }
+    closeContextMenu()
+  }, [contextMenu.edgeId, getFKDataFromEdge, onShowInDesigner, closeContextMenu])
+
+  /**
+   * Handle edge edit (double-click)
+   */
+  const handleEdgeEdit = useCallback(
+    (edgeId: string) => {
+      if (isReadOnly) {
+        onShowToast?.('Database is read-only', 'error')
+        return
+      }
+
+      const fkData = getFKDataFromEdge(edgeId)
+      if (fkData) {
+        setEditingFK(fkData)
+        setEditDialogOpen(true)
+      }
+    },
+    [isReadOnly, getFKDataFromEdge, onShowToast]
+  )
+
+  /**
+   * Handle edge delete (from inline button)
+   */
+  const handleEdgeDelete = useCallback(
+    (edgeId: string) => {
+      if (isReadOnly) {
+        onShowToast?.('Database is read-only', 'error')
+        return
+      }
+
+      const fkData = getFKDataFromEdge(edgeId)
+      if (fkData) {
+        setDeletingFK(fkData)
+        setDeleteDialogOpen(true)
+      }
+    },
+    [isReadOnly, getFKDataFromEdge, onShowToast]
+  )
+
+  /**
+   * Handle save from edit dialog
+   */
+  const handleSaveFK = useCallback(
+    async (newOnDelete: ForeignKeyAction, newOnUpdate: ForeignKeyAction) => {
+      if (!editingFK || !onEditFK) {
+        setEditDialogOpen(false)
+        return
+      }
+
+      setIsSaving(true)
+
+      try {
+        const success = await onEditFK(
+          editingFK.childTable,
+          editingFK.childColumn,
+          editingFK.parentTable,
+          editingFK.parentColumn,
+          newOnDelete,
+          newOnUpdate
+        )
+
+        if (success) {
+          // Update the edge in the graph
+          setEdges((eds) =>
+            eds.map((e) => {
+              const data = e.data as ForeignKeyEdgeData | undefined
+              if (
+                data &&
+                data.childTable === editingFK.childTable &&
+                data.childColumn === editingFK.childColumn &&
+                data.parentTable === editingFK.parentTable &&
+                data.parentColumn === editingFK.parentColumn
+              ) {
+                return {
+                  ...e,
+                  data: {
+                    ...data,
+                    onDelete: newOnDelete,
+                    onUpdate: newOnUpdate,
+                  },
+                }
+              }
+              return e
+            })
+          )
+          onShowToast?.('Foreign key updated successfully', 'success')
+          setEditDialogOpen(false)
+          setEditingFK(null)
+        }
+      } catch (err) {
+        onShowToast?.(
+          `Failed to update FK: ${err instanceof Error ? err.message : String(err)}`,
+          'error'
+        )
+      } finally {
+        setIsSaving(false)
+      }
+    },
+    [editingFK, onEditFK, setEdges, onShowToast]
+  )
+
+  /**
+   * Handle close edit dialog
+   */
+  const handleCloseEditDialog = useCallback(() => {
+    if (!isSaving) {
+      setEditDialogOpen(false)
+      setEditingFK(null)
+    }
+  }, [isSaving])
+
+  /**
+   * Handle confirm delete from delete dialog
+   */
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deletingFK || !onDeleteFK) {
+      setDeleteDialogOpen(false)
+      return
+    }
+
+    setIsDeleting(true)
+
+    try {
+      const success = await onDeleteFK(
+        deletingFK.childTable,
+        deletingFK.childColumn,
+        deletingFK.parentTable,
+        deletingFK.parentColumn
+      )
+
+      if (success) {
+        // Remove the edge from the graph
+        setEdges((eds) =>
+          eds.filter((e) => {
+            const data = e.data as ForeignKeyEdgeData | undefined
+            if (!data) return true
+            return !(
+              data.childTable === deletingFK.childTable &&
+              data.childColumn === deletingFK.childColumn &&
+              data.parentTable === deletingFK.parentTable &&
+              data.parentColumn === deletingFK.parentColumn
+            )
+          })
+        )
+        onShowToast?.('Foreign key deleted successfully', 'success')
+        setDeleteDialogOpen(false)
+        setDeletingFK(null)
+      }
+    } catch (err) {
+      onShowToast?.(
+        `Failed to delete FK: ${err instanceof Error ? err.message : String(err)}`,
+        'error'
+      )
+    } finally {
+      setIsDeleting(false)
+    }
+  }, [deletingFK, onDeleteFK, setEdges, onShowToast])
+
+  /**
+   * Handle close delete dialog
+   */
+  const handleCloseDeleteDialog = useCallback(() => {
+    if (!isDeleting) {
+      setDeleteDialogOpen(false)
+      setDeletingFK(null)
+    }
+  }, [isDeleting])
+
+  /**
+   * Memoized edges with callbacks injected
+   */
+  const edgesWithCallbacks = useMemo(() => {
+    return edges.map((edge) => {
+      if (edge.type === 'fkEdge') {
+        return {
+          ...edge,
+          data: {
+            ...edge.data,
+            onEdgeDelete: handleEdgeDelete,
+            onContextMenu: handleEdgeContextMenu,
+            onEdgeEdit: handleEdgeEdit,
+          },
+        }
+      }
+      return edge
+    })
+  }, [edges, handleEdgeDelete, handleEdgeContextMenu, handleEdgeEdit])
+
   // Notify parent of node changes
   const handleNodesChange = useCallback(
     (changes: Parameters<typeof onNodesChange>[0]) => {
@@ -289,11 +618,17 @@ export function ERDCanvas({
     [onEdgesChange, onEdgesChangeCallback, setEdges]
   )
 
+  // Get FK info for context menu
+  const contextMenuFKInfo = contextMenu.edgeId
+    ? getFKDataFromEdge(contextMenu.edgeId)
+    : null
+
   return (
     <div className="h-full w-full" data-testid="erd-canvas">
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={edgesWithCallbacks}
+        edgeTypes={foreignKeyEdgeTypes}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         onConnect={onConnect}
@@ -326,7 +661,7 @@ export function ERDCanvas({
         />
       </ReactFlow>
 
-      {/* FK Validation Dialog */}
+      {/* FK Validation Dialog (for creation) */}
       <FKValidationDialog
         isOpen={showFKDialog}
         pendingFK={pendingFK}
@@ -336,6 +671,41 @@ export function ERDCanvas({
         onClose={handleDialogClose}
         onCreate={handleCreateFK}
       />
+
+      {/* FK Context Menu */}
+      {contextMenu.isOpen && contextMenuFKInfo && (
+        <FKEdgeContextMenu
+          position={contextMenu.position}
+          fkInfo={contextMenuFKInfo}
+          isReadOnly={isReadOnly}
+          onEdit={handleEditFromContextMenu}
+          onDelete={handleDeleteFromContextMenu}
+          onShowInDesigner={handleShowInDesignerFromContextMenu}
+          onClose={closeContextMenu}
+        />
+      )}
+
+      {/* FK Edit Dialog */}
+      {editingFK && (
+        <FKEditDialog
+          isOpen={editDialogOpen}
+          fkInfo={editingFK}
+          isSaving={isSaving}
+          onSave={handleSaveFK}
+          onClose={handleCloseEditDialog}
+        />
+      )}
+
+      {/* FK Delete Dialog */}
+      {deletingFK && (
+        <FKDeleteDialog
+          isOpen={deleteDialogOpen}
+          fkInfo={deletingFK}
+          isDeleting={isDeleting}
+          onConfirm={handleConfirmDelete}
+          onClose={handleCloseDeleteDialog}
+        />
+      )}
     </div>
   )
 }
