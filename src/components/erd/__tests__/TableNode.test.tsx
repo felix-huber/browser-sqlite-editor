@@ -258,4 +258,75 @@ describe('TableNode', () => {
     const node = screen.getByTestId('table-node')
     expect(node).toHaveClass('border-navy-600', 'ring-2', 'ring-navy-200')
   })
+
+  describe('read-only mode', () => {
+    it('hides handles when isReadOnly is true', () => {
+      const columns: TableColumnData[] = [
+        { name: 'id', type: 'INTEGER' },
+      ]
+      const props = createNodeProps({ label: 'users', columns, isReadOnly: true })
+
+      render(
+        <TestWrapper>
+          <TableNode {...props} />
+        </TestWrapper>
+      )
+
+      const node = screen.getByTestId('table-node')
+      const handles = node.querySelectorAll('.react-flow__handle')
+
+      // Handles should always be hidden in read-only mode (opacity-0)
+      handles.forEach((handle) => {
+        expect(handle).toHaveClass('!opacity-0')
+      })
+    })
+
+    it('keeps handles hidden on hover when isReadOnly is true', () => {
+      const columns: TableColumnData[] = [
+        { name: 'id', type: 'INTEGER' },
+      ]
+      const props = createNodeProps({ label: 'users', columns, isReadOnly: true })
+
+      render(
+        <TestWrapper>
+          <TableNode {...props} />
+        </TestWrapper>
+      )
+
+      const node = screen.getByTestId('table-node')
+
+      // Hover over the node
+      fireEvent.mouseEnter(node)
+
+      // Handles should still be hidden in read-only mode
+      const handles = node.querySelectorAll('.react-flow__handle')
+      handles.forEach((handle) => {
+        expect(handle).toHaveClass('!opacity-0')
+      })
+    })
+
+    it('keeps handles hidden when selected in read-only mode', () => {
+      const columns: TableColumnData[] = [
+        { name: 'id', type: 'INTEGER' },
+      ]
+      const props = createNodeProps(
+        { label: 'users', columns, isReadOnly: true },
+        true // selected
+      )
+
+      render(
+        <TestWrapper>
+          <TableNode {...props} />
+        </TestWrapper>
+      )
+
+      const node = screen.getByTestId('table-node')
+      const handles = node.querySelectorAll('.react-flow__handle')
+
+      // Handles should still be hidden even when selected in read-only mode
+      handles.forEach((handle) => {
+        expect(handle).toHaveClass('!opacity-0')
+      })
+    })
+  })
 })

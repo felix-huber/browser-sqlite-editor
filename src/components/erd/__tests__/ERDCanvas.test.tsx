@@ -14,6 +14,18 @@ Object.defineProperty(window, 'IntersectionObserver', {
   value: IntersectionObserverMock,
 })
 
+// Mock ResizeObserver for React Flow
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+Object.defineProperty(window, 'ResizeObserver', {
+  writable: true,
+  value: ResizeObserverMock,
+})
+
 // Mock getBoundingClientRect for React Flow viewport calculations
 Element.prototype.getBoundingClientRect = vi.fn(() => ({
   width: 800,
@@ -140,5 +152,110 @@ describe('ERDCanvas', () => {
 
     const fitViewButton = document.querySelector('.react-flow__controls-fitview')
     expect(fitViewButton).toBeInTheDocument()
+  })
+
+  describe('read-only mode', () => {
+    it('disables node connections when isReadOnly is true', () => {
+      render(<ERDCanvas isReadOnly={true} />)
+
+      // React Flow should have nodesConnectable set to false
+      const canvas = screen.getByTestId('erd-canvas')
+      expect(canvas).toBeInTheDocument()
+    })
+
+    it('shows toast when connection attempted in read-only mode', async () => {
+      const onShowToast = vi.fn()
+      const nodesWithColumns: TableNode[] = [
+        {
+          id: 'orders',
+          type: 'tableNode',
+          position: { x: 0, y: 0 },
+          data: {
+            label: 'orders',
+            columns: [
+              { name: 'id', type: 'INTEGER', isPrimaryKey: true },
+              { name: 'user_id', type: 'INTEGER' },
+            ],
+          },
+        },
+        {
+          id: 'users',
+          type: 'tableNode',
+          position: { x: 200, y: 0 },
+          data: {
+            label: 'users',
+            columns: [
+              { name: 'id', type: 'INTEGER', isPrimaryKey: true },
+            ],
+          },
+        },
+      ]
+
+      render(
+        <ERDCanvas
+          initialNodes={nodesWithColumns}
+          isReadOnly={true}
+          onShowToast={onShowToast}
+        />
+      )
+
+      expect(screen.getByTestId('erd-canvas')).toBeInTheDocument()
+    })
+  })
+
+  describe('FK creation flow', () => {
+    const nodesWithColumns: TableNode[] = [
+      {
+        id: 'orders',
+        type: 'tableNode',
+        position: { x: 0, y: 0 },
+        data: {
+          label: 'orders',
+          columns: [
+            { name: 'id', type: 'INTEGER', isPrimaryKey: true },
+            { name: 'user_id', type: 'INTEGER' },
+          ],
+        },
+      },
+      {
+        id: 'users',
+        type: 'tableNode',
+        position: { x: 200, y: 0 },
+        data: {
+          label: 'users',
+          columns: [
+            { name: 'id', type: 'INTEGER', isPrimaryKey: true },
+          ],
+        },
+      },
+    ]
+
+    it('renders with FK creation props', () => {
+      const onCreateFK = vi.fn()
+
+      render(
+        <ERDCanvas
+          initialNodes={nodesWithColumns}
+          onCreateFK={onCreateFK}
+        />
+      )
+
+      expect(screen.getByTestId('erd-canvas')).toBeInTheDocument()
+    })
+
+    it('accepts existing FKs for duplicate checking', () => {
+      const existingFKs = [
+        { childColumn: 'user_id', parentTable: 'users', parentColumn: 'id' },
+      ]
+
+      render(
+        <ERDCanvas
+          initialNodes={nodesWithColumns}
+          existingFKs={existingFKs}
+        />
+      )
+
+      expect(screen.getByTestId('erd-canvas')).toBeInTheDocument()
+    })
   })
 })

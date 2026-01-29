@@ -7,6 +7,8 @@ export interface TableColumnData {
   type: string
   isPrimaryKey?: boolean
   isForeignKey?: boolean
+  isUnique?: boolean
+  isNotNull?: boolean
   /** Generated column type: 'stored', 'virtual', or undefined for regular columns */
   generated?: 'stored' | 'virtual' | null
 }
@@ -17,6 +19,8 @@ export interface TableNodeData extends Record<string, unknown> {
   label: string
   /** Whether this is a view (read-only) */
   isView?: boolean
+  /** Whether handles should be hidden (read-only mode) */
+  isReadOnly?: boolean
   /** Column definitions */
   columns?: TableColumnData[]
 }
@@ -133,9 +137,10 @@ function ViewIcon({ className }: { className?: string }) {
  */
 function TableNodeComponent({ data, selected }: TableNodeProps) {
   const [isHovered, setIsHovered] = useState(false)
-  const { label, isView = false, columns = [] } = data
+  const { label, isView = false, isReadOnly = false, columns = [] } = data
 
-  const showHandles = isHovered || selected
+  // In read-only mode, handles are always hidden
+  const showHandles = !isReadOnly && (isHovered || selected)
 
   return (
     <div
