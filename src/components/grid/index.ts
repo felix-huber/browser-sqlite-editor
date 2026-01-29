@@ -24,3 +24,5 @@ export {
   type UseGridVirtualizerOptions,
   type UseGridVirtualizerResult,
 } from './useGridVirtualizer';
+
+export { DataGrid, type DataGridProps } from './DataGrid';
