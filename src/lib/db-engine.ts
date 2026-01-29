@@ -7,6 +7,7 @@
 
 import * as SQLite from '@journeyapps/wa-sqlite';
 import SQLiteESMFactory from '@journeyapps/wa-sqlite/dist/wa-sqlite-async.mjs';
+import wasmUrl from '@journeyapps/wa-sqlite/dist/wa-sqlite-async.wasm?url';
 import { initializeVFS, type VFSInitResult } from './opfs-vfs';
 
 import type { QueryResult, QueryRow, WorkerErrorCode } from '../types';
@@ -182,7 +183,9 @@ export class DatabaseEngine {
   private async _doInitialize(): Promise<void> {
     try {
       // Load the WASM module
-      const module = await SQLiteESMFactory();
+      const module = await SQLiteESMFactory({
+        locateFile: () => wasmUrl,
+      });
 
       // Build the SQLite API
       this.sqlite3 = SQLite.Factory(module);

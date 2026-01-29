@@ -32,7 +32,12 @@ e2e/perf/results/
 *.tmp
 *.temp
 
+playwright-report/                                                                                                                                                                                                                                                                             
+test-results/
+
 # Ralph tracking (regenerated)
 .ralph-task-tracking.json
 progress.txt
 learnings.md
+
+
