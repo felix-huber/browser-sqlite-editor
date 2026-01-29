@@ -229,6 +229,23 @@ export function usePersistenceError(): string | null {
   return useDatabaseStore((state) => state.persistenceError);
 }
 
+/**
+ * Get whether storage is full (quota exceeded).
+ * Use this to gate write operations throughout the app.
+ */
+export function useIsStorageFull(): boolean {
+  return useDatabaseStore((state) => state.storageStatus === 'quota_exceeded');
+}
+
+/**
+ * Check if writes are allowed (not read-only AND not storage full)
+ */
+export function useCanWrite(): boolean {
+  return useDatabaseStore(
+    (state) => !state.isReadOnly && state.storageStatus !== 'quota_exceeded'
+  );
+}
+
 // =============================================================================
 // Non-hook Accessors (for use outside React components)
 // =============================================================================

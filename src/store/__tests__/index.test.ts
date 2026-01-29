@@ -23,6 +23,8 @@ import {
   useStorageMode,
   useLockHolder,
   useDatabases,
+  useIsStorageFull,
+  useCanWrite,
   getState,
   setActionDeps,
   resetActionDeps,
@@ -572,6 +574,87 @@ describe('Zustand Store - Selectors', () => {
       expect(selectorResult.current).toHaveLength(2);
       expect(selectorResult.current[0].name).toBe('test-db-1');
       expect(selectorResult.current[1].name).toBe('test-db-2');
+    });
+  });
+
+  describe('useIsStorageFull', () => {
+    it('should return false when storageStatus is "ok"', () => {
+      const { result } = renderHook(() => useIsStorageFull());
+      expect(result.current).toBe(false);
+    });
+
+    it('should return false when storageStatus is "degraded"', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useIsStorageFull());
+
+      act(() => {
+        storeResult.current.setStorageStatus('degraded');
+      });
+
+      expect(selectorResult.current).toBe(false);
+    });
+
+    it('should return true when storageStatus is "quota_exceeded"', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useIsStorageFull());
+
+      act(() => {
+        storeResult.current.setStorageStatus('quota_exceeded');
+      });
+
+      expect(selectorResult.current).toBe(true);
+    });
+  });
+
+  describe('useCanWrite', () => {
+    it('should return true when not read-only and storage is ok', () => {
+      const { result } = renderHook(() => useCanWrite());
+      expect(result.current).toBe(true);
+    });
+
+    it('should return false when read-only', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useCanWrite());
+
+      act(() => {
+        storeResult.current.setReadOnly(true);
+      });
+
+      expect(selectorResult.current).toBe(false);
+    });
+
+    it('should return false when storage is full (quota_exceeded)', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useCanWrite());
+
+      act(() => {
+        storeResult.current.setStorageStatus('quota_exceeded');
+      });
+
+      expect(selectorResult.current).toBe(false);
+    });
+
+    it('should return true when storage is degraded but not read-only', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useCanWrite());
+
+      act(() => {
+        storeResult.current.setStorageStatus('degraded');
+      });
+
+      expect(selectorResult.current).toBe(true);
+    });
+
+    it('should return false when both read-only and storage full', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+      const { result: selectorResult } = renderHook(() => useCanWrite());
+
+      act(() => {
+        storeResult.current.setReadOnly(true);
+        storeResult.current.setStorageStatus('quota_exceeded');
+      });
+
+      expect(selectorResult.current).toBe(false);
     });
   });
 });
