@@ -93,6 +93,34 @@ export interface ColumnFilter {
 /** Filter state as array for multiple column filters */
 export type FilterState = ColumnFilter[];
 
+// =============================================================================
+// Edit State Types
+// =============================================================================
+
+/** Edit state for a single cell */
+export interface CellEditState {
+  /** Row index being edited */
+  rowIndex: number;
+  /** Column name being edited */
+  columnName: string;
+  /** Original value before edit */
+  originalValue: CellValue;
+  /** Current edited value (as string for input) */
+  currentValue: string;
+  /** Whether the value has been modified */
+  isDirty: boolean;
+}
+
+/** Result of attempting to start cell edit */
+export interface EditAttemptResult {
+  /** Whether edit mode was entered */
+  allowed: boolean;
+  /** Reason if not allowed */
+  blockedReason?: 'read-only' | 'generated-column' | 'blob-column';
+  /** Message to display to user */
+  message?: string;
+}
+
 /** Options for useDataGrid hook */
 export interface UseDataGridOptions {
   /** Table schema information */
@@ -107,6 +135,10 @@ export interface UseDataGridOptions {
   sortState?: SortState;
   /** Called when sort state changes */
   onSortChange?: (sortState: SortState) => void;
+  /** Called when a cell edit is committed */
+  onCellEdit?: (rowIndex: number, columnName: string, newValue: CellValue) => Promise<boolean>;
+  /** Called when edit mode changes (for tracking unsaved edits) */
+  onEditStateChange?: (isEditing: boolean) => void;
 }
 
 /** Return type for useDataGrid hook */
@@ -127,6 +159,20 @@ export interface UseDataGridResult {
   getSortDirection: (columnId: string) => SortDirection | null;
   /** Get sort index for multi-column sort (1-based, null if not sorted) */
   getSortIndex: (columnId: string) => number | null;
+  /** Current cell edit state (null if not editing) */
+  editState: CellEditState | null;
+  /** Attempt to start editing a cell */
+  startEdit: (rowIndex: number, columnName: string) => EditAttemptResult;
+  /** Update the current edit value */
+  updateEditValue: (value: string) => void;
+  /** Commit the current edit (save) */
+  commitEdit: () => Promise<boolean>;
+  /** Cancel the current edit (discard) */
+  cancelEdit: () => void;
+  /** Check if a column is editable */
+  isColumnEditable: (columnName: string) => boolean;
+  /** Whether grid is in read-only mode */
+  isReadOnly: boolean;
 }
 
 // =============================================================================
@@ -436,10 +482,22 @@ export function getColumnTypeCategory(type: string): 'text' | 'numeric' | 'blob'
  * @returns Table instance and derived state
  */
 export function useDataGrid(options: UseDataGridOptions): UseDataGridResult {
-  const { tableInfo, data, isReadOnly = false, pagination, sortState: externalSortState, onSortChange } = options;
+  const {
+    tableInfo,
+    data,
+    isReadOnly = false,
+    pagination,
+    sortState: externalSortState,
+    onSortChange,
+    onCellEdit,
+    onEditStateChange,
+  } = options;
 
   // Internal sort state (used if no external state provided)
   const [internalSortState, setInternalSortState] = useState<SortState>([]);
+
+  // Edit state for inline cell editing
+  const [editState, setEditState] = useState<CellEditState | null>(null);
 
   // Use external sort state if provided, otherwise use internal
   const sortState = externalSortState ?? internalSortState;
@@ -540,6 +598,184 @@ export function useDataGrid(options: UseDataGridOptions): UseDataGridResult {
     [sortState]
   );
 
+  /**
+   * Check if a column is editable (not generated, not BLOB)
+   */
+  const isColumnEditable = useCallback(
+    (columnName: string): boolean => {
+      if (!tableInfo) return false;
+      const column = tableInfo.columns.find((c) => c.name === columnName);
+      if (!column) return false;
+      // Generated columns cannot be edited
+      if (column.generated !== null) return false;
+      // BLOB columns cannot be edited inline
+      if (column.type.toUpperCase() === 'BLOB') return false;
+      return true;
+    },
+    [tableInfo]
+  );
+
+  /**
+   * Attempt to start editing a cell
+   */
+  const startEdit = useCallback(
+    (rowIndex: number, columnName: string): EditAttemptResult => {
+      // Check read-only mode
+      if (isReadOnly) {
+        return {
+          allowed: false,
+          blockedReason: 'read-only',
+          message: 'Database is read-only',
+        };
+      }
+
+      // Check column info
+      if (!tableInfo) {
+        return { allowed: false, blockedReason: 'read-only', message: 'No table selected' };
+      }
+
+      const column = tableInfo.columns.find((c) => c.name === columnName);
+      if (!column) {
+        return { allowed: false, blockedReason: 'read-only', message: 'Column not found' };
+      }
+
+      // Check if generated column
+      if (column.generated !== null) {
+        return {
+          allowed: false,
+          blockedReason: 'generated-column',
+          message: 'Generated columns cannot be edited',
+        };
+      }
+
+      // Check if BLOB column
+      if (column.type.toUpperCase() === 'BLOB') {
+        return {
+          allowed: false,
+          blockedReason: 'blob-column',
+          message: 'BLOB columns cannot be edited inline',
+        };
+      }
+
+      // Get the current value
+      const row = data[rowIndex];
+      if (!row) {
+        return { allowed: false, blockedReason: 'read-only', message: 'Row not found' };
+      }
+
+      const originalValue = row[columnName] as CellValue;
+      const currentValue = originalValue === null ? '' : String(originalValue);
+
+      // Enter edit mode
+      setEditState({
+        rowIndex,
+        columnName,
+        originalValue,
+        currentValue,
+        isDirty: false,
+      });
+
+      // Notify parent
+      onEditStateChange?.(true);
+
+      return { allowed: true };
+    },
+    [isReadOnly, tableInfo, data, onEditStateChange]
+  );
+
+  /**
+   * Update the current edit value
+   */
+  const updateEditValue = useCallback((value: string) => {
+    setEditState((prev) => {
+      if (!prev) return null;
+      const originalString = prev.originalValue === null ? '' : String(prev.originalValue);
+      return {
+        ...prev,
+        currentValue: value,
+        isDirty: value !== originalString,
+      };
+    });
+  }, []);
+
+  /**
+   * Commit the current edit (save)
+   */
+  const commitEdit = useCallback(async (): Promise<boolean> => {
+    if (!editState) return false;
+    if (!editState.isDirty) {
+      // No changes, just exit edit mode
+      setEditState(null);
+      onEditStateChange?.(false);
+      return true;
+    }
+
+    // Parse the value based on column type
+    const column = tableInfo?.columns.find((c) => c.name === editState.columnName);
+    let newValue: CellValue = editState.currentValue;
+
+    if (column) {
+      const typeCategory = getColumnTypeCategory(column.type);
+      if (editState.currentValue === '' || editState.currentValue.toLowerCase() === 'null') {
+        newValue = null;
+      } else if (typeCategory === 'numeric') {
+        const parsed = parseFloat(editState.currentValue);
+        if (!Number.isNaN(parsed)) {
+          newValue = parsed;
+        }
+      }
+    }
+
+    // Call the edit callback
+    if (onCellEdit) {
+      try {
+        const success = await onCellEdit(editState.rowIndex, editState.columnName, newValue);
+        if (success) {
+          setEditState(null);
+          onEditStateChange?.(false);
+          return true;
+        } else {
+          // Rollback: keep edit state but revert to original
+          setEditState((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  currentValue: prev.originalValue === null ? '' : String(prev.originalValue),
+                  isDirty: false,
+                }
+              : null
+          );
+          return false;
+        }
+      } catch {
+        // Error - rollback
+        setEditState((prev) =>
+          prev
+            ? {
+                ...prev,
+                currentValue: prev.originalValue === null ? '' : String(prev.originalValue),
+                isDirty: false,
+              }
+            : null
+        );
+        return false;
+      }
+    }
+
+    // No callback, just exit edit mode
+    setEditState(null);
+    onEditStateChange?.(false);
+    return true;
+  }, [editState, tableInfo, onCellEdit, onEditStateChange]);
+
+  /**
+   * Cancel the current edit (discard)
+   */
+  const cancelEdit = useCallback(() => {
+    setEditState(null);
+    onEditStateChange?.(false);
+  }, [onEditStateChange]);
+
   return {
     table,
     columns,
@@ -549,6 +785,13 @@ export function useDataGrid(options: UseDataGridOptions): UseDataGridResult {
     handleSortClick,
     getSortDirection,
     getSortIndex,
+    editState,
+    startEdit,
+    updateEditValue,
+    commitEdit,
+    cancelEdit,
+    isColumnEditable,
+    isReadOnly,
   };
 }
 

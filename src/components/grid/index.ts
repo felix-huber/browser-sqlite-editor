@@ -28,6 +28,8 @@ export {
   type FilterOperator,
   type ColumnFilter,
   type FilterState,
+  type CellEditState,
+  type EditAttemptResult,
   type UseDataGridOptions,
   type UseDataGridResult,
 } from './useDataGrid';

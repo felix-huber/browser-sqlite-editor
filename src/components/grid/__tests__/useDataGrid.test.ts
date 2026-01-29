@@ -849,3 +849,320 @@ describe('getColumnTypeCategory', () => {
     expect(getColumnTypeCategory('Integer')).toBe('numeric');
   });
 });
+
+// =============================================================================
+// Edit State Tests
+// =============================================================================
+
+describe('useDataGrid Edit State', () => {
+  const mockGeneratedColumn: ColumnInfo = {
+    ...mockColumn('full_name', 'TEXT'),
+    generated: 'stored',
+  };
+
+  const mockBlobColumn: ColumnInfo = mockColumn('avatar', 'BLOB');
+
+  const mockTableWithSpecialColumns: TableInfo = {
+    ...mockTableInfo,
+    columns: [
+      mockColumn('id', 'INTEGER', 1),
+      mockColumn('name', 'TEXT'),
+      mockGeneratedColumn,
+      mockBlobColumn,
+    ],
+  };
+
+  const mockData = [
+    { id: 1, name: 'Alice', full_name: 'Alice Smith', avatar: null },
+    { id: 2, name: 'Bob', full_name: 'Bob Jones', avatar: null },
+  ];
+
+  it('initializes with null editState', () => {
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: mockData,
+      }),
+    );
+
+    expect(result.current.editState).toBeNull();
+  });
+
+  it('startEdit returns success for regular columns', () => {
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: mockData,
+      }),
+    );
+
+    act(() => {
+      const editResult = result.current.startEdit(0, 'name');
+      expect(editResult.allowed).toBe(true);
+    });
+
+    expect(result.current.editState).not.toBeNull();
+    expect(result.current.editState?.rowIndex).toBe(0);
+    expect(result.current.editState?.columnName).toBe('name');
+  });
+
+  it('startEdit blocks when isReadOnly', () => {
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: mockData,
+        isReadOnly: true,
+      }),
+    );
+
+    act(() => {
+      const editResult = result.current.startEdit(0, 'name');
+      expect(editResult.allowed).toBe(false);
+      expect(editResult.blockedReason).toBe('read-only');
+      expect(editResult.message).toBe('Database is read-only');
+    });
+
+    expect(result.current.editState).toBeNull();
+  });
+
+  it('startEdit blocks for generated columns', () => {
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableWithSpecialColumns,
+        data: mockData,
+      }),
+    );
+
+    act(() => {
+      const editResult = result.current.startEdit(0, 'full_name');
+      expect(editResult.allowed).toBe(false);
+      expect(editResult.blockedReason).toBe('generated-column');
+      expect(editResult.message).toBe('Generated columns cannot be edited');
+    });
+
+    expect(result.current.editState).toBeNull();
+  });
+
+  it('startEdit blocks for BLOB columns', () => {
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableWithSpecialColumns,
+        data: mockData,
+      }),
+    );
+
+    act(() => {
+      const editResult = result.current.startEdit(0, 'avatar');
+      expect(editResult.allowed).toBe(false);
+      expect(editResult.blockedReason).toBe('blob-column');
+      expect(editResult.message).toBe('BLOB columns cannot be edited inline');
+    });
+
+    expect(result.current.editState).toBeNull();
+  });
+
+  it('updateEditValue updates the current value', () => {
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: mockData,
+      }),
+    );
+
+    act(() => {
+      result.current.startEdit(0, 'name');
+    });
+
+    act(() => {
+      result.current.updateEditValue('New Name');
+    });
+
+    expect(result.current.editState?.currentValue).toBe('New Name');
+    expect(result.current.editState?.isDirty).toBe(true);
+  });
+
+  it('cancelEdit clears editState', () => {
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: mockData,
+      }),
+    );
+
+    act(() => {
+      result.current.startEdit(0, 'name');
+    });
+
+    expect(result.current.editState).not.toBeNull();
+
+    act(() => {
+      result.current.cancelEdit();
+    });
+
+    expect(result.current.editState).toBeNull();
+  });
+
+  it('commitEdit calls onCellEdit callback', async () => {
+    const onCellEdit = vi.fn().mockResolvedValue(true);
+
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: mockData,
+        onCellEdit,
+      }),
+    );
+
+    act(() => {
+      result.current.startEdit(0, 'name');
+    });
+
+    act(() => {
+      result.current.updateEditValue('New Name');
+    });
+
+    await act(async () => {
+      await result.current.commitEdit();
+    });
+
+    expect(onCellEdit).toHaveBeenCalledWith(0, 'name', 'New Name');
+    expect(result.current.editState).toBeNull();
+  });
+
+  it('commitEdit handles numeric values', async () => {
+    const onCellEdit = vi.fn().mockResolvedValue(true);
+
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: mockData,
+        onCellEdit,
+      }),
+    );
+
+    act(() => {
+      result.current.startEdit(0, 'age');
+    });
+
+    act(() => {
+      result.current.updateEditValue('42');
+    });
+
+    await act(async () => {
+      await result.current.commitEdit();
+    });
+
+    expect(onCellEdit).toHaveBeenCalledWith(0, 'age', 42);
+  });
+
+  it('commitEdit handles null values', async () => {
+    const onCellEdit = vi.fn().mockResolvedValue(true);
+
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: mockData,
+        onCellEdit,
+      }),
+    );
+
+    act(() => {
+      result.current.startEdit(0, 'name');
+    });
+
+    act(() => {
+      result.current.updateEditValue('');
+    });
+
+    await act(async () => {
+      await result.current.commitEdit();
+    });
+
+    expect(onCellEdit).toHaveBeenCalledWith(0, 'name', null);
+  });
+
+  it('commitEdit without changes just exits edit mode', async () => {
+    const onCellEdit = vi.fn().mockResolvedValue(true);
+
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: mockData,
+        onCellEdit,
+      }),
+    );
+
+    act(() => {
+      result.current.startEdit(0, 'name');
+    });
+
+    // Don't change the value
+
+    await act(async () => {
+      await result.current.commitEdit();
+    });
+
+    expect(onCellEdit).not.toHaveBeenCalled();
+    expect(result.current.editState).toBeNull();
+  });
+
+  it('isColumnEditable returns correct values', () => {
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableWithSpecialColumns,
+        data: mockData,
+      }),
+    );
+
+    expect(result.current.isColumnEditable('name')).toBe(true);
+    expect(result.current.isColumnEditable('full_name')).toBe(false); // generated
+    expect(result.current.isColumnEditable('avatar')).toBe(false); // blob
+    expect(result.current.isColumnEditable('nonexistent')).toBe(false);
+  });
+
+  it('calls onEditStateChange when entering/exiting edit mode', async () => {
+    const onEditStateChange = vi.fn();
+
+    const { result } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: mockData,
+        onEditStateChange,
+      }),
+    );
+
+    act(() => {
+      result.current.startEdit(0, 'name');
+    });
+
+    expect(onEditStateChange).toHaveBeenCalledWith(true);
+
+    act(() => {
+      result.current.cancelEdit();
+    });
+
+    expect(onEditStateChange).toHaveBeenCalledWith(false);
+  });
+
+  it('isReadOnly is exposed from hook', () => {
+    const { result: result1 } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: mockData,
+        isReadOnly: true,
+      }),
+    );
+
+    expect(result1.current.isReadOnly).toBe(true);
+
+    const { result: result2 } = renderHook(() =>
+      useDataGrid({
+        tableInfo: mockTableInfo,
+        data: mockData,
+        isReadOnly: false,
+      }),
+    );
+
+    expect(result2.current.isReadOnly).toBe(false);
+  });
+});

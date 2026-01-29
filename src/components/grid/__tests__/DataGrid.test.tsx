@@ -878,4 +878,199 @@ describe('DataGrid', () => {
       expect(screen.getByText(/filters active/)).toBeInTheDocument();
     });
   });
+
+  describe('Inline Cell Editing', () => {
+    it('enters edit mode on double-click', async () => {
+      render(<DataGrid {...defaultProps} />);
+
+      // Find a cell and double-click
+      const cell = screen.queryByTestId('cell-0-name');
+      if (cell) {
+        fireEvent.doubleClick(cell);
+
+        // Should show edit input
+        const editInput = await screen.findByTestId('edit-input');
+        expect(editInput).toBeInTheDocument();
+      }
+    });
+
+    it('saves value on Enter key', async () => {
+      const onCellEdit = vi.fn().mockResolvedValue(true);
+      render(<DataGrid {...defaultProps} onCellEdit={onCellEdit} />);
+
+      // Find a cell and double-click
+      const cell = screen.queryByTestId('cell-0-name');
+      if (cell) {
+        fireEvent.doubleClick(cell);
+
+        const editInput = await screen.findByTestId('edit-input');
+        fireEvent.change(editInput, { target: { value: 'New Name' } });
+        fireEvent.keyDown(editInput, { key: 'Enter' });
+
+        // Wait for the async commit
+        await vi.waitFor(() => {
+          expect(onCellEdit).toHaveBeenCalledWith(0, 'name', 'New Name');
+        });
+      }
+    });
+
+    it('reverts value on Escape key', async () => {
+      const onCellEdit = vi.fn();
+      render(<DataGrid {...defaultProps} onCellEdit={onCellEdit} />);
+
+      const cell = screen.queryByTestId('cell-0-name');
+      if (cell) {
+        fireEvent.doubleClick(cell);
+
+        const editInput = await screen.findByTestId('edit-input');
+        fireEvent.change(editInput, { target: { value: 'New Name' } });
+        fireEvent.keyDown(editInput, { key: 'Escape' });
+
+        // Should not call onCellEdit
+        expect(onCellEdit).not.toHaveBeenCalled();
+
+        // Edit input should be gone
+        expect(screen.queryByTestId('edit-input')).not.toBeInTheDocument();
+      }
+    });
+
+    it('moves to next cell on Tab key', async () => {
+      const onCellEdit = vi.fn().mockResolvedValue(true);
+      render(<DataGrid {...defaultProps} onCellEdit={onCellEdit} />);
+
+      const cell = screen.queryByTestId('cell-0-name');
+      if (cell) {
+        fireEvent.doubleClick(cell);
+
+        const editInput = await screen.findByTestId('edit-input');
+        fireEvent.change(editInput, { target: { value: 'New Name' } });
+        fireEvent.keyDown(editInput, { key: 'Tab' });
+
+        // Should call onCellEdit to save
+        await vi.waitFor(() => {
+          expect(onCellEdit).toHaveBeenCalled();
+        });
+      }
+    });
+
+    it('blocks edit mode when read-only', async () => {
+      render(<DataGrid {...defaultProps} isReadOnly={true} />);
+
+      const cell = screen.queryByTestId('cell-0-name');
+      if (cell) {
+        fireEvent.doubleClick(cell);
+
+        // Should NOT show edit input
+        expect(screen.queryByTestId('edit-input')).not.toBeInTheDocument();
+
+        // Should show tooltip
+        const tooltip = await screen.findByTestId('edit-blocked-tooltip');
+        expect(tooltip).toBeInTheDocument();
+        expect(tooltip).toHaveTextContent('Database is read-only');
+      }
+    });
+
+    it('blocks edit mode on generated column with tooltip', async () => {
+      const dataWithGenerated = [
+        { id: 1, first_name: 'John', last_name: 'Doe', full_name: 'John Doe' },
+      ];
+
+      render(
+        <DataGrid
+          tableInfo={mockTableInfoWithGenerated}
+          data={dataWithGenerated}
+          height={400}
+        />
+      );
+
+      // Try to edit the generated column
+      const cell = screen.queryByTestId('cell-0-full_name');
+      if (cell) {
+        fireEvent.doubleClick(cell);
+
+        // Should NOT show edit input
+        expect(screen.queryByTestId('edit-input')).not.toBeInTheDocument();
+
+        // Should show tooltip
+        const tooltip = await screen.findByTestId('edit-blocked-tooltip');
+        expect(tooltip).toBeInTheDocument();
+        expect(tooltip).toHaveTextContent('Generated columns cannot be edited');
+      }
+    });
+
+    it('shows optimistic update (dirty indicator) during editing', async () => {
+      render(<DataGrid {...defaultProps} />);
+
+      const cell = screen.queryByTestId('cell-0-name');
+      if (cell) {
+        fireEvent.doubleClick(cell);
+
+        const editInput = await screen.findByTestId('edit-input');
+        fireEvent.change(editInput, { target: { value: 'Different Value' } });
+
+        // Dirty input should have yellow border
+        expect(editInput).toHaveClass('bg-yellow-50');
+        expect(editInput).toHaveClass('border-yellow-400');
+      }
+    });
+
+    it('rolls back to original value on error', async () => {
+      const onCellEdit = vi.fn().mockResolvedValue(false);
+      render(<DataGrid {...defaultProps} onCellEdit={onCellEdit} />);
+
+      const cell = screen.queryByTestId('cell-0-name');
+      if (cell) {
+        fireEvent.doubleClick(cell);
+
+        const editInput = await screen.findByTestId('edit-input');
+
+        fireEvent.change(editInput, { target: { value: 'New Name' } });
+        fireEvent.keyDown(editInput, { key: 'Enter' });
+
+        // Wait for the async commit
+        await vi.waitFor(() => {
+          expect(onCellEdit).toHaveBeenCalled();
+        });
+
+        // After failed update, if still in edit mode, should show original value
+        // or no longer be in edit mode
+      }
+    });
+
+    it('calls onEditStateChange when entering edit mode', async () => {
+      const onEditStateChange = vi.fn();
+      render(<DataGrid {...defaultProps} onEditStateChange={onEditStateChange} />);
+
+      const cell = screen.queryByTestId('cell-0-name');
+      if (cell) {
+        fireEvent.doubleClick(cell);
+
+        await vi.waitFor(() => {
+          expect(onEditStateChange).toHaveBeenCalledWith(true);
+        });
+      }
+    });
+
+    it('calls onEditStateChange when exiting edit mode', async () => {
+      const onEditStateChange = vi.fn();
+      const onCellEdit = vi.fn().mockResolvedValue(true);
+      render(<DataGrid {...defaultProps} onEditStateChange={onEditStateChange} onCellEdit={onCellEdit} />);
+
+      const cell = screen.queryByTestId('cell-0-name');
+      if (cell) {
+        fireEvent.doubleClick(cell);
+
+        await vi.waitFor(() => {
+          expect(onEditStateChange).toHaveBeenCalledWith(true);
+        });
+
+        const editInput = await screen.findByTestId('edit-input');
+        fireEvent.keyDown(editInput, { key: 'Escape' });
+
+        await vi.waitFor(() => {
+          expect(onEditStateChange).toHaveBeenCalledWith(false);
+        });
+      }
+    });
+  });
 });

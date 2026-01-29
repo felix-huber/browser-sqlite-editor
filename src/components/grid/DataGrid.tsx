@@ -17,6 +17,7 @@ import {
   ROW_HEIGHT,
   getColumnTypeCategory,
   type DataRow,
+  type CellValue,
   type UseDataGridOptions,
   type SortState,
   type SortDirection,
@@ -24,6 +25,7 @@ import {
   type ColumnFilter,
   type TextFilterOperator,
   type NumericFilterOperator,
+  type CellEditState,
 } from './useDataGrid';
 import { useGridVirtualizer } from './useGridVirtualizer';
 import type { TableInfo } from '../../types';
@@ -71,6 +73,10 @@ export interface DataGridProps {
   filterState?: FilterState;
   /** Called when filter state changes */
   onFilterChange?: (filterState: FilterState) => void;
+  /** Called when a cell edit is committed */
+  onCellEdit?: (rowIndex: number, columnName: string, newValue: CellValue) => Promise<boolean>;
+  /** Called when edit mode changes (for tracking unsaved edits) */
+  onEditStateChange?: (isEditing: boolean) => void;
 }
 
 // =============================================================================
@@ -178,6 +184,156 @@ const CellRenderer = memo(function CellRenderer({ value }: CellProps) {
   }
 
   return <span>{stringValue}</span>;
+});
+
+// =============================================================================
+// Tooltip Component
+// =============================================================================
+
+interface TooltipProps {
+  message: string;
+  visible: boolean;
+  position: { x: number; y: number };
+}
+
+const Tooltip = memo(function Tooltip({ message, visible, position }: TooltipProps) {
+  if (!visible) return null;
+
+  return (
+    <div
+      className="fixed z-[100] px-2 py-1 text-sm text-white bg-gray-800 rounded shadow-lg pointer-events-none"
+      style={{
+        left: position.x,
+        top: position.y - 30,
+        transform: 'translateX(-50%)',
+      }}
+      data-testid="edit-blocked-tooltip"
+    >
+      {message}
+    </div>
+  );
+});
+
+// =============================================================================
+// EditableCell Component
+// =============================================================================
+
+interface EditableCellProps {
+  value: unknown;
+  columnType: string;
+  editState: CellEditState | null;
+  isEditing: boolean;
+  onUpdateValue: (value: string) => void;
+  onCommit: () => Promise<boolean>;
+  onCancel: () => void;
+  onMoveToNextCell?: () => void;
+}
+
+const EditableCell = memo(function EditableCell({
+  value,
+  columnType,
+  editState,
+  isEditing,
+  onUpdateValue,
+  onCommit,
+  onCancel,
+  onMoveToNextCell,
+}: EditableCellProps) {
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+  const typeCategory = getColumnTypeCategory(columnType);
+  const isMultiline = typeof value === 'string' && (value.includes('\n') || value.length > 50);
+
+  // Focus input when entering edit mode
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
+  // Handle keyboard events
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        onCommit();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        onCancel();
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        onCommit().then((success) => {
+          if (success && onMoveToNextCell) {
+            onMoveToNextCell();
+          }
+        });
+      }
+    },
+    [onCommit, onCancel, onMoveToNextCell]
+  );
+
+  // Handle blur (click outside)
+  const handleBlur = useCallback(
+    (e: React.FocusEvent) => {
+      // Check if focus is moving to another element within the grid
+      const relatedTarget = e.relatedTarget as HTMLElement;
+      if (relatedTarget?.closest('[data-row-index]')) {
+        // Focus is moving to another cell, commit
+        onCommit();
+      } else if (!relatedTarget?.closest('.edit-input-container')) {
+        // Focus is moving outside, commit
+        onCommit();
+      }
+    },
+    [onCommit]
+  );
+
+  if (!isEditing) {
+    return <CellRenderer value={value} />;
+  }
+
+  const currentValue = editState?.currentValue ?? '';
+  const isDirty = editState?.isDirty ?? false;
+
+  // Use textarea for multiline content
+  if (isMultiline) {
+    return (
+      <div className="edit-input-container absolute inset-0 z-10">
+        <textarea
+          ref={inputRef as React.RefObject<HTMLTextAreaElement>}
+          value={currentValue}
+          onChange={(e) => onUpdateValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
+          className={`w-full h-full px-1 border-2 rounded resize-none ${
+            isDirty ? 'bg-yellow-50 border-yellow-400' : 'border-blue-500'
+          }`}
+          data-testid="edit-textarea"
+        />
+      </div>
+    );
+  }
+
+  // Use number input for numeric columns
+  const inputType = typeCategory === 'numeric' ? 'text' : 'text';
+
+  return (
+    <div className="edit-input-container absolute inset-0 z-10">
+      <input
+        ref={inputRef as React.RefObject<HTMLInputElement>}
+        type={inputType}
+        value={currentValue}
+        onChange={(e) => onUpdateValue(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onBlur={handleBlur}
+        className={`w-full h-full px-1 border-2 rounded ${
+          isDirty ? 'bg-yellow-50 border-yellow-400' : 'border-blue-500'
+        }`}
+        inputMode={typeCategory === 'numeric' ? 'decimal' : 'text'}
+        data-testid="edit-input"
+      />
+    </div>
+  );
 });
 
 // =============================================================================
@@ -587,6 +743,12 @@ interface GridRowProps {
   isSelected: boolean;
   onToggleSelect: () => void;
   columnWidths: Record<string, number>;
+  editState: CellEditState | null;
+  onCellDoubleClick: (rowIndex: number, columnName: string, e: React.MouseEvent) => void;
+  onUpdateEditValue: (value: string) => void;
+  onCommitEdit: () => Promise<boolean>;
+  onCancelEdit: () => void;
+  onMoveToNextCell: (rowIndex: number, columnName: string) => void;
 }
 
 const GridRow = memo(function GridRow({
@@ -595,7 +757,15 @@ const GridRow = memo(function GridRow({
   isSelected,
   onToggleSelect,
   columnWidths,
+  editState,
+  onCellDoubleClick,
+  onUpdateEditValue,
+  onCommitEdit,
+  onCancelEdit,
+  onMoveToNextCell,
 }: GridRowProps) {
+  const isRowEditing = editState?.rowIndex === row.index;
+
   return (
     <div
       className={`flex items-center border-b border-gray-200 ${
@@ -620,13 +790,31 @@ const GridRow = memo(function GridRow({
       {/* Data cells */}
       {row.getVisibleCells().map((cell) => {
         const width = columnWidths[cell.column.id] || DEFAULT_COLUMN_WIDTH;
+        const columnName = cell.column.id;
+        const columnType = cell.column.columnDef.meta?.type || 'TEXT';
+        const isCellEditing = isRowEditing && editState?.columnName === columnName;
+        const isDirty = isCellEditing && editState?.isDirty;
+
         return (
           <div
             key={cell.id}
-            className="flex-shrink-0 px-2 overflow-hidden text-ellipsis whitespace-nowrap"
+            className={`flex-shrink-0 px-2 overflow-hidden text-ellipsis whitespace-nowrap relative ${
+              isDirty ? 'bg-yellow-50' : ''
+            }`}
             style={{ width, height: ROW_HEIGHT, lineHeight: `${ROW_HEIGHT}px` }}
+            onDoubleClick={(e) => onCellDoubleClick(row.index, columnName, e)}
+            data-testid={`cell-${row.index}-${columnName}`}
           >
-            <CellRenderer value={cell.getValue()} />
+            <EditableCell
+              value={cell.getValue()}
+              columnType={columnType}
+              editState={editState}
+              isEditing={isCellEditing}
+              onUpdateValue={onUpdateEditValue}
+              onCommit={onCommitEdit}
+              onCancel={onCancelEdit}
+              onMoveToNextCell={() => onMoveToNextCell(row.index, columnName)}
+            />
           </div>
         );
       })}
@@ -650,6 +838,8 @@ export const DataGrid = memo(function DataGrid({
   onSortChange,
   filterState: externalFilterState,
   onFilterChange,
+  onCellEdit,
+  onEditStateChange,
 }: DataGridProps) {
   // Column widths state
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
@@ -664,6 +854,13 @@ export const DataGrid = memo(function DataGrid({
   const [internalFilterState, setInternalFilterState] = useState<FilterState>([]);
   const filterState = externalFilterState ?? internalFilterState;
 
+  // Tooltip state for blocked edit attempts
+  const [tooltip, setTooltip] = useState<{ message: string; visible: boolean; position: { x: number; y: number } }>({
+    message: '',
+    visible: false,
+    position: { x: 0, y: 0 },
+  });
+
   // Set up data grid hook
   const dataGridOptions: UseDataGridOptions = useMemo(
     () => ({
@@ -672,11 +869,26 @@ export const DataGrid = memo(function DataGrid({
       isReadOnly,
       sortState: externalSortState,
       onSortChange,
+      onCellEdit,
+      onEditStateChange,
     }),
-    [tableInfo, data, isReadOnly, externalSortState, onSortChange]
+    [tableInfo, data, isReadOnly, externalSortState, onSortChange, onCellEdit, onEditStateChange]
   );
 
-  const { table, columns, isEmpty, handleSortClick, getSortDirection, getSortIndex } = useDataGrid(dataGridOptions);
+  const {
+    table,
+    columns,
+    isEmpty,
+    handleSortClick,
+    getSortDirection,
+    getSortIndex,
+    editState,
+    startEdit,
+    updateEditValue,
+    commitEdit,
+    cancelEdit,
+    isColumnEditable,
+  } = useDataGrid(dataGridOptions);
 
   // Set up virtualizer
   const { containerRef, virtualItems, totalHeight } = useGridVirtualizer({
@@ -836,6 +1048,56 @@ export const DataGrid = memo(function DataGrid({
     }
   }, [onFilterChange]);
 
+  // Handle cell double-click for editing
+  const handleCellDoubleClick = useCallback(
+    (rowIndex: number, columnName: string, e: React.MouseEvent) => {
+      const result = startEdit(rowIndex, columnName);
+      if (!result.allowed && result.message) {
+        // Show tooltip at mouse position
+        setTooltip({
+          message: result.message,
+          visible: true,
+          position: { x: e.clientX, y: e.clientY },
+        });
+        // Hide tooltip after 2 seconds
+        setTimeout(() => {
+          setTooltip((prev) => ({ ...prev, visible: false }));
+        }, 2000);
+      }
+    },
+    [startEdit]
+  );
+
+  // Handle move to next cell (for Tab key)
+  const handleMoveToNextCell = useCallback(
+    (currentRowIndex: number, currentColumnName: string) => {
+      // Find the next editable column
+      const columnIndex = columns.findIndex((col) => col.id === currentColumnName);
+      if (columnIndex === -1) return;
+
+      // Try next columns in same row
+      for (let i = columnIndex + 1; i < columns.length; i++) {
+        const colName = columns[i].id;
+        if (colName && isColumnEditable(colName)) {
+          startEdit(currentRowIndex, colName);
+          return;
+        }
+      }
+
+      // Try first editable column in next row
+      if (currentRowIndex < data.length - 1) {
+        for (let i = 0; i < columns.length; i++) {
+          const colName = columns[i].id;
+          if (colName && isColumnEditable(colName)) {
+            startEdit(currentRowIndex + 1, colName);
+            return;
+          }
+        }
+      }
+    },
+    [columns, data.length, isColumnEditable, startEdit]
+  );
+
   // Get rows from table
   const rows = table.getRowModel().rows;
 
@@ -976,11 +1238,20 @@ export const DataGrid = memo(function DataGrid({
                 isSelected={selectedRows.has(virtualRow.index)}
                 onToggleSelect={() => handleToggleSelect(virtualRow.index)}
                 columnWidths={columnWidths}
+                editState={editState}
+                onCellDoubleClick={handleCellDoubleClick}
+                onUpdateEditValue={updateEditValue}
+                onCommitEdit={commitEdit}
+                onCancelEdit={cancelEdit}
+                onMoveToNextCell={handleMoveToNextCell}
               />
             );
           })}
         </div>
       </div>
+
+      {/* Tooltip for blocked edit attempts */}
+      <Tooltip message={tooltip.message} visible={tooltip.visible} position={tooltip.position} />
     </div>
   );
 });
