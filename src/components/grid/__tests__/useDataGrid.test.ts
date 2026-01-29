@@ -11,10 +11,16 @@ import {
   generatePaginationClause,
   generatePaginatedQuery,
   generateOrderByClause,
+  escapeLike,
+  generateFilterClause,
+  generateWhereClause,
+  getColumnTypeCategory,
   ROW_HEIGHT,
   DEFAULT_PAGE_SIZE,
   type PaginationState,
   type SortState,
+  type ColumnFilter,
+  type FilterState,
 } from '../useDataGrid';
 import type { TableInfo, ColumnInfo } from '../../../types';
 
@@ -572,5 +578,274 @@ describe('Constants', () => {
 
   it('DEFAULT_PAGE_SIZE is 100', () => {
     expect(DEFAULT_PAGE_SIZE).toBe(100);
+  });
+});
+
+// =============================================================================
+// Filter Utility Tests
+// =============================================================================
+
+describe('escapeLike', () => {
+  it('escapes percent character', () => {
+    expect(escapeLike('100%')).toBe('100\\%');
+  });
+
+  it('escapes underscore character', () => {
+    expect(escapeLike('hello_world')).toBe('hello\\_world');
+  });
+
+  it('escapes backslash character', () => {
+    expect(escapeLike('path\\to\\file')).toBe('path\\\\to\\\\file');
+  });
+
+  it('escapes multiple special characters', () => {
+    expect(escapeLike('50% off_sale\\')).toBe('50\\% off\\_sale\\\\');
+  });
+
+  it('returns empty string unchanged', () => {
+    expect(escapeLike('')).toBe('');
+  });
+
+  it('returns normal string unchanged', () => {
+    expect(escapeLike('hello world')).toBe('hello world');
+  });
+});
+
+describe('generateFilterClause', () => {
+  describe('text operators', () => {
+    it('generates contains LIKE pattern', () => {
+      const filter: ColumnFilter = { column: 'name', operator: 'contains', value: 'Rock' };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"name" LIKE ? ESCAPE \'\\\'');
+      expect(result.params).toEqual(['%Rock%']);
+    });
+
+    it('generates equals condition', () => {
+      const filter: ColumnFilter = { column: 'status', operator: 'equals', value: 'active' };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"status" = ?');
+      expect(result.params).toEqual(['active']);
+    });
+
+    it('generates starts_with LIKE pattern', () => {
+      const filter: ColumnFilter = { column: 'name', operator: 'starts_with', value: 'John' };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"name" LIKE ? ESCAPE \'\\\'');
+      expect(result.params).toEqual(['John%']);
+    });
+
+    it('generates ends_with LIKE pattern', () => {
+      const filter: ColumnFilter = { column: 'email', operator: 'ends_with', value: '.com' };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"email" LIKE ? ESCAPE \'\\\'');
+      expect(result.params).toEqual(['%.com']);
+    });
+
+    it('generates is_empty condition', () => {
+      const filter: ColumnFilter = { column: 'description', operator: 'is_empty' };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('("description" = \'\' OR "description" IS NULL)');
+      expect(result.params).toEqual([]);
+    });
+
+    it('generates is_not_empty condition', () => {
+      const filter: ColumnFilter = { column: 'description', operator: 'is_not_empty' };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('("description" != \'\' AND "description" IS NOT NULL)');
+      expect(result.params).toEqual([]);
+    });
+
+    it('escapes special characters in LIKE patterns', () => {
+      const filter: ColumnFilter = { column: 'name', operator: 'contains', value: '50% off_sale' };
+      const result = generateFilterClause(filter);
+
+      expect(result.params).toEqual(['%50\\% off\\_sale%']);
+    });
+  });
+
+  describe('numeric operators', () => {
+    it('generates eq condition', () => {
+      const filter: ColumnFilter = { column: 'age', operator: 'eq', value: 25 };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"age" = ?');
+      expect(result.params).toEqual([25]);
+    });
+
+    it('generates neq condition', () => {
+      const filter: ColumnFilter = { column: 'age', operator: 'neq', value: 0 };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"age" != ?');
+      expect(result.params).toEqual([0]);
+    });
+
+    it('generates gt condition', () => {
+      const filter: ColumnFilter = { column: 'price', operator: 'gt', value: 100 };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"price" > ?');
+      expect(result.params).toEqual([100]);
+    });
+
+    it('generates lt condition', () => {
+      const filter: ColumnFilter = { column: 'price', operator: 'lt', value: 50 };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"price" < ?');
+      expect(result.params).toEqual([50]);
+    });
+
+    it('generates gte condition', () => {
+      const filter: ColumnFilter = { column: 'quantity', operator: 'gte', value: 10 };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"quantity" >= ?');
+      expect(result.params).toEqual([10]);
+    });
+
+    it('generates lte condition', () => {
+      const filter: ColumnFilter = { column: 'quantity', operator: 'lte', value: 100 };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"quantity" <= ?');
+      expect(result.params).toEqual([100]);
+    });
+
+    it('generates between condition', () => {
+      const filter: ColumnFilter = { column: 'price', operator: 'between', value: 10, value2: 50 };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"price" BETWEEN ? AND ?');
+      expect(result.params).toEqual([10, 50]);
+    });
+  });
+
+  describe('null operators', () => {
+    it('generates IS NULL condition', () => {
+      const filter: ColumnFilter = { column: 'deleted_at', operator: 'is_null' };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"deleted_at" IS NULL');
+      expect(result.params).toEqual([]);
+    });
+
+    it('generates IS NOT NULL condition', () => {
+      const filter: ColumnFilter = { column: 'email', operator: 'is_not_null' };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"email" IS NOT NULL');
+      expect(result.params).toEqual([]);
+    });
+  });
+
+  it('escapes column names with quotes', () => {
+    const filter: ColumnFilter = { column: 'column"name', operator: 'eq', value: 1 };
+    const result = generateFilterClause(filter);
+
+    expect(result.sql).toBe('"column""name" = ?');
+  });
+});
+
+describe('generateWhereClause', () => {
+  it('returns empty for empty filter state', () => {
+    const result = generateWhereClause([]);
+
+    expect(result.sql).toBe('');
+    expect(result.params).toEqual([]);
+  });
+
+  it('generates single filter WHERE clause', () => {
+    const filterState: FilterState = [
+      { column: 'name', operator: 'contains', value: 'Rock' }
+    ];
+    const result = generateWhereClause(filterState);
+
+    expect(result.sql).toBe('WHERE "name" LIKE ? ESCAPE \'\\\'');
+    expect(result.params).toEqual(['%Rock%']);
+  });
+
+  it('combines multiple filters with AND', () => {
+    const filterState: FilterState = [
+      { column: 'name', operator: 'contains', value: 'Rock' },
+      { column: 'price', operator: 'gt', value: 10 }
+    ];
+    const result = generateWhereClause(filterState);
+
+    expect(result.sql).toBe('WHERE "name" LIKE ? ESCAPE \'\\\' AND "price" > ?');
+    expect(result.params).toEqual(['%Rock%', 10]);
+  });
+
+  it('combines three filters with AND', () => {
+    const filterState: FilterState = [
+      { column: 'status', operator: 'equals', value: 'active' },
+      { column: 'age', operator: 'gte', value: 18 },
+      { column: 'email', operator: 'is_not_null' }
+    ];
+    const result = generateWhereClause(filterState);
+
+    expect(result.sql).toBe('WHERE "status" = ? AND "age" >= ? AND "email" IS NOT NULL');
+    expect(result.params).toEqual(['active', 18]);
+  });
+});
+
+describe('getColumnTypeCategory', () => {
+  it('returns numeric for INTEGER type', () => {
+    expect(getColumnTypeCategory('INTEGER')).toBe('numeric');
+  });
+
+  it('returns numeric for INT type', () => {
+    expect(getColumnTypeCategory('INT')).toBe('numeric');
+  });
+
+  it('returns numeric for BIGINT type', () => {
+    expect(getColumnTypeCategory('BIGINT')).toBe('numeric');
+  });
+
+  it('returns numeric for REAL type', () => {
+    expect(getColumnTypeCategory('REAL')).toBe('numeric');
+  });
+
+  it('returns numeric for FLOAT type', () => {
+    expect(getColumnTypeCategory('FLOAT')).toBe('numeric');
+  });
+
+  it('returns numeric for DOUBLE type', () => {
+    expect(getColumnTypeCategory('DOUBLE')).toBe('numeric');
+  });
+
+  it('returns numeric for NUMERIC type', () => {
+    expect(getColumnTypeCategory('NUMERIC')).toBe('numeric');
+  });
+
+  it('returns numeric for DECIMAL type', () => {
+    expect(getColumnTypeCategory('DECIMAL')).toBe('numeric');
+  });
+
+  it('returns text for TEXT type', () => {
+    expect(getColumnTypeCategory('TEXT')).toBe('text');
+  });
+
+  it('returns text for VARCHAR type', () => {
+    expect(getColumnTypeCategory('VARCHAR(255)')).toBe('text');
+  });
+
+  it('returns blob for BLOB type', () => {
+    expect(getColumnTypeCategory('BLOB')).toBe('blob');
+  });
+
+  it('returns text for empty type', () => {
+    expect(getColumnTypeCategory('')).toBe('text');
+  });
+
+  it('is case insensitive', () => {
+    expect(getColumnTypeCategory('integer')).toBe('numeric');
+    expect(getColumnTypeCategory('Integer')).toBe('numeric');
   });
 });

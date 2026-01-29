@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { DataGrid, type DataGridProps } from '../DataGrid';
-import { ROW_HEIGHT, type SortState } from '../useDataGrid';
+import { ROW_HEIGHT, type SortState, type FilterState } from '../useDataGrid';
 import type { TableInfo, ColumnInfo } from '../../../types';
 
 // =============================================================================
@@ -565,6 +565,242 @@ describe('DataGrid', () => {
       // Find the column header container with aria-sort
       const sortedHeader = screen.getByRole('columnheader', { name: /name/i });
       expect(sortedHeader).toHaveAttribute('aria-sort', 'ascending');
+    });
+  });
+
+  describe('Column Filters', () => {
+    it('renders filter icon for each column', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      // Each column should have a filter icon
+      expect(screen.getByTestId('filter-icon-id')).toBeInTheDocument();
+      expect(screen.getByTestId('filter-icon-name')).toBeInTheDocument();
+      expect(screen.getByTestId('filter-icon-email')).toBeInTheDocument();
+      expect(screen.getByTestId('filter-icon-age')).toBeInTheDocument();
+    });
+
+    it('opens filter popover on filter icon click', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      const filterIcon = screen.getByTestId('filter-icon-name');
+      fireEvent.click(filterIcon);
+
+      // Popover should be visible
+      expect(screen.getByTestId('filter-popover-name')).toBeInTheDocument();
+    });
+
+    it('shows filter operator select in popover', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      const filterIcon = screen.getByTestId('filter-icon-name');
+      fireEvent.click(filterIcon);
+
+      // Operator select should be present
+      expect(screen.getByTestId('filter-operator-name')).toBeInTheDocument();
+    });
+
+    it('shows value input for text filters', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      const filterIcon = screen.getByTestId('filter-icon-name');
+      fireEvent.click(filterIcon);
+
+      // Value input should be present for text column
+      expect(screen.getByTestId('filter-value-name')).toBeInTheDocument();
+    });
+
+    it('calls onFilterChange when filter is applied', () => {
+      const onFilterChange = vi.fn();
+      render(<DataGrid {...defaultProps} onFilterChange={onFilterChange} />);
+
+      // Open filter popover
+      const filterIcon = screen.getByTestId('filter-icon-name');
+      fireEvent.click(filterIcon);
+
+      // Enter value and apply
+      const valueInput = screen.getByTestId('filter-value-name');
+      fireEvent.change(valueInput, { target: { value: 'Rock' } });
+
+      const applyButton = screen.getByTestId('filter-apply-name');
+      fireEvent.click(applyButton);
+
+      expect(onFilterChange).toHaveBeenCalledWith([
+        { column: 'name', operator: 'contains', value: 'Rock' }
+      ]);
+    });
+
+    it('shows filled filter icon when filter is active', () => {
+      const filterState: FilterState = [
+        { column: 'name', operator: 'contains', value: 'Rock' }
+      ];
+      render(<DataGrid {...defaultProps} filterState={filterState} />);
+
+      const filterIcon = screen.getByTestId('filter-icon-name');
+      // Active filter icon should have the blue color class
+      expect(filterIcon).toHaveClass('text-blue-600');
+    });
+
+    it('shows filter status bar when filters are active', () => {
+      const filterState: FilterState = [
+        { column: 'name', operator: 'contains', value: 'Rock' }
+      ];
+      render(<DataGrid {...defaultProps} filterState={filterState} />);
+
+      expect(screen.getByTestId('filter-status-bar')).toBeInTheDocument();
+      expect(screen.getByText('1')).toBeInTheDocument(); // Filter count
+    });
+
+    it('clears all filters when clear all button is clicked', () => {
+      const onFilterChange = vi.fn();
+      const filterState: FilterState = [
+        { column: 'name', operator: 'contains', value: 'Rock' },
+        { column: 'age', operator: 'gt', value: 18 }
+      ];
+      render(
+        <DataGrid {...defaultProps} filterState={filterState} onFilterChange={onFilterChange} />
+      );
+
+      const clearAllButton = screen.getByTestId('clear-all-filters');
+      fireEvent.click(clearAllButton);
+
+      expect(onFilterChange).toHaveBeenCalledWith([]);
+    });
+
+    it('clears single column filter from popover', () => {
+      const currentFilterState: FilterState = [
+        { column: 'name', operator: 'contains', value: 'Rock' }
+      ];
+      const onFilterChange = vi.fn();
+
+      render(
+        <DataGrid {...defaultProps} filterState={currentFilterState} onFilterChange={onFilterChange} />
+      );
+
+      // Open filter popover
+      const filterIcon = screen.getByTestId('filter-icon-name');
+      fireEvent.click(filterIcon);
+
+      // Click clear button
+      const clearButton = screen.getByTestId('filter-clear-name');
+      fireEvent.click(clearButton);
+
+      expect(onFilterChange).toHaveBeenCalledWith([]);
+    });
+
+    it('shows number input for numeric column filters', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      // age is an INTEGER column
+      const filterIcon = screen.getByTestId('filter-icon-age');
+      fireEvent.click(filterIcon);
+
+      const valueInput = screen.getByTestId('filter-value-age') as HTMLInputElement;
+      expect(valueInput.type).toBe('number');
+    });
+
+    it('shows numeric operators for numeric columns', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      const filterIcon = screen.getByTestId('filter-icon-age');
+      fireEvent.click(filterIcon);
+
+      const operatorSelect = screen.getByTestId('filter-operator-age');
+      expect(operatorSelect).toHaveTextContent('Greater than');
+      expect(operatorSelect).toHaveTextContent('Less than');
+      expect(operatorSelect).toHaveTextContent('Between');
+    });
+
+    it('shows text operators for text columns', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      const filterIcon = screen.getByTestId('filter-icon-name');
+      fireEvent.click(filterIcon);
+
+      const operatorSelect = screen.getByTestId('filter-operator-name');
+      expect(operatorSelect).toHaveTextContent('Contains');
+      expect(operatorSelect).toHaveTextContent('Starts with');
+      expect(operatorSelect).toHaveTextContent('Ends with');
+    });
+
+    it('shows NULL options for all column types', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      // Check text column
+      const filterIcon = screen.getByTestId('filter-icon-name');
+      fireEvent.click(filterIcon);
+
+      const operatorSelect = screen.getByTestId('filter-operator-name');
+      expect(operatorSelect).toHaveTextContent('Is NULL');
+      expect(operatorSelect).toHaveTextContent('Is not NULL');
+    });
+
+    it('updates existing filter when same column filter is changed', () => {
+      let currentFilterState: FilterState = [
+        { column: 'name', operator: 'contains', value: 'Rock' }
+      ];
+      const onFilterChange = vi.fn();
+
+      render(
+        <DataGrid {...defaultProps} filterState={currentFilterState} onFilterChange={onFilterChange} />
+      );
+
+      // Open filter popover
+      const filterIcon = screen.getByTestId('filter-icon-name');
+      fireEvent.click(filterIcon);
+
+      // Change operator
+      const operatorSelect = screen.getByTestId('filter-operator-name');
+      fireEvent.change(operatorSelect, { target: { value: 'starts_with' } });
+
+      // Apply
+      const applyButton = screen.getByTestId('filter-apply-name');
+      fireEvent.click(applyButton);
+
+      // Should update existing filter, not add new one
+      expect(onFilterChange).toHaveBeenCalledWith([
+        { column: 'name', operator: 'starts_with', value: 'Rock' }
+      ]);
+    });
+
+    it('shows second value input for between operator', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      // Open age filter (numeric)
+      const filterIcon = screen.getByTestId('filter-icon-age');
+      fireEvent.click(filterIcon);
+
+      // Select between operator
+      const operatorSelect = screen.getByTestId('filter-operator-age');
+      fireEvent.change(operatorSelect, { target: { value: 'between' } });
+
+      // Should show second value input
+      expect(screen.getByTestId('filter-value2-age')).toBeInTheDocument();
+    });
+
+    it('hides value input for is_null operator', () => {
+      render(<DataGrid {...defaultProps} />);
+
+      const filterIcon = screen.getByTestId('filter-icon-name');
+      fireEvent.click(filterIcon);
+
+      // Select is_null operator
+      const operatorSelect = screen.getByTestId('filter-operator-name');
+      fireEvent.change(operatorSelect, { target: { value: 'is_null' } });
+
+      // Value input should not be present
+      expect(screen.queryByTestId('filter-value-name')).not.toBeInTheDocument();
+    });
+
+    it('shows multiple active filters count in status bar', () => {
+      const filterState: FilterState = [
+        { column: 'name', operator: 'contains', value: 'Rock' },
+        { column: 'age', operator: 'gt', value: 18 },
+        { column: 'email', operator: 'is_not_null' }
+      ];
+      render(<DataGrid {...defaultProps} filterState={filterState} />);
+
+      expect(screen.getByText('3')).toBeInTheDocument();
+      expect(screen.getByText(/filters active/)).toBeInTheDocument();
     });
   });
 });

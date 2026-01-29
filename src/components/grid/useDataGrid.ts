@@ -62,6 +62,37 @@ export interface ColumnSort {
 /** Sort state as array for multi-column support */
 export type SortState = ColumnSort[];
 
+// =============================================================================
+// Filter Types
+// =============================================================================
+
+/** Text filter operators */
+export type TextFilterOperator = 'contains' | 'equals' | 'starts_with' | 'ends_with' | 'is_empty' | 'is_not_empty';
+
+/** Numeric filter operators */
+export type NumericFilterOperator = 'eq' | 'neq' | 'gt' | 'lt' | 'gte' | 'lte' | 'between';
+
+/** Null filter operators */
+export type NullFilterOperator = 'is_null' | 'is_not_null';
+
+/** Combined filter operator type */
+export type FilterOperator = TextFilterOperator | NumericFilterOperator | NullFilterOperator;
+
+/** Single column filter specification */
+export interface ColumnFilter {
+  /** Column name to filter */
+  column: string;
+  /** Filter operator */
+  operator: FilterOperator;
+  /** Primary filter value (text search or numeric comparison) */
+  value?: string | number;
+  /** Secondary value for 'between' operator */
+  value2?: number;
+}
+
+/** Filter state as array for multiple column filters */
+export type FilterState = ColumnFilter[];
+
 /** Options for useDataGrid hook */
 export interface UseDataGridOptions {
   /** Table schema information */
@@ -231,6 +262,167 @@ export function generatePaginatedQuery(
   }
 
   return { sql, params };
+}
+
+// =============================================================================
+// Filter Utilities
+// =============================================================================
+
+/**
+ * Escape special characters in LIKE patterns
+ * SQLite LIKE special chars: % (any chars), _ (single char), \ (escape char)
+ */
+export function escapeLike(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\') // Escape backslash first
+    .replace(/%/g, '\\%')   // Escape percent
+    .replace(/_/g, '\\_');  // Escape underscore
+}
+
+/**
+ * Generate WHERE clause fragment for a single filter
+ * Returns the SQL condition and any parameter values
+ */
+export function generateFilterClause(filter: ColumnFilter): { sql: string; params: unknown[] } {
+  const escapedColumn = `"${filter.column.replace(/"/g, '""')}"`;
+
+  switch (filter.operator) {
+    // Text operators
+    case 'contains':
+      return {
+        sql: `${escapedColumn} LIKE ? ESCAPE '\\'`,
+        params: [`%${escapeLike(String(filter.value ?? ''))}%`],
+      };
+    case 'equals':
+      return {
+        sql: `${escapedColumn} = ?`,
+        params: [filter.value ?? ''],
+      };
+    case 'starts_with':
+      return {
+        sql: `${escapedColumn} LIKE ? ESCAPE '\\'`,
+        params: [`${escapeLike(String(filter.value ?? ''))}%`],
+      };
+    case 'ends_with':
+      return {
+        sql: `${escapedColumn} LIKE ? ESCAPE '\\'`,
+        params: [`%${escapeLike(String(filter.value ?? ''))}`],
+      };
+    case 'is_empty':
+      return {
+        sql: `(${escapedColumn} = '' OR ${escapedColumn} IS NULL)`,
+        params: [],
+      };
+    case 'is_not_empty':
+      return {
+        sql: `(${escapedColumn} != '' AND ${escapedColumn} IS NOT NULL)`,
+        params: [],
+      };
+
+    // Numeric operators
+    case 'eq':
+      return {
+        sql: `${escapedColumn} = ?`,
+        params: [filter.value],
+      };
+    case 'neq':
+      return {
+        sql: `${escapedColumn} != ?`,
+        params: [filter.value],
+      };
+    case 'gt':
+      return {
+        sql: `${escapedColumn} > ?`,
+        params: [filter.value],
+      };
+    case 'lt':
+      return {
+        sql: `${escapedColumn} < ?`,
+        params: [filter.value],
+      };
+    case 'gte':
+      return {
+        sql: `${escapedColumn} >= ?`,
+        params: [filter.value],
+      };
+    case 'lte':
+      return {
+        sql: `${escapedColumn} <= ?`,
+        params: [filter.value],
+      };
+    case 'between':
+      return {
+        sql: `${escapedColumn} BETWEEN ? AND ?`,
+        params: [filter.value, filter.value2],
+      };
+
+    // Null operators
+    case 'is_null':
+      return {
+        sql: `${escapedColumn} IS NULL`,
+        params: [],
+      };
+    case 'is_not_null':
+      return {
+        sql: `${escapedColumn} IS NOT NULL`,
+        params: [],
+      };
+
+    default:
+      return { sql: '', params: [] };
+  }
+}
+
+/**
+ * Generate complete WHERE clause from filter state
+ * Combines multiple filters with AND
+ */
+export function generateWhereClause(filterState: FilterState): { sql: string; params: unknown[] } {
+  if (filterState.length === 0) {
+    return { sql: '', params: [] };
+  }
+
+  const clauses: string[] = [];
+  const allParams: unknown[] = [];
+
+  for (const filter of filterState) {
+    const { sql, params } = generateFilterClause(filter);
+    if (sql) {
+      clauses.push(sql);
+      allParams.push(...params);
+    }
+  }
+
+  if (clauses.length === 0) {
+    return { sql: '', params: [] };
+  }
+
+  return {
+    sql: `WHERE ${clauses.join(' AND ')}`,
+    params: allParams,
+  };
+}
+
+/**
+ * Determine column type category for filter options
+ */
+export function getColumnTypeCategory(type: string): 'text' | 'numeric' | 'blob' {
+  if (!type) return 'text';
+
+  const upperType = type.toUpperCase().split('(')[0].trim();
+
+  // Numeric types
+  if (['INTEGER', 'INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'REAL', 'FLOAT', 'DOUBLE', 'NUMERIC', 'DECIMAL'].includes(upperType)) {
+    return 'numeric';
+  }
+
+  // Blob types
+  if (upperType === 'BLOB') {
+    return 'blob';
+  }
+
+  // Default to text
+  return 'text';
 }
 
 // =============================================================================
