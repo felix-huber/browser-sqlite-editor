@@ -25,6 +25,9 @@ npm-debug.log*
 # Test coverage
 coverage/
 
+# Performance test results (regenerated)
+e2e/perf/results/
+
 # Temporary files
 *.tmp
 *.temp
