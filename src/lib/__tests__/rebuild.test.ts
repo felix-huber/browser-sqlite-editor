@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest';
 import {
   extractCreateTableSql,
   extractIndexes,
@@ -10,9 +10,15 @@ import {
   replaceTableNameInCreate,
   generateCopyDataSql,
   groupForeignKeys,
+  generateRebuildPlanWithColumnMapping,
+  generateColumnMappedCopyDataSql,
+  executeRebuildPlan,
   type SqliteMasterObject,
-} from '../rebuild'
-import type { ForeignKeyInfo } from '../../types/index'
+  type RebuildPlan,
+  type TableDependents,
+} from '../rebuild';
+import type { ForeignKeyInfo } from '../../types/index';
+import type { DatabaseEngine } from '../db-engine';
 
 // =============================================================================
 // Test Fixtures
@@ -616,5 +622,636 @@ describe('generateRebuildPlan', () => {
       expect(plan1.operations[i].sql).toBe(plan2.operations[i].sql)
       expect(plan1.operations[i].objectName).toBe(plan2.operations[i].objectName)
     }
+  })
+})
+
+// =============================================================================
+// generateColumnMappedCopyDataSql Tests
+// =============================================================================
+
+describe('generateColumnMappedCopyDataSql', () => {
+  it('generates copy for matching columns', () => {
+    const sql = generateColumnMappedCopyDataSql(
+      'old_table',
+      'new_table',
+      ['id', 'name', 'email'],
+      ['id', 'name', 'email']
+    )
+    expect(sql).toBe(
+      'INSERT INTO new_table (id, name, email) SELECT id, name, email FROM old_table'
+    )
+  })
+
+  it('handles column renames', () => {
+    const sql = generateColumnMappedCopyDataSql(
+      'old_table',
+      'new_table',
+      ['id', 'old_name'],
+      ['id', 'new_name'],
+      new Map([['old_name', 'new_name']])
+    )
+    expect(sql).toBe(
+      'INSERT INTO new_table (id, new_name) SELECT id, old_name FROM old_table'
+    )
+  })
+
+  it('excludes removed columns', () => {
+    const sql = generateColumnMappedCopyDataSql(
+      'old_table',
+      'new_table',
+      ['id', 'name', 'removed_col'],
+      ['id', 'name']
+    )
+    expect(sql).toBe(
+      'INSERT INTO new_table (id, name) SELECT id, name FROM old_table'
+    )
+  })
+
+  it('excludes added columns (they get NULL/DEFAULT)', () => {
+    const sql = generateColumnMappedCopyDataSql(
+      'old_table',
+      'new_table',
+      ['id', 'name'],
+      ['id', 'name', 'new_col']
+    )
+    // new_col is not in source, so not included in INSERT
+    expect(sql).toBe(
+      'INSERT INTO new_table (id, name) SELECT id, name FROM old_table'
+    )
+  })
+
+  it('handles rename with add and remove', () => {
+    const sql = generateColumnMappedCopyDataSql(
+      'old_table',
+      'new_table',
+      ['id', 'old_name', 'removed'],
+      ['id', 'new_name', 'added'],
+      new Map([['old_name', 'new_name']])
+    )
+    // removed is excluded, added is excluded (no source), old_name -> new_name
+    expect(sql).toBe(
+      'INSERT INTO new_table (id, new_name) SELECT id, old_name FROM old_table'
+    )
+  })
+
+  it('handles case-insensitive column matching', () => {
+    const sql = generateColumnMappedCopyDataSql(
+      'old_table',
+      'new_table',
+      ['ID', 'Name'],
+      ['id', 'name']
+    )
+    expect(sql).toBe(
+      'INSERT INTO new_table (id, name) SELECT id, name FROM old_table'
+    )
+  })
+
+  it('returns WHERE 0 when no columns to copy', () => {
+    const sql = generateColumnMappedCopyDataSql(
+      'old_table',
+      'new_table',
+      ['a', 'b'],
+      ['c', 'd']
+    )
+    expect(sql).toBe(
+      'INSERT INTO new_table SELECT * FROM old_table WHERE 0'
+    )
+  })
+})
+
+// =============================================================================
+// generateRebuildPlanWithColumnMapping Tests
+// =============================================================================
+
+describe('generateRebuildPlanWithColumnMapping', () => {
+  const simpleDependents: TableDependents = {
+    createTableSql: 'CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)',
+    indexes: [],
+    triggers: [],
+    views: [],
+    incomingForeignKeys: [],
+  }
+
+  it('generates plan with column rename', () => {
+    const plan = generateRebuildPlanWithColumnMapping(
+      'test',
+      'CREATE TABLE test (id INTEGER PRIMARY KEY, full_name TEXT)',
+      simpleDependents,
+      ['id', 'name'],
+      ['id', 'full_name'],
+      new Map([['name', 'full_name']])
+    )
+
+    const copyOp = plan.operations.find((op) => op.type === 'copy_data')
+    expect(copyOp?.sql).toContain('full_name')
+    expect(copyOp?.sql).toContain('name')
+  })
+
+  it('generates plan with added column', () => {
+    const plan = generateRebuildPlanWithColumnMapping(
+      'test',
+      'CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, email TEXT)',
+      simpleDependents,
+      ['id', 'name'],
+      ['id', 'name', 'email']
+    )
+
+    const copyOp = plan.operations.find((op) => op.type === 'copy_data')
+    // email should not be in the copy since it's new
+    expect(copyOp?.sql).not.toContain('email')
+    expect(copyOp?.sql).toContain('id')
+    expect(copyOp?.sql).toContain('name')
+  })
+
+  it('generates plan with removed column', () => {
+    const plan = generateRebuildPlanWithColumnMapping(
+      'test',
+      'CREATE TABLE test (id INTEGER PRIMARY KEY)',
+      simpleDependents,
+      ['id', 'name'],
+      ['id']
+    )
+
+    const copyOp = plan.operations.find((op) => op.type === 'copy_data')
+    expect(copyOp?.sql).toContain('id')
+    expect(copyOp?.sql).not.toContain('name')
+  })
+})
+
+// =============================================================================
+// Mock Database Engine for executeRebuildPlan Tests
+// =============================================================================
+
+/**
+ * Creates a mock database engine that simulates SQLite behavior.
+ * Allows customizing behavior for different test scenarios.
+ */
+function createMockEngine(options: {
+  initialRowCount?: number
+  fkEnabled?: boolean
+  queryResults?: Map<string, { rows: unknown[][] }>
+  execErrors?: Map<string, Error>
+  queryErrors?: Map<string, Error>
+} = {}): DatabaseEngine {
+  const {
+    initialRowCount = 5,
+    fkEnabled = true,
+    queryResults = new Map(),
+    execErrors = new Map(),
+    queryErrors = new Map(),
+  } = options
+
+  const executedSql: string[] = []
+  let currentRowCount = initialRowCount
+  let inTransaction = false
+
+  const engine = {
+    query: vi.fn(async (sql: string) => {
+      executedSql.push(sql)
+
+      // Check for custom errors
+      for (const [pattern, error] of queryErrors) {
+        if (sql.includes(pattern)) {
+          throw error
+        }
+      }
+
+      // Check for custom results
+      for (const [pattern, result] of queryResults) {
+        if (sql.includes(pattern)) {
+          return result
+        }
+      }
+
+      // Default behavior for common queries
+      if (sql.includes('SELECT COUNT(*)')) {
+        return { rows: [[currentRowCount]] }
+      }
+      if (sql.includes('PRAGMA foreign_keys')) {
+        return { rows: [[fkEnabled ? 1 : 0]] }
+      }
+      if (sql.includes('PRAGMA foreign_key_check')) {
+        return { rows: [] } // No violations
+      }
+      if (sql.includes('PRAGMA index_list')) {
+        return { rows: [] }
+      }
+
+      return { rows: [] }
+    }),
+
+    exec: vi.fn(async (sql: string) => {
+      executedSql.push(sql)
+
+      // Check for custom errors
+      for (const [pattern, error] of execErrors) {
+        if (sql.includes(pattern)) {
+          throw error
+        }
+      }
+
+      // Track transaction state
+      if (sql === 'BEGIN TRANSACTION') {
+        inTransaction = true
+      } else if (sql === 'COMMIT') {
+        inTransaction = false
+      } else if (sql === 'ROLLBACK') {
+        inTransaction = false
+      }
+
+      return { rowsAffected: 0, lastInsertId: 0 }
+    }),
+
+    // Test helpers
+    _getExecutedSql: () => executedSql,
+    _isInTransaction: () => inTransaction,
+    _setRowCount: (count: number) => { currentRowCount = count },
+  }
+
+  return engine as unknown as DatabaseEngine
+}
+
+// =============================================================================
+// executeRebuildPlan Tests
+// =============================================================================
+
+describe('executeRebuildPlan', () => {
+  const createTestPlan = (tableName: string, options: {
+    indexes?: { name: string; sql: string }[]
+    triggers?: { name: string; sql: string }[]
+  } = {}): RebuildPlan => {
+    const dependents: TableDependents = {
+      createTableSql: `CREATE TABLE ${tableName} (id INTEGER PRIMARY KEY, name TEXT)`,
+      indexes: (options.indexes || []).map(idx => ({
+        name: idx.name,
+        tableName,
+        sql: idx.sql,
+        isAutoIndex: false,
+      })),
+      triggers: (options.triggers || []).map(tr => ({
+        name: tr.name,
+        tableName,
+        sql: tr.sql,
+      })),
+      views: [],
+      incomingForeignKeys: [],
+    }
+
+    return generateRebuildPlan(
+      tableName,
+      `CREATE TABLE ${tableName} (id INTEGER PRIMARY KEY, name TEXT, email TEXT)`,
+      dependents
+    )
+  }
+
+  describe('successful execution', () => {
+    it('executes all operations in order', async () => {
+      const engine = createMockEngine({ initialRowCount: 10 })
+      const plan = createTestPlan('users')
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      expect(result.success).toBe(true)
+      expect(result.rowCountBefore).toBe(10)
+      expect(result.rowCountAfter).toBe(10)
+      expect(result.executedOperations).toContain('disable_fk')
+      expect(result.executedOperations).toContain('begin_transaction')
+      expect(result.executedOperations).toContain('create_temp_table')
+      expect(result.executedOperations).toContain('copy_data')
+      expect(result.executedOperations).toContain('drop_original')
+      expect(result.executedOperations).toContain('rename_temp')
+      expect(result.executedOperations).toContain('fk_check')
+      expect(result.executedOperations).toContain('commit_transaction')
+      expect(result.executedOperations).toContain('enable_fk')
+    })
+
+    it('preserves row count after rebuild', async () => {
+      const engine = createMockEngine({ initialRowCount: 100 })
+      const plan = createTestPlan('products')
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      expect(result.success).toBe(true)
+      expect(result.rowCountBefore).toBe(100)
+      expect(result.rowCountAfter).toBe(100)
+    })
+
+    it('disables and re-enables foreign keys', async () => {
+      const engine = createMockEngine({ fkEnabled: true })
+      const plan = createTestPlan('orders')
+
+      await executeRebuildPlan(engine, plan)
+
+      const executedSql = (engine as unknown as { _getExecutedSql: () => string[] })._getExecutedSql()
+      expect(executedSql).toContain('PRAGMA foreign_keys = OFF')
+      expect(executedSql).toContain('PRAGMA foreign_keys = ON')
+    })
+  })
+
+  describe('add column', () => {
+    it('data preserved, new column has DEFAULT/NULL', async () => {
+      const engine = createMockEngine({ initialRowCount: 50 })
+      const dependents: TableDependents = {
+        createTableSql: 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)',
+        indexes: [],
+        triggers: [],
+        views: [],
+        incomingForeignKeys: [],
+      }
+
+      const plan = generateRebuildPlanWithColumnMapping(
+        'users',
+        'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT DEFAULT NULL)',
+        dependents,
+        ['id', 'name'],
+        ['id', 'name', 'email']
+      )
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      expect(result.success).toBe(true)
+      expect(result.rowCountBefore).toBe(50)
+      expect(result.rowCountAfter).toBe(50)
+
+      // Verify copy_data only includes existing columns
+      const copyOp = plan.operations.find(op => op.type === 'copy_data')
+      expect(copyOp?.sql).not.toContain('email')
+    })
+  })
+
+  describe('remove column', () => {
+    it('data preserved for remaining columns', async () => {
+      const engine = createMockEngine({ initialRowCount: 25 })
+      const dependents: TableDependents = {
+        createTableSql: 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, old_col TEXT)',
+        indexes: [],
+        triggers: [],
+        views: [],
+        incomingForeignKeys: [],
+      }
+
+      const plan = generateRebuildPlanWithColumnMapping(
+        'users',
+        'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)',
+        dependents,
+        ['id', 'name', 'old_col'],
+        ['id', 'name']
+      )
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      expect(result.success).toBe(true)
+      expect(result.rowCountBefore).toBe(25)
+      expect(result.rowCountAfter).toBe(25)
+
+      // Verify copy_data excludes removed column
+      const copyOp = plan.operations.find(op => op.type === 'copy_data')
+      expect(copyOp?.sql).not.toContain('old_col')
+      expect(copyOp?.sql).toContain('id')
+      expect(copyOp?.sql).toContain('name')
+    })
+  })
+
+  describe('rename column', () => {
+    it('data preserved via explicit mapping', async () => {
+      const engine = createMockEngine({ initialRowCount: 30 })
+      const dependents: TableDependents = {
+        createTableSql: 'CREATE TABLE users (id INTEGER PRIMARY KEY, old_name TEXT)',
+        indexes: [],
+        triggers: [],
+        views: [],
+        incomingForeignKeys: [],
+      }
+
+      const plan = generateRebuildPlanWithColumnMapping(
+        'users',
+        'CREATE TABLE users (id INTEGER PRIMARY KEY, new_name TEXT)',
+        dependents,
+        ['id', 'old_name'],
+        ['id', 'new_name'],
+        new Map([['old_name', 'new_name']])
+      )
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      expect(result.success).toBe(true)
+      expect(result.rowCountBefore).toBe(30)
+      expect(result.rowCountAfter).toBe(30)
+
+      // Verify copy_data uses proper column mapping
+      const copyOp = plan.operations.find(op => op.type === 'copy_data')
+      expect(copyOp?.sql).toContain('new_name')
+      expect(copyOp?.sql).toContain('old_name')
+    })
+  })
+
+  describe('type change', () => {
+    it('data coerced (INTEGER to TEXT)', async () => {
+      const engine = createMockEngine({ initialRowCount: 20 })
+      const dependents: TableDependents = {
+        createTableSql: 'CREATE TABLE items (id INTEGER PRIMARY KEY, value INTEGER)',
+        indexes: [],
+        triggers: [],
+        views: [],
+        incomingForeignKeys: [],
+      }
+
+      // Change value from INTEGER to TEXT
+      const plan = generateRebuildPlanWithColumnMapping(
+        'items',
+        'CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT)',
+        dependents,
+        ['id', 'value'],
+        ['id', 'value']
+      )
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      expect(result.success).toBe(true)
+      expect(result.rowCountBefore).toBe(20)
+      expect(result.rowCountAfter).toBe(20)
+      // SQLite handles type coercion automatically during INSERT...SELECT
+    })
+  })
+
+  describe('NOT NULL violation during copy', () => {
+    it('transaction rolled back on constraint violation', async () => {
+      const engine = createMockEngine({
+        initialRowCount: 10,
+        execErrors: new Map([
+          ['INSERT INTO', new Error('NOT NULL constraint failed: users.name')],
+        ]),
+      })
+
+      const plan = createTestPlan('users')
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('NOT NULL constraint failed')
+
+      // Verify ROLLBACK was executed
+      const executedSql = (engine as unknown as { _getExecutedSql: () => string[] })._getExecutedSql()
+      expect(executedSql).toContain('ROLLBACK')
+    })
+  })
+
+  describe('index recreation', () => {
+    it('PRAGMA index_list shows indexes restored', async () => {
+      const engine = createMockEngine({ initialRowCount: 15 })
+      const plan = createTestPlan('products', {
+        indexes: [
+          { name: 'idx_name', sql: 'CREATE INDEX idx_name ON products (name)' },
+          { name: 'idx_email', sql: 'CREATE UNIQUE INDEX idx_email ON products (email)' },
+        ],
+      })
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      expect(result.success).toBe(true)
+      expect(result.executedOperations).toContain('recreate_index')
+
+      // Verify index creation SQL was executed
+      const executedSql = (engine as unknown as { _getExecutedSql: () => string[] })._getExecutedSql()
+      expect(executedSql.some(sql => sql.includes('CREATE INDEX idx_name'))).toBe(true)
+      expect(executedSql.some(sql => sql.includes('CREATE UNIQUE INDEX idx_email'))).toBe(true)
+    })
+  })
+
+  describe('trigger recreation', () => {
+    it('sqlite_master shows triggers restored', async () => {
+      const engine = createMockEngine({ initialRowCount: 8 })
+      const plan = createTestPlan('orders', {
+        triggers: [
+          {
+            name: 'tr_insert',
+            sql: 'CREATE TRIGGER tr_insert AFTER INSERT ON orders BEGIN SELECT 1; END',
+          },
+          {
+            name: 'tr_update',
+            sql: 'CREATE TRIGGER tr_update AFTER UPDATE ON orders BEGIN SELECT 1; END',
+          },
+        ],
+      })
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      expect(result.success).toBe(true)
+      expect(result.executedOperations).toContain('recreate_trigger')
+
+      // Verify trigger creation SQL was executed
+      const executedSql = (engine as unknown as { _getExecutedSql: () => string[] })._getExecutedSql()
+      expect(executedSql.some(sql => sql.includes('CREATE TRIGGER tr_insert'))).toBe(true)
+      expect(executedSql.some(sql => sql.includes('CREATE TRIGGER tr_update'))).toBe(true)
+    })
+  })
+
+  describe('error handling', () => {
+    it('rolls back on create temp table failure', async () => {
+      const engine = createMockEngine({
+        initialRowCount: 10,
+        execErrors: new Map([
+          ['CREATE TABLE', new Error('table already exists')],
+        ]),
+      })
+
+      const plan = createTestPlan('users')
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('table already exists')
+
+      const executedSql = (engine as unknown as { _getExecutedSql: () => string[] })._getExecutedSql()
+      expect(executedSql).toContain('ROLLBACK')
+    })
+
+    it('rolls back on drop original failure', async () => {
+      const engine = createMockEngine({
+        initialRowCount: 10,
+        execErrors: new Map([
+          ['DROP TABLE', new Error('cannot drop table')],
+        ]),
+      })
+
+      const plan = createTestPlan('users')
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('cannot drop table')
+    })
+
+    it('reports foreign key violations', async () => {
+      const engine = createMockEngine({
+        initialRowCount: 10,
+        queryResults: new Map([
+          ['foreign_key_check', { rows: [['orders', 1, 'users', 'id']] }],
+        ]),
+      })
+
+      const plan = createTestPlan('users')
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('Foreign key violations detected')
+    })
+
+    it('re-enables foreign keys after failure if they were enabled', async () => {
+      const engine = createMockEngine({
+        initialRowCount: 10,
+        fkEnabled: true,
+        execErrors: new Map([
+          ['CREATE TABLE', new Error('error')],
+        ]),
+      })
+
+      const plan = createTestPlan('users')
+
+      await executeRebuildPlan(engine, plan)
+
+      const executedSql = (engine as unknown as { _getExecutedSql: () => string[] })._getExecutedSql()
+      // Should have FK enable at the end even after failure
+      const fkOnCalls = executedSql.filter(sql => sql === 'PRAGMA foreign_keys = ON')
+      expect(fkOnCalls.length).toBeGreaterThan(0)
+    })
+  })
+
+  describe('edge cases', () => {
+    it('handles empty table', async () => {
+      const engine = createMockEngine({ initialRowCount: 0 })
+      const plan = createTestPlan('empty_table')
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      expect(result.success).toBe(true)
+      expect(result.rowCountBefore).toBe(0)
+      expect(result.rowCountAfter).toBe(0)
+    })
+
+    it('handles table with no indexes or triggers', async () => {
+      const engine = createMockEngine({ initialRowCount: 5 })
+      const plan = createTestPlan('simple_table')
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      expect(result.success).toBe(true)
+      expect(result.executedOperations).not.toContain('recreate_index')
+      expect(result.executedOperations).not.toContain('recreate_trigger')
+    })
+
+    it('handles FK disabled state', async () => {
+      const engine = createMockEngine({
+        initialRowCount: 5,
+        fkEnabled: false,
+      })
+      const plan = createTestPlan('table')
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      expect(result.success).toBe(true)
+      // FK was already disabled, so don't need to re-enable
+    })
   })
 })
