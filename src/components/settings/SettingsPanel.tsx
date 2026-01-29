@@ -14,6 +14,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDatabaseStore, useStorageMode, useActiveDb } from '../../store';
 import { getWorkerClient } from '../../lib/worker-client';
+import { deleteHistory } from '../../lib/history';
 
 // =============================================================================
 // Types
@@ -217,6 +218,39 @@ function useDatabaseSettings(): {
 }
 
 // =============================================================================
+// Helper Components
+// =============================================================================
+
+interface ShortcutRowProps {
+  label: string;
+  keys: string[];
+  meta?: boolean;
+}
+
+function ShortcutRow({ label, keys, meta }: ShortcutRowProps) {
+  const isMacPlatform = typeof navigator !== 'undefined' && navigator.platform.includes('Mac');
+  const modifier = isMacPlatform ? '⌘' : 'Ctrl';
+
+  return (
+    <div className="flex items-center justify-between py-1">
+      <span className="text-navy-700">{label}</span>
+      <div className="flex items-center gap-1">
+        {meta && (
+          <kbd className="px-1.5 py-0.5 bg-navy-100 text-navy-700 rounded text-xs font-mono">
+            {modifier}
+          </kbd>
+        )}
+        {keys.map((key, i) => (
+          <kbd key={i} className="px-1.5 py-0.5 bg-navy-100 text-navy-700 rounded text-xs font-mono">
+            {key}
+          </kbd>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
 // Component
 // =============================================================================
 
@@ -268,12 +302,13 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
     try {
       const client = getWorkerClient();
 
-      // Delete all databases
+      // Delete all databases and their query history
       for (const db of databases) {
         await client.deleteDb(db.name);
+        deleteHistory(db.name);
       }
 
-      // Clear registry
+      // Clear settings
       localStorage.removeItem(SETTINGS_STORAGE_KEY);
 
       // Reload to reset state
@@ -516,13 +551,34 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
             <h3 className="text-sm font-semibold text-navy-900 uppercase tracking-wide mb-4">
               Keyboard Shortcuts
             </h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex items-center justify-between py-1">
-                <span className="text-navy-700">Open Settings</span>
-                <kbd className="px-2 py-0.5 bg-navy-100 text-navy-700 rounded text-xs font-mono">
-                  {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'} + ,
-                </kbd>
+            <div className="space-y-1 text-sm">
+              {/* Global */}
+              <div className="text-xs font-medium text-navy-500 uppercase tracking-wide pt-2 pb-1">
+                Global
               </div>
+              <ShortcutRow label="Open Database" keys={['O']} meta />
+              <ShortcutRow label="New Database" keys={['N']} meta />
+              <ShortcutRow label="Save Changes" keys={['S']} meta />
+              <ShortcutRow label="Close Database" keys={['W']} meta />
+              <ShortcutRow label="Open Settings" keys={[',']} meta />
+
+              {/* SQL Editor */}
+              <div className="text-xs font-medium text-navy-500 uppercase tracking-wide pt-3 pb-1">
+                SQL Editor
+              </div>
+              <ShortcutRow label="Execute Query" keys={['Enter']} meta />
+              <ShortcutRow label="Execute & Explain" keys={['Shift', 'Enter']} meta />
+              <ShortcutRow label="Cancel Query" keys={['Escape']} />
+
+              {/* Data Grid */}
+              <div className="text-xs font-medium text-navy-500 uppercase tracking-wide pt-3 pb-1">
+                Data Grid
+              </div>
+              <ShortcutRow label="Edit Cell" keys={['Enter']} />
+              <ShortcutRow label="Cancel Edit" keys={['Escape']} />
+              <ShortcutRow label="Delete/Clear" keys={['Delete']} />
+              <ShortcutRow label="Copy Cell" keys={['C']} meta />
+              <ShortcutRow label="Navigate" keys={['↑', '↓', '←', '→']} />
             </div>
           </section>
         </div>
