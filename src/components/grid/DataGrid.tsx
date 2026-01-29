@@ -808,6 +808,8 @@ interface GridRowProps {
   onCommitEdit: () => Promise<boolean>;
   onCancelEdit: () => void;
   onMoveToNextCell: (rowIndex: number, columnName: string) => void;
+  focusedCell?: { row: number; col: number } | null;
+  onCellClick?: (rowIndex: number, colIndex: number) => void;
 }
 
 const GridRow = memo(function GridRow({
@@ -824,6 +826,8 @@ const GridRow = memo(function GridRow({
   onCommitEdit,
   onCancelEdit,
   onMoveToNextCell,
+  focusedCell,
+  onCellClick,
 }: GridRowProps) {
   const isRowEditing = editState?.rowIndex === row.index;
 
@@ -834,11 +838,16 @@ const GridRow = memo(function GridRow({
       } hover:bg-blue-100`}
       style={style}
       data-row-index={row.index}
+      role="row"
+      aria-rowindex={row.index + 2} // +2 because header is row 1 and aria-rowindex is 1-based
+      aria-selected={isSelected}
     >
       {/* Checkbox cell */}
       <div
         className="flex-shrink-0 flex items-center justify-center"
         style={{ width: CHECKBOX_COLUMN_WIDTH, height: ROW_HEIGHT }}
+        role="gridcell"
+        aria-colindex={1}
       >
         <input
           type="checkbox"
@@ -848,28 +857,34 @@ const GridRow = memo(function GridRow({
           disabled={isReadOnly}
           className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
           data-testid={`row-checkbox-${row.index}`}
+          aria-label={`Select row ${row.index + 1}`}
         />
       </div>
 
       {/* Data cells */}
-      {row.getVisibleCells().map((cell) => {
+      {row.getVisibleCells().map((cell, colIndex) => {
         const width = columnWidths[cell.column.id] || DEFAULT_COLUMN_WIDTH;
         const columnName = cell.column.id;
         const columnType = cell.column.columnDef.meta?.type || 'TEXT';
         const isCellEditing = isRowEditing && editState?.columnName === columnName;
         const isDirty = isCellEditing && editState?.isDirty;
         const cellValue = cell.getValue() as CellValue;
+        const isFocused = focusedCell?.row === row.index && focusedCell?.col === colIndex;
 
         return (
           <div
             key={cell.id}
             className={`flex-shrink-0 px-2 overflow-hidden text-ellipsis whitespace-nowrap relative ${
               isDirty ? 'bg-yellow-50' : ''
-            }`}
+            } ${isFocused ? 'outline outline-2 outline-blue-500 outline-offset-[-2px]' : ''}`}
             style={{ width, height: ROW_HEIGHT, lineHeight: `${ROW_HEIGHT}px` }}
             onDoubleClick={(e) => onCellDoubleClick(row.index, columnName, e)}
+            onClick={() => onCellClick?.(row.index, colIndex)}
             onContextMenu={(e) => onCellContextMenu(row.index, columnName, cellValue, e)}
             data-testid={`cell-${row.index}-${columnName}`}
+            role="gridcell"
+            aria-colindex={colIndex + 2} // +2 because checkbox is col 1 and aria-colindex is 1-based
+            tabIndex={isFocused ? 0 : -1}
           >
             <EditableCell
               value={cellValue}
@@ -960,6 +975,9 @@ export const DataGrid = memo(function DataGrid({
 
   // Container ref for keyboard handling
   const gridContainerRef = useRef<HTMLDivElement>(null);
+
+  // Track focused cell for keyboard navigation
+  const [focusedCell, setFocusedCell] = useState<{row: number; col: number} | null>(null);
 
   // Set up data grid hook
   const dataGridOptions: UseDataGridOptions = useMemo(
@@ -1187,6 +1205,11 @@ export const DataGrid = memo(function DataGrid({
     },
     [startEdit]
   );
+
+  // Handle cell click (for focus management)
+  const handleCellClick = useCallback((rowIndex: number, colIndex: number) => {
+    setFocusedCell({ row: rowIndex, col: colIndex });
+  }, []);
 
   // Handle move to next cell (for Tab key)
   const handleMoveToNextCell = useCallback(
@@ -1445,6 +1468,82 @@ export const DataGrid = memo(function DataGrid({
     setIsDeleting(false);
   }, []);
 
+  // Handle keyboard navigation within the grid
+  const handleGridKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      // Skip if we're in an edit input
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        return;
+      }
+
+      // Arrow key navigation
+      if (focusedCell && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        e.preventDefault();
+        let newRow = focusedCell.row;
+        let newCol = focusedCell.col;
+
+        switch (e.key) {
+          case 'ArrowUp':
+            newRow = Math.max(0, focusedCell.row - 1);
+            break;
+          case 'ArrowDown':
+            newRow = Math.min(data.length - 1, focusedCell.row + 1);
+            break;
+          case 'ArrowLeft':
+            newCol = Math.max(0, focusedCell.col - 1);
+            break;
+          case 'ArrowRight':
+            newCol = Math.min(columns.length - 1, focusedCell.col + 1);
+            break;
+        }
+
+        setFocusedCell({ row: newRow, col: newCol });
+      }
+
+      // Enter to start editing
+      if (e.key === 'Enter' && focusedCell && !editState) {
+        e.preventDefault();
+        const colName = columns[focusedCell.col]?.id;
+        if (colName) {
+          startEdit(focusedCell.row, colName);
+        }
+      }
+
+      // Escape to cancel edit
+      if (e.key === 'Escape' && editState) {
+        e.preventDefault();
+        cancelEdit();
+      }
+
+      // Space to toggle selection
+      if (e.key === ' ' && focusedCell && !editState) {
+        e.preventDefault();
+        handleToggleSelect(focusedCell.row);
+      }
+
+      // Home/End navigation
+      if (e.key === 'Home' && focusedCell) {
+        e.preventDefault();
+        if (e.ctrlKey || e.metaKey) {
+          setFocusedCell({ row: 0, col: 0 });
+        } else {
+          setFocusedCell({ row: focusedCell.row, col: 0 });
+        }
+      }
+
+      if (e.key === 'End' && focusedCell) {
+        e.preventDefault();
+        if (e.ctrlKey || e.metaKey) {
+          setFocusedCell({ row: data.length - 1, col: columns.length - 1 });
+        } else {
+          setFocusedCell({ row: focusedCell.row, col: columns.length - 1 });
+        }
+      }
+    },
+    [focusedCell, data.length, columns, editState, startEdit, cancelEdit, handleToggleSelect]
+  );
+
   // Keyboard shortcut handler for Cmd/Ctrl+Shift+N and Delete/Backspace
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1574,13 +1673,26 @@ export const DataGrid = memo(function DataGrid({
   }
 
   return (
-    <div ref={gridContainerRef} className={`flex flex-col ${className}`} style={{ height }}>
+    <div
+      ref={gridContainerRef}
+      className={`flex flex-col ${className}`}
+      style={{ height }}
+      role="grid"
+      aria-label={tableInfo?.name ? `Data grid for ${tableInfo.name} table` : 'Data grid'}
+      aria-rowcount={data.length + 1} // +1 for header row
+      aria-colcount={columns.length + 1} // +1 for checkbox column
+      aria-readonly={isReadOnly}
+      tabIndex={0}
+      onKeyDown={handleGridKeyDown}
+    >
       {/* Toolbar */}
       {(onAddRow || onDeleteRows) && (
         <div
           className="flex-shrink-0 bg-gray-50 border-b border-gray-200 px-3 flex items-center gap-2"
           style={{ height: TOOLBAR_HEIGHT }}
           data-testid="grid-toolbar"
+          role="toolbar"
+          aria-label="Grid actions"
         >
           {onAddRow && (
             <button
@@ -1636,12 +1748,16 @@ export const DataGrid = memo(function DataGrid({
       <div
         className="flex-shrink-0 bg-gray-100 border-b-2 border-gray-300 overflow-hidden"
         style={{ height: ROW_HEIGHT }}
+        role="row"
+        aria-rowindex={1}
       >
         <div className="flex items-center" style={{ width: totalWidth }}>
           {/* Select all checkbox */}
           <div
             className="flex-shrink-0 flex items-center justify-center"
             style={{ width: CHECKBOX_COLUMN_WIDTH, height: ROW_HEIGHT }}
+            role="columnheader"
+            aria-label="Select all rows"
           >
             <input
               type="checkbox"
@@ -1650,6 +1766,7 @@ export const DataGrid = memo(function DataGrid({
               disabled={isReadOnly}
               className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
               data-testid="select-all-checkbox"
+              aria-label="Select all rows"
             />
           </div>
 
@@ -1727,6 +1844,8 @@ export const DataGrid = memo(function DataGrid({
                 onCommitEdit={commitEdit}
                 onCancelEdit={cancelEdit}
                 onMoveToNextCell={handleMoveToNextCell}
+                focusedCell={focusedCell}
+                onCellClick={handleCellClick}
               />
             );
           })}

@@ -65,9 +65,32 @@ export function TableItem({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        onClick?.();
+      switch (e.key) {
+        case 'Enter':
+        case ' ':
+          e.preventDefault();
+          onClick?.();
+          break;
+        case 'ArrowDown':
+          // Move to next sibling
+          e.preventDefault();
+          {
+            const nextItem = (e.currentTarget as HTMLElement).nextElementSibling;
+            if (nextItem instanceof HTMLElement) {
+              nextItem.focus();
+            }
+          }
+          break;
+        case 'ArrowUp':
+          // Move to previous sibling
+          e.preventDefault();
+          {
+            const prevItem = (e.currentTarget as HTMLElement).previousElementSibling;
+            if (prevItem instanceof HTMLElement) {
+              prevItem.focus();
+            }
+          }
+          break;
       }
     },
     [onClick]

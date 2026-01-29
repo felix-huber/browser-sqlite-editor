@@ -232,10 +232,12 @@ export function StatusBar({
     <footer
       className="h-7 bg-white border-t border-navy-200 flex items-center px-4 text-xs shrink-0"
       data-testid="status-bar"
+      role="status"
+      aria-label="Application status"
     >
       {/* Left section: Save status */}
       <div className="flex items-center gap-4">
-        {/* Save status indicator */}
+        {/* Save status indicator - live region for screen readers */}
         <button
           type="button"
           className={`flex items-center gap-1.5 font-medium ${saveStatus.className}`}
@@ -243,6 +245,8 @@ export function StatusBar({
           disabled={persistenceStatus !== 'error'}
           data-testid="save-status"
           aria-label={`Save status: ${saveStatus.text}`}
+          aria-live="polite"
+          aria-atomic="true"
         >
           {saveStatus.icon}
           <span>{saveStatus.text}</span>

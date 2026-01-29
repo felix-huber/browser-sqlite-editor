@@ -6,6 +6,7 @@
  */
 
 import { memo, useCallback, useEffect, useRef } from 'react';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 // =============================================================================
 // Types
@@ -43,6 +44,13 @@ export const DeleteRowsDialog = memo(function DeleteRowsDialog({
 }: DeleteRowsDialogProps) {
   const deleteButtonRef = useRef<HTMLButtonElement>(null);
 
+  // Focus trap for accessibility
+  const { containerRef: focusTrapRef } = useFocusTrap({
+    isActive: isOpen,
+    autoFocus: true,
+    returnFocus: true,
+  });
+
   // Focus delete button when dialog opens
   useEffect(() => {
     if (isOpen && deleteButtonRef.current) {
@@ -77,6 +85,7 @@ export const DeleteRowsDialog = memo(function DeleteRowsDialog({
       data-testid="delete-rows-dialog"
     >
       <div
+        ref={focusTrapRef as React.RefObject<HTMLDivElement>}
         className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >

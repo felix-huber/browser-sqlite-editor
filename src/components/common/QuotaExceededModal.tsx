@@ -13,6 +13,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useDatabaseStore, deleteDb } from '../../store';
 import { getWorkerClient } from '../../lib/worker-client';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import type { DatabaseEntry } from '../../types';
 
 export interface QuotaExceededModalProps {
@@ -57,6 +58,13 @@ export function QuotaExceededModal({
   const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Focus trap for accessibility
+  const { containerRef: focusTrapRef } = useFocusTrap({
+    isActive: isOpen,
+    autoFocus: true,
+    returnFocus: true,
+  });
+
   // Load database sizes when modal opens
   useEffect(() => {
     if (!isOpen) {
@@ -69,12 +77,21 @@ export function QuotaExceededModal({
 
     // Estimate sizes based on database entries
     // In a real implementation, we'd query actual OPFS/IndexedDB sizes
-    // For now, use lastOpenedAt as a proxy (recently used = likely larger)
-    const sizes: DbSizeInfo[] = databases.map((db: DatabaseEntry) => ({
-      name: db.name,
-      // Placeholder size estimation - in production, query actual storage API
-      size: Math.floor(Math.random() * 10 * 1024 * 1024), // 0-10MB placeholder
-    }));
+    // For now, use a deterministic hash of the name for consistent display
+    const sizes: DbSizeInfo[] = databases.map((db: DatabaseEntry) => {
+      // Simple hash based on name to get consistent placeholder size
+      let hash = 0;
+      for (let i = 0; i < db.name.length; i++) {
+        hash = ((hash << 5) - hash) + db.name.charCodeAt(i);
+        hash = hash & hash; // Convert to 32-bit integer
+      }
+      return {
+        name: db.name,
+        // Placeholder size estimation - in production, query actual storage API
+        // Use hash to get a consistent size between 100KB and 10MB
+        size: Math.abs(hash % (10 * 1024 * 1024 - 100 * 1024)) + 100 * 1024,
+      };
+    });
 
     // Sort by size descending
     sizes.sort((a, b) => b.size - a.size);
@@ -181,6 +198,7 @@ export function QuotaExceededModal({
       aria-labelledby="quota-exceeded-title"
     >
       <div
+        ref={focusTrapRef as React.RefObject<HTMLDivElement>}
         className="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 max-h-[90vh] overflow-hidden flex flex-col"
         data-testid="quota-exceeded-modal"
       >

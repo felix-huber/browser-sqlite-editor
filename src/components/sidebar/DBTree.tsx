@@ -111,12 +111,49 @@ export function DBTree({
   // Handle keyboard navigation
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        onToggleExpand();
+      switch (e.key) {
+        case 'Enter':
+        case ' ':
+          e.preventDefault();
+          onToggleExpand();
+          break;
+        case 'ArrowRight':
+          // Expand if collapsed
+          if (!isExpanded) {
+            e.preventDefault();
+            onToggleExpand();
+          }
+          break;
+        case 'ArrowLeft':
+          // Collapse if expanded
+          if (isExpanded) {
+            e.preventDefault();
+            onToggleExpand();
+          }
+          break;
+        case 'ArrowDown':
+          // Move to next sibling or first child
+          e.preventDefault();
+          {
+            const nextItem = (e.currentTarget as HTMLElement).closest('li')?.nextElementSibling?.querySelector('[tabindex="0"]');
+            if (nextItem instanceof HTMLElement) {
+              nextItem.focus();
+            }
+          }
+          break;
+        case 'ArrowUp':
+          // Move to previous sibling
+          e.preventDefault();
+          {
+            const prevItem = (e.currentTarget as HTMLElement).closest('li')?.previousElementSibling?.querySelector('[tabindex="0"]');
+            if (prevItem instanceof HTMLElement) {
+              prevItem.focus();
+            }
+          }
+          break;
       }
     },
-    [onToggleExpand]
+    [onToggleExpand, isExpanded]
   );
 
   // Handle item click

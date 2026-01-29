@@ -10,6 +10,7 @@
 import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import type { ColumnInfo } from '../../types';
 import { getColumnTypeCategory } from './useDataGrid';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 // =============================================================================
 // Types
@@ -85,6 +86,13 @@ export const AddRowDialog = memo(function AddRowDialog({
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   // Reference to first input for autofocus
   const firstInputRef = useRef<HTMLInputElement>(null);
+
+  // Focus trap for accessibility
+  const { containerRef: focusTrapRef } = useFocusTrap({
+    isActive: isOpen,
+    autoFocus: true,
+    returnFocus: true,
+  });
 
   // Check if there are generated columns
   const hasGeneratedColumns = allColumns.some((col) => col.generated !== null);
@@ -211,6 +219,7 @@ export const AddRowDialog = memo(function AddRowDialog({
       data-testid="add-row-dialog"
     >
       <div
+        ref={focusTrapRef as React.RefObject<HTMLDivElement>}
         className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[80vh] overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >

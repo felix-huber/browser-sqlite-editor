@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 /** Action returned by the prompt */
 export type UnsavedPromptAction = 'save' | 'discard' | 'cancel';
@@ -36,9 +37,15 @@ export function UnsavedPrompt({
   canSave = true,
   onAction,
 }: UnsavedPromptProps) {
-  const dialogRef = useRef<HTMLDivElement>(null);
   const discardButtonRef = useRef<HTMLButtonElement>(null);
   const saveButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Focus trap for accessibility
+  const { containerRef: focusTrapRef } = useFocusTrap({
+    isActive: isOpen,
+    autoFocus: true,
+    returnFocus: true,
+  });
 
   // Focus first actionable button on open
   useEffect(() => {
@@ -94,7 +101,7 @@ export function UnsavedPrompt({
       aria-describedby="unsaved-prompt-description"
     >
       <div
-        ref={dialogRef}
+        ref={focusTrapRef as React.RefObject<HTMLDivElement>}
         className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6"
         data-testid="unsaved-prompt-dialog"
       >
@@ -160,7 +167,7 @@ export function UnsavedPrompt({
               className="px-4 py-2 bg-navy-600 text-white font-medium rounded-lg hover:bg-navy-700 focus:outline-none focus:ring-2 focus:ring-navy-600 focus:ring-offset-2 transition-colors"
               data-testid="unsaved-prompt-save"
             >
-              Save &amp; Continue
+              Save & Continue
             </button>
           )}
         </div>

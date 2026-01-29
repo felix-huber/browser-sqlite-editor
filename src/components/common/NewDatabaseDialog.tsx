@@ -11,6 +11,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 /** Windows reserved names */
 const WINDOWS_RESERVED_NAMES = [
@@ -109,6 +110,13 @@ export function NewDatabaseDialog({
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
+  // Focus trap for accessibility
+  const { containerRef: focusTrapRef } = useFocusTrap({
+    isActive: isOpen && !isReadOnly,
+    autoFocus: true,
+    returnFocus: true,
+  });
+
   // Reset state when dialog opens
   useEffect(() => {
     if (isOpen) {
@@ -194,6 +202,7 @@ export function NewDatabaseDialog({
       aria-labelledby="new-database-dialog-title"
     >
       <div
+        ref={focusTrapRef as React.RefObject<HTMLDivElement>}
         className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6"
         data-testid="new-database-dialog"
       >

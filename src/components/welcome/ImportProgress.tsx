@@ -95,11 +95,24 @@ export function ImportProgress({
   const lastUpdateRef = useRef<number>(0);
   const [displayPercent, setDisplayPercent] = useState(0);
 
+  // Ref to track the callback to avoid stale closure issues
+  const onConfirmImportRef = useRef(onConfirmImport);
+  onConfirmImportRef.current = onConfirmImport;
+
+  // Track whether we've already triggered the import for this file
+  const importTriggeredRef = useRef(false);
+
   // Check for warnings when file changes
   useEffect(() => {
     if (!file) {
       setShowConfirmation(false);
       setWarningType(null);
+      importTriggeredRef.current = false;
+      return;
+    }
+
+    // Prevent duplicate import triggers for the same file
+    if (importTriggeredRef.current) {
       return;
     }
 
@@ -119,9 +132,10 @@ export function ImportProgress({
       // No warnings, start import directly
       setWarningType(null);
       setShowConfirmation(false);
-      onConfirmImport();
+      importTriggeredRef.current = true;
+      onConfirmImportRef.current();
     }
-  }, [file, storageEstimate, onConfirmImport]);
+  }, [file, storageEstimate]);
 
   // Debounced progress updates (max every 100ms)
   useEffect(() => {
@@ -151,6 +165,7 @@ export function ImportProgress({
 
   const handleConfirm = useCallback(() => {
     setShowConfirmation(false);
+    importTriggeredRef.current = true;
     onConfirmImport();
   }, [onConfirmImport]);
 
@@ -252,6 +267,9 @@ export function ImportProgress({
         <div
           className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6"
           data-testid="import-progress-dialog"
+          role="dialog"
+          aria-labelledby="import-progress-title"
+          aria-describedby="import-progress-status"
         >
           {/* Header */}
           <div className="flex items-center gap-3 mb-6">
@@ -272,13 +290,17 @@ export function ImportProgress({
               </svg>
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-navy-900">
+              <h2 id="import-progress-title" className="text-lg font-semibold text-navy-900">
                 {file.size > LARGE_FILE_THRESHOLD
                   ? 'Importing large file...'
                   : 'Importing database...'}
               </h2>
               <p className="text-sm text-navy-500 truncate max-w-xs">{file.name}</p>
             </div>
+          </div>
+          {/* Screen reader status announcement */}
+          <div id="import-progress-status" className="sr-only" aria-live="polite" aria-atomic="true">
+            Import progress: {displayPercent}% complete, {formatBytes(progress.bytesRead)} of {formatBytes(progress.totalBytes)}
           </div>
 
           {/* Progress bar */}
