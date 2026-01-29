@@ -2,7 +2,7 @@
 
 Browser-based SQLite database editor powered by WebAssembly.
 
-[![CI](https://github.com/felix-huber/wasm-sqlite-editor/actions/workflows/ci.yml/badge.svg)](https://github.com/felix-huber/wasm-sqlite-editor/actions/workflows/ci.yml)
+[![CI](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml/badge.svg)](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![PWA](https://img.shields.io/badge/PWA-installable-blueviolet)](https://web.dev/progressive-web-apps/)
 
@@ -30,8 +30,8 @@ Browser-based SQLite database editor powered by WebAssembly.
 ### From Source
 
 ```bash
-git clone https://github.com/felix-huber/wasm-sqlite-editor.git
-cd wasm-sqlite-editor
+git clone https://github.com/felix-huber/browser-sqlite-editor.git
+cd browser-sqlite-editor
 npm install
 npm run dev
 ```
