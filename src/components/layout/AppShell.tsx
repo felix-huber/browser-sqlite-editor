@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { OpenDatabaseButton } from './OpenDatabaseButton'
+import { StatusBar } from './StatusBar'
 
 interface AppShellProps {
   children?: ReactNode
@@ -151,25 +152,6 @@ function Sidebar({ collapsed }: SidebarProps) {
         </div>
       </nav>
     </aside>
-  )
-}
-
-function StatusBar() {
-  return (
-    <footer className="h-7 bg-white border-t border-navy-200 flex items-center px-4 text-xs shrink-0">
-      <div className="flex items-center gap-3">
-        <span className="flex items-center gap-1.5 text-navy-500 font-medium">
-          <span className="w-1.5 h-1.5 bg-navy-400 rounded-full" />
-          Ready
-        </span>
-      </div>
-
-      <div className="flex-1" />
-
-      <div className="flex items-center gap-3 text-navy-500">
-        <span className="font-mono">SQLite WASM</span>
-      </div>
-    </footer>
   )
 }
 

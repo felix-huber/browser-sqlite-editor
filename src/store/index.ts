@@ -17,6 +17,7 @@ import type {
   StorageMode,
   StorageStatus,
   LockHolder,
+  PersistenceStatus,
 } from '../types';
 import { getWorkerClient, type WorkerClient } from '../lib/worker-client';
 import { getLockManager, type WebLockManager } from '../worker/web-locks';
@@ -53,6 +54,10 @@ export interface DatabaseStoreState {
   storageStatus: StorageStatus;
   /** Current storage mode (null if not determined) */
   storageMode: StorageMode | null;
+  /** Current persistence status for status bar */
+  persistenceStatus: PersistenceStatus;
+  /** Last persistence error message (when status is 'error') */
+  persistenceError: string | null;
 }
 
 /**
@@ -73,6 +78,8 @@ export interface DatabaseStoreActions {
   setStorageStatus: (status: StorageStatus) => void;
   /** Set storage mode */
   setStorageMode: (mode: StorageMode | null) => void;
+  /** Set persistence status */
+  setPersistenceStatus: (status: PersistenceStatus, error?: string | null) => void;
   /** Reset the store to initial state */
   reset: () => void;
 }
@@ -97,6 +104,8 @@ const initialState: DatabaseStoreState = {
   lockHolder: null,
   storageStatus: 'ok',
   storageMode: null,
+  persistenceStatus: 'saved',
+  persistenceError: null,
 };
 
 // =============================================================================
@@ -129,6 +138,9 @@ export const useDatabaseStore = create<DatabaseStore>((set) => ({
   setStorageStatus: (storageStatus) => set({ storageStatus }),
 
   setStorageMode: (storageMode) => set({ storageMode }),
+
+  setPersistenceStatus: (persistenceStatus, error = null) =>
+    set({ persistenceStatus, persistenceError: error }),
 
   reset: () => set(initialState),
 }));
@@ -201,6 +213,20 @@ export function useLockHolder(): LockHolder {
  */
 export function useDatabases(): DatabaseEntry[] {
   return useDatabaseStore((state) => state.databases);
+}
+
+/**
+ * Get the current persistence status
+ */
+export function usePersistenceStatus(): PersistenceStatus {
+  return useDatabaseStore((state) => state.persistenceStatus);
+}
+
+/**
+ * Get the persistence error message (if any)
+ */
+export function usePersistenceError(): string | null {
+  return useDatabaseStore((state) => state.persistenceError);
 }
 
 // =============================================================================
