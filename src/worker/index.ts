@@ -107,6 +107,193 @@ async function handleMessage(event: WorkerMessageEvent): Promise<void> {
       postResponse({ type: 'pong' });
       break;
 
+    case 'query':
+      try {
+        const engine = getEngine();
+        // Engine must be open before querying
+        if (!engine.isReady()) {
+          throw new Error('No database open. Please open a database first.');
+        }
+        const result = await engine.query(request.sql, request.params);
+        postResponse({ type: 'queryResult', result });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const code = message.includes('SQLITE_CONSTRAINT') ? 'CONSTRAINT_VIOLATION' :
+                     message.includes('syntax error') ? 'SYNTAX_ERROR' : 'UNKNOWN';
+        postResponse({
+          type: 'error',
+          message,
+          code,
+        });
+      }
+      break;
+
+    case 'exec':
+      try {
+        const engine = getEngine();
+        // Engine must be open before executing
+        if (!engine.isReady()) {
+          throw new Error('No database open. Please open a database first.');
+        }
+        const result = await engine.exec(request.sql, request.params);
+        postResponse({ type: 'success', data: result });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const code = message.includes('SQLITE_CONSTRAINT') ? 'CONSTRAINT_VIOLATION' :
+                     message.includes('syntax error') ? 'SYNTAX_ERROR' : 'UNKNOWN';
+        postResponse({
+          type: 'error',
+          message,
+          code,
+        });
+      }
+      break;
+
+    case 'open':
+      try {
+        const engine = getEngine();
+        // Initialize engine if not ready
+        if (!engine.isReady()) {
+          await engine.initialize();
+        }
+        await engine.open(request.dbName);
+        postResponse({ type: 'lockStatus', isWriter: true });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'error',
+          message: `Failed to open database: ${message}`,
+          code: 'UNKNOWN',
+        });
+      }
+      break;
+
+    case 'close':
+      try {
+        const engine = getEngine();
+        await engine.close();
+        postResponse({ type: 'success' });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'error',
+          message: `Failed to close database: ${message}`,
+          code: 'UNKNOWN',
+        });
+      }
+      break;
+
+    case 'createDb':
+      try {
+        const engine = getEngine();
+        // Initialize engine if not ready
+        if (!engine.isReady()) {
+          await engine.initialize();
+        }
+        // Open creates the database if it doesn't exist
+        await engine.open(request.name);
+        // Add to registry
+        const registry = getRegistry();
+        if (!registry.isInitialized()) {
+          await registry.init();
+        }
+        await registry.registerDatabase(request.name);
+        postResponse({ type: 'success' });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'error',
+          message: `Failed to create database: ${message}`,
+          code: 'UNKNOWN',
+        });
+      }
+      break;
+
+    case 'deleteDb':
+      try {
+        const registry = getRegistry();
+        await registry.deleteDatabase(request.name);
+        postResponse({ type: 'success' });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'error',
+          message: `Failed to delete database: ${message}`,
+          code: 'UNKNOWN',
+        });
+      }
+      break;
+
+    case 'renameDb':
+      try {
+        const registry = getRegistry();
+        await registry.renameDatabase(request.oldName, request.newName);
+        postResponse({ type: 'success' });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'error',
+          message: `Failed to rename database: ${message}`,
+          code: 'UNKNOWN',
+        });
+      }
+      break;
+
+    case 'getRegistry':
+      try {
+        const registry = getRegistry();
+        if (!registry.isInitialized()) {
+          await registry.init();
+        }
+        const entries = registry.listDatabases();
+        // Convert RegistryEntry to DatabaseEntry format
+        const databases = entries.map((e) => ({
+          name: e.name,
+          file: e.name, // Use name as filename for now
+          createdAt: e.createdAt,
+          lastOpenedAt: e.lastOpenedAt,
+          fkEnforced: true, // Default to enabled
+        }));
+        postResponse({
+          type: 'registryResult',
+          registry: { v: 1, databases },
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'error',
+          message: `Failed to get registry: ${message}`,
+          code: 'UNKNOWN',
+        });
+      }
+      break;
+
+    case 'acquireLock':
+      // For now, always grant lock (multi-tab locking is handled separately)
+      postResponse({ type: 'lockStatus', isWriter: true });
+      break;
+
+    case 'releaseLock':
+      postResponse({ type: 'success' });
+      break;
+
+    case 'checkLock':
+      postResponse({ type: 'lockStatus', isWriter: true });
+      break;
+
+    case 'flushSnapshot':
+      postResponse({ type: 'success' });
+      break;
+
+    case 'export':
+      // Export is not yet implemented - return error for now
+      postResponse({
+        type: 'error',
+        message: 'Export not yet implemented',
+        code: 'UNKNOWN',
+      });
+      break;
+
     case 'schema':
       try {
         const queryExecutor = createQueryExecutor();
