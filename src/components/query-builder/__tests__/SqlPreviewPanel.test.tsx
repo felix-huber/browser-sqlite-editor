@@ -148,7 +148,7 @@ describe('SqlPreviewPanel', () => {
       })
 
       // Resolve the promise
-      act(() => {
+      await act(async () => {
         resolveQuery!(mockQueryResult)
       })
 
@@ -198,7 +198,7 @@ describe('SqlPreviewPanel', () => {
       expect(onCancel).toHaveBeenCalled()
 
       // Cleanup: resolve the promise to avoid warnings
-      act(() => {
+      await act(async () => {
         resolveQuery!(mockQueryResult)
       })
     })

@@ -43,18 +43,7 @@ function readText(p) {
 function readJson(p) {
   if (!p) return null;
   if (!fs.existsSync(p)) die(`Missing file: ${p}`);
-  const content = fs.readFileSync(p, "utf8").trim();
-  // Handle empty files gracefully (common when Oracle converges with 0 issues)
-  if (!content) {
-    console.log(`  Note: ${p} is empty, treating as no issues`);
-    return { issues: [] };
-  }
-  try {
-    return JSON.parse(content);
-  } catch (err) {
-    console.error(`  Warning: Failed to parse ${p}: ${err.message}`);
-    return { issues: [] };
-  }
+  return JSON.parse(fs.readFileSync(p, "utf8"));
 }
 
 /**
@@ -114,7 +103,7 @@ function parsePlanSeeds(planTxt) {
     // Match: - [ ] <tags> :: subject  OR  - [ ] tags :: subject
     // Also supports - [x] for pre-completed tasks
     // Supports both <tag1,tag2> and bare tag1,tag2 formats
-    const m = line.match(/^\s*-\s*\[\s*([xX ]?)\s*\]\s*(?:<(.+?)>|([A-Za-z0-9_.,\/\-\s]+?))\s*::\s*(.+?)\s*$/);
+    const m = line.match(/^\s*-\s*\[\s*([xX ]?)\s*\]\s*(?:<(.+?)>|([A-Za-z0-9_.,\/-\s]+?))\s*::\s*(.+?)\s*$/);
     if (!m) { 
       i++; 
       continue; 
@@ -147,7 +136,7 @@ function parsePlanSeeds(planTxt) {
       const l = lines[i];
       
       // Stop if we hit another task seed (either format, with [x] or [ ])
-      if (l.match(/^\s*-\s*\[\s*[xX ]?\s*\]\s*(?:<.+?>|[A-Za-z0-9_.,\/\-\s]+?)\s*::/)) break;
+      if (l.match(/^\s*-\s*\[\s*[xX ]?\s*\]\s*(?:<.+?>|[A-Za-z0-9_.,\/-\s]+?)\s*::/)) break;
       
       // Stop if we hit a new section header
       if (l.match(/^#+\s/)) break;
@@ -318,33 +307,26 @@ function issuesToTasks(issuesPayload, options = {}) {
   const tasks = [];
 
   for (const iss of rawIssues) {
-    // Skip nits unless explicitly included (case-insensitive, including synonyms)
-    const sevLower = String(iss.severity || '').toLowerCase();
-    const isNit = ['nit', 'trivial', 'cosmetic'].includes(sevLower);
-    if (isNit && !includeNits) continue;
+    // Skip nits unless explicitly included
+    if (iss.severity === "nit" && !includeNits) continue;
     
     const category = String(iss.category || "arch");
     const severity = String(iss.severity || "major");
     const title = String(iss.title || "Untitled issue");
     const subject = `[${category}/${severity}] ${title}`;
     const tags = [category, iss.lens].filter(Boolean).map(String);
-    const id = iss.id ? String(iss.id) : shaId(`issue:${subject}:${iss.evidence || ''}`);
-
-    // Handle potentially missing fields to avoid "undefined" in output
-    const evidence = String(iss.evidence ?? '').trim() || '(no evidence provided)';
-    const recommendation = String(iss.recommendation ?? '').trim() || '(no recommendation provided)';
-    const acceptanceTest = String(iss.acceptanceTest ?? '').trim() || '(no acceptance test provided)';
+    const id = iss.id ? String(iss.id) : shaId(`issue:${subject}:${iss.evidence}`);
 
     const description = `**Oracle Issue** (${category}, ${severity})
 
 **Evidence:**
-${evidence}
+${iss.evidence}
 
 **Recommendation:**
-${recommendation}
+${iss.recommendation}
 
 **Acceptance Test:**
-${acceptanceTest}`;
+${iss.acceptanceTest}`;
 
     tasks.push({
       id,

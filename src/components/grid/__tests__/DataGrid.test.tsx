@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { DataGrid, type DataGridProps } from '../DataGrid';
 import { ROW_HEIGHT, type SortState, type FilterState } from '../useDataGrid';
 import type { TableInfo, ColumnInfo } from '../../../types';
@@ -810,7 +811,7 @@ describe('DataGrid', () => {
     });
 
     it('updates existing filter when same column filter is changed', () => {
-      let currentFilterState: FilterState = [
+      const currentFilterState: FilterState = [
         { column: 'name', operator: 'contains', value: 'Rock' }
       ];
       const onFilterChange = vi.fn();
@@ -1148,6 +1149,7 @@ describe('DataGrid', () => {
     it('calls onAddRow when Add Row button is clicked (table with all defaults)', async () => {
       const onAddRow = vi.fn().mockResolvedValue({ success: true });
       const onRowAdded = vi.fn();
+      const user = userEvent.setup();
       render(
         <DataGrid
           tableInfo={tableWithDefaults}
@@ -1159,7 +1161,7 @@ describe('DataGrid', () => {
       );
 
       const addRowButton = screen.getByTestId('add-row-button');
-      fireEvent.click(addRowButton);
+      await user.click(addRowButton);
 
       await vi.waitFor(() => {
         expect(onAddRow).toHaveBeenCalledWith();
@@ -1168,6 +1170,7 @@ describe('DataGrid', () => {
 
     it('shows form when DEFAULT VALUES insert fails (NOT NULL no default)', async () => {
       const onAddRow = vi.fn().mockResolvedValue({ success: false, needsForm: true });
+      const user = userEvent.setup();
       render(
         <DataGrid
           tableInfo={tableWithRequired}
@@ -1178,7 +1181,7 @@ describe('DataGrid', () => {
       );
 
       const addRowButton = screen.getByTestId('add-row-button');
-      fireEvent.click(addRowButton);
+      await user.click(addRowButton);
 
       await vi.waitFor(() => {
         expect(screen.getByTestId('add-row-dialog')).toBeInTheDocument();
@@ -1191,6 +1194,7 @@ describe('DataGrid', () => {
 
     it('excludes generated columns from the form', async () => {
       const onAddRow = vi.fn().mockResolvedValue({ success: false, needsForm: true });
+      const user = userEvent.setup();
       render(
         <DataGrid
           tableInfo={tableWithGenerated}
@@ -1201,7 +1205,7 @@ describe('DataGrid', () => {
       );
 
       const addRowButton = screen.getByTestId('add-row-button');
-      fireEvent.click(addRowButton);
+      await user.click(addRowButton);
 
       await vi.waitFor(() => {
         expect(screen.getByTestId('add-row-dialog')).toBeInTheDocument();
@@ -1222,6 +1226,7 @@ describe('DataGrid', () => {
       const onAddRow = vi.fn()
         .mockResolvedValueOnce({ success: false, needsForm: true })
         .mockResolvedValueOnce({ success: true });
+      const user = userEvent.setup();
 
       render(
         <DataGrid
@@ -1233,7 +1238,7 @@ describe('DataGrid', () => {
       );
 
       // Open dialog
-      fireEvent.click(screen.getByTestId('add-row-button'));
+      await user.click(screen.getByTestId('add-row-button'));
 
       await vi.waitFor(() => {
         expect(screen.getByTestId('add-row-dialog')).toBeInTheDocument();
@@ -1241,7 +1246,7 @@ describe('DataGrid', () => {
 
       // Try to submit without filling required fields
       const submitButton = screen.getByTestId('add-row-submit');
-      fireEvent.click(submitButton);
+      await user.click(submitButton);
 
       // onAddRow should not be called again (form validation should block)
       await vi.waitFor(() => {
@@ -1257,6 +1262,7 @@ describe('DataGrid', () => {
       const onAddRow = vi.fn()
         .mockResolvedValueOnce({ success: false, needsForm: true })
         .mockResolvedValueOnce({ success: true });
+      const user = userEvent.setup();
 
       render(
         <DataGrid
@@ -1268,18 +1274,18 @@ describe('DataGrid', () => {
       );
 
       // Open dialog
-      fireEvent.click(screen.getByTestId('add-row-button'));
+      await user.click(screen.getByTestId('add-row-button'));
 
       await vi.waitFor(() => {
         expect(screen.getByTestId('add-row-dialog')).toBeInTheDocument();
       });
 
       // Fill required fields
-      fireEvent.change(screen.getByTestId('field-name'), { target: { value: 'Test Product' } });
-      fireEvent.change(screen.getByTestId('field-price'), { target: { value: '19.99' } });
+      await user.type(screen.getByTestId('field-name'), 'Test Product');
+      await user.type(screen.getByTestId('field-price'), '19.99');
 
       // Submit
-      fireEvent.click(screen.getByTestId('add-row-submit'));
+      await user.click(screen.getByTestId('add-row-submit'));
 
       await vi.waitFor(() => {
         expect(onAddRow).toHaveBeenCalledTimes(2);
@@ -1292,6 +1298,7 @@ describe('DataGrid', () => {
 
     it('closes dialog when Cancel is clicked', async () => {
       const onAddRow = vi.fn().mockResolvedValue({ success: false, needsForm: true });
+      const user = userEvent.setup();
 
       render(
         <DataGrid
@@ -1303,14 +1310,14 @@ describe('DataGrid', () => {
       );
 
       // Open dialog
-      fireEvent.click(screen.getByTestId('add-row-button'));
+      await user.click(screen.getByTestId('add-row-button'));
 
       await vi.waitFor(() => {
         expect(screen.getByTestId('add-row-dialog')).toBeInTheDocument();
       });
 
       // Click cancel
-      fireEvent.click(screen.getByTestId('add-row-cancel'));
+      await user.click(screen.getByTestId('add-row-cancel'));
 
       await vi.waitFor(() => {
         expect(screen.queryByTestId('add-row-dialog')).not.toBeInTheDocument();
@@ -1321,6 +1328,7 @@ describe('DataGrid', () => {
       const onAddRow = vi.fn()
         .mockResolvedValueOnce({ success: false, needsForm: true })
         .mockResolvedValueOnce({ success: false, error: 'Unique constraint violated' });
+      const user = userEvent.setup();
 
       render(
         <DataGrid
@@ -1332,18 +1340,18 @@ describe('DataGrid', () => {
       );
 
       // Open dialog
-      fireEvent.click(screen.getByTestId('add-row-button'));
+      await user.click(screen.getByTestId('add-row-button'));
 
       await vi.waitFor(() => {
         expect(screen.getByTestId('add-row-dialog')).toBeInTheDocument();
       });
 
       // Fill fields
-      fireEvent.change(screen.getByTestId('field-name'), { target: { value: 'Duplicate' } });
-      fireEvent.change(screen.getByTestId('field-price'), { target: { value: '10' } });
+      await user.type(screen.getByTestId('field-name'), 'Duplicate');
+      await user.type(screen.getByTestId('field-price'), '10');
 
       // Submit
-      fireEvent.click(screen.getByTestId('add-row-submit'));
+      await user.click(screen.getByTestId('add-row-submit'));
 
       await vi.waitFor(() => {
         expect(screen.getByTestId('add-row-error')).toHaveTextContent('Unique constraint violated');
@@ -1368,6 +1376,7 @@ describe('DataGrid', () => {
     it('calls onRowAdded after successful insert', async () => {
       const onAddRow = vi.fn().mockResolvedValue({ success: true });
       const onRowAdded = vi.fn();
+      const user = userEvent.setup();
 
       render(
         <DataGrid
@@ -1379,7 +1388,7 @@ describe('DataGrid', () => {
         />
       );
 
-      fireEvent.click(screen.getByTestId('add-row-button'));
+      await user.click(screen.getByTestId('add-row-button'));
 
       await vi.waitFor(() => {
         expect(onRowAdded).toHaveBeenCalledWith(1); // Index of new row
@@ -1690,6 +1699,7 @@ describe('DataGrid', () => {
     it('deletes multiple selected rows', async () => {
       const onDeleteRows = vi.fn().mockResolvedValue({ success: true, deletedCount: 2 });
       const onRowsDeleted = vi.fn();
+      const user = userEvent.setup();
       render(
         <DataGrid
           {...defaultProps}
@@ -1700,12 +1710,12 @@ describe('DataGrid', () => {
 
       // Select multiple rows using select all
       const selectAllCheckbox = screen.getByTestId('select-all-checkbox');
-      fireEvent.click(selectAllCheckbox);
+      await user.click(selectAllCheckbox);
 
       // Click delete button
       const deleteButton = screen.getByTestId('delete-rows-button');
       expect(deleteButton).toHaveTextContent('Delete (100)');
-      fireEvent.click(deleteButton);
+      await user.click(deleteButton);
 
       // Wait for dialog
       await vi.waitFor(() => {
@@ -1717,7 +1727,7 @@ describe('DataGrid', () => {
 
       // Click confirm
       const confirmButton = screen.getByTestId('delete-rows-confirm');
-      fireEvent.click(confirmButton);
+      await user.click(confirmButton);
 
       await vi.waitFor(() => {
         expect(onDeleteRows).toHaveBeenCalled();

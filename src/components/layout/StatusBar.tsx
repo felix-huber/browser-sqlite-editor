@@ -158,6 +158,9 @@ export function StatusBar({
       <footer
         className="h-7 bg-white border-t border-navy-200 flex items-center px-4 text-xs shrink-0"
         data-testid="status-bar"
+        role="status"
+        aria-label="Application status"
+        aria-live="polite"
       >
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5 text-navy-500 font-medium">

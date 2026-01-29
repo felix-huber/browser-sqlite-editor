@@ -42,15 +42,11 @@ interface FileSystemFileHandleWithSync extends FileSystemFileHandle {
 
 /** Application directory within OPFS root */
 const APP_DIR = 'sqlite-editor';
-
-/** Databases subdirectory */
-const DATABASES_DIR = 'databases';
-
 /** VFS name for OPFS */
-const OPFS_VFS_NAME = 'opfs-coop-sync';
+export const OPFS_VFS_NAME = 'opfs-coop-sync';
 
 /** VFS name for IDB fallback */
-const IDB_VFS_NAME = 'idb-batch-atomic';
+export const IDB_VFS_NAME = 'idb-batch-atomic';
 
 // =============================================================================
 // Types
@@ -92,19 +88,6 @@ export interface OPFSAvailability {
  * @returns Availability status with reason if unavailable
  */
 export async function checkOPFSAvailability(): Promise<OPFSAvailability> {
-  // Check if running in a Worker context
-  // We need to be in a Worker for sync access handles to work
-  const isWorker =
-    typeof self !== 'undefined' &&
-    typeof (self as unknown as { WorkerNavigator?: unknown }).WorkerNavigator !== 'undefined';
-
-  if (!isWorker) {
-    return {
-      available: false,
-      reason: 'OPFS sync access handles require Worker context',
-    };
-  }
-
   // Check for navigator.storage API
   if (typeof navigator === 'undefined' || !navigator.storage) {
     return {
@@ -167,9 +150,9 @@ export async function checkOPFSAvailability(): Promise<OPFSAvailability> {
 /**
  * Ensure the application directory structure exists in OPFS
  *
- * Creates: /sqlite-editor/databases/
+ * Creates: /sqlite-editor/
  *
- * @returns The databases directory handle
+ * @returns The app directory handle
  * @throws Error if directory creation fails
  */
 export async function ensureAppDirectories(): Promise<FileSystemDirectoryHandle> {
@@ -178,25 +161,22 @@ export async function ensureAppDirectories(): Promise<FileSystemDirectoryHandle>
   // Create app directory
   const appDir = await root.getDirectoryHandle(APP_DIR, { create: true });
 
-  // Create databases subdirectory
-  const dbDir = await appDir.getDirectoryHandle(DATABASES_DIR, { create: true });
-
-  return dbDir;
+  return appDir;
 }
 
 /**
  * Get the full OPFS path for a database file
  *
- * @param dbName Database name (without extension)
+ * @param dbName Database filename (with extension)
  * @returns Full path within OPFS
  */
 export function getOPFSPath(dbName: string): string {
   // Ensure consistent path format for OPFSCoopSyncVFS
-  return `/${APP_DIR}/${DATABASES_DIR}/${dbName}`;
+  return `/${APP_DIR}/${dbName}`;
 }
 
 /**
- * List all database files in the OPFS databases directory
+ * List all database files in the OPFS app directory
  *
  * @returns Array of database filenames
  */
@@ -208,6 +188,9 @@ export async function listOPFSDatabases(): Promise<string[]> {
     // @ts-expect-error - TypeScript doesn't know about async iterator on FileSystemDirectoryHandle
     for await (const entry of dbDir.values()) {
       if (entry.kind === 'file' && !entry.name.startsWith('.')) {
+        if (entry.name === 'registry.json' || entry.name.endsWith('.erd.json')) {
+          continue;
+        }
         // Skip journal and WAL files
         if (
           !entry.name.endsWith('-journal') &&
@@ -277,10 +260,24 @@ export async function initializeVFS(
       // Register as default VFS
       sqlite.vfs_register(vfs as unknown as Parameters<typeof sqlite.vfs_register>[0], true);
 
+      // Register IDB VFS as non-default fallback (enables opening IDB-backed DBs)
+      try {
+        const idbVfs = new IDBBatchAtomicVFS(IDB_VFS_NAME);
+        sqlite.vfs_register(
+          idbVfs as unknown as Parameters<typeof sqlite.vfs_register>[0],
+          false
+        );
+      } catch (err) {
+        console.warn(
+          'IDB VFS registration failed:',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+
       return {
         vfs,
         mode: 'opfs',
-        basePath: `/${APP_DIR}/${DATABASES_DIR}`,
+        basePath: `/${APP_DIR}`,
       };
     } catch (err) {
       // OPFS VFS creation failed, fall back to IDB

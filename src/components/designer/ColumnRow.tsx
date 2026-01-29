@@ -201,14 +201,9 @@ export const ColumnRow = memo(function ColumnRow({
 
   // Validate name on blur
   const handleNameBlur = useCallback(() => {
-    // validateColumnName handles the originalName check internally:
-    // - If column.name equals column.originalName, it skips the uniqueness check
-    // - Otherwise, it checks if column.name is in the existingNames list
-    //
-    // We pass existingColumnNames as-is because:
-    // - For new columns: the parent list won't contain this column's name (no originalName set)
-    // - For existing columns: the parent list contains originalName, and validateColumnName
-    //   handles the case where we're keeping the same name vs changing to a duplicate
+    // The parent (TableDesigner) passes existingColumnNames excluding this column's name,
+    // so we can safely check for duplicates without false positives from self-matching.
+    // For existing columns, originalName is used to allow keeping the same name.
     const result = validateColumnName(column.name, existingColumnNames, column.originalName);
     setNameError(result.valid ? null : result.error ?? null);
   }, [column.name, column.originalName, existingColumnNames]);

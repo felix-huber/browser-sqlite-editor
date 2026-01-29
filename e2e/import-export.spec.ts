@@ -22,7 +22,7 @@ import { test, expect, type Page } from '@playwright/test';
 /**
  * SQLite magic header (first 16 bytes)
  */
-const SQLITE_MAGIC = [
+const _SQLITE_MAGIC = [
   0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, // "SQLite f"
   0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00, // "ormat 3\0"
 ];
@@ -30,7 +30,7 @@ const SQLITE_MAGIC = [
 /**
  * UTF-8 BOM character
  */
-const UTF8_BOM = '\uFEFF';
+const _UTF8_BOM = '\uFEFF';
 
 /**
  * Clear all storage for clean test state
@@ -65,14 +65,14 @@ async function clearAllStorage(page: Page): Promise<void> {
 /**
  * Create a test database with sample data
  */
-async function createTestDatabaseWithData(
+async function _createTestDatabaseWithData(
   page: Page,
   dbName: string,
-  tableSQL: string,
-  insertSQL?: string[]
+  _tableSQL: string,
+  _insertSQL?: string[]
 ): Promise<void> {
   await page.evaluate(
-    async ({ dbName, tableSQL, insertSQL }) => {
+    async ({ dbName, _tableSQL, _insertSQL }) => {
       // Create registry entry
       const registryDb = await new Promise<IDBDatabase>((resolve, reject) => {
         const req = indexedDB.open('sqlite-editor-registry', 1);
@@ -172,7 +172,7 @@ async function createTestDatabaseWithData(
 
       sqliteDb.close();
     },
-    { dbName, tableSQL, insertSQL }
+    { dbName, _tableSQL, _insertSQL }
   );
 }
 

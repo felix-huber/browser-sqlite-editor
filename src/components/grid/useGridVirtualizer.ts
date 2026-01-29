@@ -17,8 +17,8 @@ import { ROW_HEIGHT } from './useDataGrid';
 export interface UseGridVirtualizerOptions {
   /** Total number of rows */
   rowCount: number;
-  /** Height of the visible viewport in pixels */
-  viewportHeight: number;
+  /** Height of the visible viewport in pixels (optional, TanStack Virtual auto-measures) */
+  viewportHeight?: number;
   /** Overscan count (rows to render outside visible area) */
   overscan?: number;
 }
@@ -53,7 +53,9 @@ export interface UseGridVirtualizerResult {
  * @returns Virtualizer instance and helper functions
  */
 export function useGridVirtualizer(options: UseGridVirtualizerOptions): UseGridVirtualizerResult {
-  const { rowCount, overscan = 5 } = options;
+  // Note: viewportHeight is passed for documentation/type-safety but TanStack Virtual
+  // measures the scroll container automatically. We destructure it to satisfy the interface.
+  const { rowCount, viewportHeight: _viewportHeight, overscan = 5 } = options;
 
   // Ref for the scrollable container
   const containerRef = useRef<HTMLDivElement>(null);

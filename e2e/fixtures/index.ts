@@ -7,20 +7,49 @@ import { test as base, expect } from '@playwright/test';
 export const test = base.extend<{
   /**
    * Clear OPFS and IndexedDB storage before each test.
-   * Currently a no-op placeholder for when storage is implemented.
    */
   clearStorage: void;
 }>({
-  clearStorage: [async ({ page }, use) => {
-    // Placeholder: will clear OPFS + IDB when implemented
-    // await page.evaluate(async () => {
-    //   // Clear IndexedDB databases
-    //   const dbs = await indexedDB.databases?.() ?? [];
-    //   for (const db of dbs) {
-    //     if (db.name) indexedDB.deleteDatabase(db.name);
-    //   }
-    //   // Clear OPFS would go here
-    // });
+  clearStorage: [async ({ page: _page }, use) => {
+    await _page.evaluate(async () => {
+      localStorage.clear();
+
+      const deleteIdb = (name: string): Promise<void> =>
+        new Promise((resolve) => {
+          const req = indexedDB.deleteDatabase(name);
+          req.onsuccess = () => resolve();
+          req.onerror = () => resolve();
+          req.onblocked = () => resolve();
+        });
+
+      const knownDbs = ['sqlite-editor-registry', 'idb-sqlite'];
+
+      if (typeof indexedDB.databases === 'function') {
+        const dbs = await indexedDB.databases();
+        for (const db of dbs) {
+          if (db.name) {
+            await deleteIdb(db.name);
+          }
+        }
+      } else {
+        for (const name of knownDbs) {
+          await deleteIdb(name);
+        }
+      }
+
+      if (navigator.storage?.getDirectory) {
+        try {
+          const root = await navigator.storage.getDirectory();
+          try {
+            await root.removeEntry('sqlite-editor', { recursive: true });
+          } catch {
+            // ignore missing dir
+          }
+        } catch {
+          // ignore OPFS errors
+        }
+      }
+    });
     await use();
   }, { auto: true }],
 });
@@ -32,7 +61,7 @@ export { expect };
  * Useful for waiting on WASM initialization or database operations.
  */
 export async function waitForReady(page: import('@playwright/test').Page) {
-  // Wait for app to be interactive
   await page.waitForLoadState('networkidle');
-  // Add app-specific ready checks here as needed
+  await page.waitForSelector('[data-testid="status-bar"]', { timeout: 15000 });
+  await expect(page.locator('[data-testid="status-bar"]')).toContainText('Ready');
 }

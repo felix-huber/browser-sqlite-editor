@@ -7,7 +7,7 @@
 
 import * as SQLite from '@journeyapps/wa-sqlite';
 import SQLiteESMFactory from '@journeyapps/wa-sqlite/dist/wa-sqlite-async.mjs';
-import { IDBBatchAtomicVFS } from '@journeyapps/wa-sqlite/src/examples/IDBBatchAtomicVFS.js';
+import { initializeVFS, type VFSInitResult } from './opfs-vfs';
 
 import type { QueryResult, QueryRow, WorkerErrorCode } from '../types';
 import {
@@ -141,7 +141,7 @@ function normalizeError(err: unknown, sql?: string): SQLiteError {
 export class DatabaseEngine {
   private sqlite3: ReturnType<typeof SQLite.Factory> | null = null;
   private db: number | null = null;
-  private vfs: IDBBatchAtomicVFS | null = null;
+  private vfs: VFSInitResult['vfs'] | null = null;
   private state: EngineState = 'uninitialized';
   private initPromise: Promise<void> | null = null;
   private dbName: string | null = null;
@@ -187,10 +187,9 @@ export class DatabaseEngine {
       // Build the SQLite API
       this.sqlite3 = SQLite.Factory(module);
 
-      // Create IndexedDB VFS for persistence
-      this.vfs = new IDBBatchAtomicVFS('wa-sqlite-vfs');
-      // Cast needed: IDBBatchAtomicVFS from examples doesn't perfectly match SQLiteVFS interface
-      this.sqlite3.vfs_register(this.vfs as unknown as Parameters<typeof this.sqlite3.vfs_register>[0], true);
+      // Initialize OPFS VFS with IDB fallback for persistence
+      const vfsInit = await initializeVFS(module, this.sqlite3);
+      this.vfs = vfsInit.vfs;
     } catch (err) {
       const normalized = normalizeError(err);
       throw new Error(`WASM initialization failed: ${normalized.message}`);
@@ -214,9 +213,15 @@ export class DatabaseEngine {
   /**
    * Open or create a database
    *
-   * @param name Database name (used as filename in VFS)
+   * @param name Database name or file path (used as filename in VFS)
+   * @param vfsName Optional VFS name override
+   * @param options Open options (readOnly / createIfMissing)
    */
-  async open(name: string): Promise<void> {
+  async open(
+    name: string,
+    vfsName?: string,
+    options?: { readOnly?: boolean; createIfMissing?: boolean }
+  ): Promise<void> {
     if (!this.isReady() || !this.sqlite3) {
       throw new Error('Engine not initialized. Call initialize() first.');
     }
@@ -227,16 +232,25 @@ export class DatabaseEngine {
     }
 
     try {
-      // Open with read/write/create flags
-      this.db = await this.sqlite3.open_v2(
-        name,
-        SQLite.SQLITE_OPEN_CREATE | SQLite.SQLITE_OPEN_READWRITE,
-      );
+      const readOnly = options?.readOnly ?? false;
+      const createIfMissing = options?.createIfMissing ?? false;
+
+      let flags = readOnly ? SQLite.SQLITE_OPEN_READONLY : SQLite.SQLITE_OPEN_READWRITE;
+      if (!readOnly && createIfMissing) {
+        flags |= SQLite.SQLITE_OPEN_CREATE;
+      }
+
+      this.db = await this.sqlite3.open_v2(name, flags, vfsName);
       this.dbName = name;
 
       // Set up progress handler for cancellation support
       // Check every 1000 VM instructions for cancel requests
       this.sqlite3.progress_handler(this.db, 1000, progressHandlerCallback, null);
+
+      // Enforce read-only at the connection level as a safety net
+      if (readOnly) {
+        await this.exec('PRAGMA query_only = ON');
+      }
     } catch (err) {
       const normalized = normalizeError(err);
       throw new Error(`Failed to open database '${name}': ${normalized.message}`);

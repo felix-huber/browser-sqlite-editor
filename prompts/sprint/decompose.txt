@@ -12,7 +12,13 @@ Given the project specification below, create a comprehensive sprint plan that:
    - Each sprint adds complete, testable functionality
    - After each sprint, something new can be demonstrated
 
-3. OUTPUT FORMAT (use this exact format):
+3. TEST-DRIVEN DEVELOPMENT (TDD):
+   - **Feature tasks** include UNIT TEST SPECIFICATIONS (tests written first)
+   - **E2E/Integration test tasks** are SEPARATE beads (depend on feature tasks)
+   - Unit tests define the contract BEFORE implementation
+   - Agent writes tests FIRST, then implements to pass them
+
+4. OUTPUT FORMAT (use this exact format):
 
 ## Sprint N: [Descriptive Goal]
 **Demo:** [What can be shown working after this sprint]
@@ -22,10 +28,11 @@ Given the project specification below, create a comprehensive sprint plan that:
 - [ ] <tags> :: Task title
   - **ID:** S{N}-T{M}
   - **Blocked by:** [task IDs this depends on, or "none"]
+  - **Unit Test Specs:** [for feature tasks - list specific test cases to write FIRST; omit for setup/chore/E2E beads]
   - **Verification:** [specific command, test, or behavior to verify]
   - **Deliverable:** [specific files or outputs]
 
-4. TAGGING CONVENTION:
+5. TAGGING CONVENTION:
    - setup, core: Project initialization, configuration
    - types, core: Type definitions, interfaces
    - api, backend: Server-side, API endpoints
@@ -35,13 +42,13 @@ Given the project specification below, create a comprehensive sprint plan that:
    - docs: Documentation
    - ci, ops: CI/CD, deployment
 
-5. DEPENDENCY RULES:
+6. DEPENDENCY RULES:
    - Tasks within a sprint can depend on each other
    - Later sprints depend on earlier sprints completing
    - Minimize cross-sprint dependencies
    - Foundation tasks (types, setup) come first
 
-6. VERIFICATION EXAMPLES:
+7. VERIFICATION EXAMPLES:
    - "npm run build succeeds"
    - "npm run test:unit passes"
    - "curl localhost:3000/api/health returns 200"

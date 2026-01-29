@@ -9,8 +9,23 @@ implementing these things!
 
 DO NOT OVERSIMPLIFY THINGS! DO NOT LOSE ANY FEATURES OR FUNCTIONALITY!
 
-Also, make sure that as part of these beads, we include comprehensive
-unit tests and e2e test scripts with great, detailed logging so we can
+## TDD Verification (Critical!)
+For each FEATURE bead, verify:
+- Does it have UNIT TEST SPECS section listing specific tests to write first?
+- Are the test cases specific enough to guide implementation?
+- Do they cover happy path, edge cases, and error handling?
+
+For INTEGRATION/E2E test beads:
+- Do they have proper dependencies on the feature beads they test?
+- Are the scenarios clearly defined?
+
+If a feature bead is missing unit test specs, ADD THEM NOW.
+
+Also, make sure that we have dedicated beads for:
+- Integration tests (test module interactions)
+- E2E test scripts (test full user flows)
+
+All test beads should have great, detailed logging so we can
 be sure that everything is working perfectly after implementation.
 
 Remember to ONLY use the `br` tool to create and modify the beads and

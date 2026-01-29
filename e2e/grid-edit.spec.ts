@@ -21,7 +21,7 @@ import { test, expect, type Page } from '@playwright/test';
 /**
  * SQLite magic header (first 16 bytes)
  */
-const SQLITE_MAGIC = [
+const _SQLITE_MAGIC = [
   0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, // "SQLite f"
   0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00, // "ormat 3\0"
 ];
@@ -29,12 +29,12 @@ const SQLITE_MAGIC = [
 /**
  * Create a valid SQLite database file (minimal but valid header + page)
  */
-function createValidSqliteBytes(pageSize = 4096): Uint8Array {
+function _createValidSqliteBytes(pageSize = 4096): Uint8Array {
   const bytes = new Uint8Array(pageSize);
 
   // SQLite file header (first 100 bytes)
-  for (let i = 0; i < SQLITE_MAGIC.length; i++) {
-    bytes[i] = SQLITE_MAGIC[i];
+  for (let i = 0; i < _SQLITE_MAGIC.length; i++) {
+    bytes[i] = _SQLITE_MAGIC[i];
   }
   // Page size (bytes 16-17): 4096 = 0x1000 (big-endian)
   bytes[16] = 0x10;
@@ -97,13 +97,13 @@ async function clearAllStorage(page: Page): Promise<void> {
  * Create a test database with sample table via the app's functionality
  * Returns the database name
  */
-async function createTestDatabase(
+async function _createTestDatabase(
   page: Page,
   dbName: string,
-  tableSQL: string
+  _tableSQL: string
 ): Promise<string> {
   const result = await page.evaluate(
-    async ({ dbName, tableSQL }): Promise<{ success: boolean; error?: string }> => {
+    async ({ dbName, _tableSQL }): Promise<{ success: boolean; error?: string }> => {
       try {
         // Create registry entry
         const registryDb = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -159,9 +159,7 @@ async function createTestDatabase(
 
         registryDb.close();
 
-        // Store a valid SQLite file in idb-sqlite
-        // We need to create an actual SQLite database via the worker
-        // For now, create a placeholder entry
+        // Store a minimal SQLite file in idb-sqlite for registry hydration
         const sqliteDb = await new Promise<IDBDatabase>((resolve, reject) => {
           const req = indexedDB.open('idb-sqlite', 1);
           req.onerror = () => reject(req.error);
@@ -216,7 +214,7 @@ async function createTestDatabase(
         return { success: false, error: err instanceof Error ? err.message : String(err) };
       }
     },
-    { dbName, tableSQL }
+    { dbName, _tableSQL }
   );
 
   if (!result.success) {
@@ -229,7 +227,7 @@ async function createTestDatabase(
 /**
  * Execute SQL on the currently open database (via SQL Editor panel)
  */
-async function executeSQL(page: Page, sql: string): Promise<void> {
+async function _executeSQL(page: Page, sql: string): Promise<void> {
   // Look for the SQL editor panel
   const sqlPanel = page.locator('[data-testid="sql-editor-panel"]');
   if (await sqlPanel.isVisible().catch(() => false)) {

@@ -32,16 +32,26 @@ fi
 
 # Try to run the Node.js script
 if command -v node &> /dev/null; then
-  # IMPORTANT: check_blockers.js intentionally exits non-zero when blockers are found.
-  # We still need its JSON payload, so we must not replace the output on non-zero exit.
   set +e
   result=$(node "$SCRIPT_DIR/check_blockers.js" "$TARGET" 2>/dev/null)
+  node_status=$?
   set -e
-  if [[ -z "${result:-}" ]]; then
-    result='{"canProceed":true,"message":"Check failed - proceeding"}'
+
+  if [[ -z "$result" ]]; then
+    if [[ "$node_status" == "1" ]]; then
+      result='{"canProceed":false,"message":"⚠️  BLOCKERS found - must fix before proceeding"}'
+    else
+      result='{"canProceed":true,"message":"Check failed - proceeding"}'
+    fi
   fi
+
   message=$(echo "$result" | jq -r '.message // "Unknown"' 2>/dev/null || echo "Check complete")
   canProceed=$(echo "$result" | jq -r '.canProceed // true' 2>/dev/null || echo "true")
+
+  if [[ "$node_status" == "1" && "$canProceed" != "false" ]]; then
+    message="⚠️  BLOCKERS found - must fix before proceeding"
+    canProceed="false"
+  fi
   
   echo "$message"
   
@@ -55,8 +65,7 @@ fi
 if command -v jq &> /dev/null; then
   if [[ -f "$TARGET" ]]; then
     # Handle both { issues: [...] } and top-level array formats
-    # Use ascii_downcase for case-insensitive matching (blocker, Blocker, BLOCKER, critical, etc.)
-    blockers=$(jq 'if type == "array" then . else .issues // [] end | map(select((.severity // "") | ascii_downcase | test("^(blocker|critical|sev0|p0|urgent)$"))) | length' "$TARGET" 2>/dev/null || echo "0")
+    blockers=$(jq 'if type == "array" then . else .issues // [] end | map(select(.severity == "blocker")) | length' "$TARGET" 2>/dev/null || echo "0")
     if [[ "$blockers" == "0" ]]; then
       echo "No blockers found - proceeding"
       exit 0
@@ -72,7 +81,7 @@ if command -v jq &> /dev/null; then
       exit 0
     fi
     # Handle both { issues: [...] } and top-level array formats
-    blockers=$(jq 'if type == "array" then . else .issues // [] end | map(select((.severity // "") | ascii_downcase | test("^(blocker|critical|sev0|p0|urgent)$"))) | length' "$latest" 2>/dev/null || echo "0")
+    blockers=$(jq 'if type == "array" then . else .issues // [] end | map(select(.severity == "blocker")) | length' "$latest" 2>/dev/null || echo "0")
     if [[ "$blockers" == "0" ]]; then
       echo "No blockers found - proceeding"
       exit 0

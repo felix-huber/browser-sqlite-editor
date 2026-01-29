@@ -53,14 +53,16 @@ export function FKEdgeContextMenu({
   const handleEdit = useCallback(() => {
     if (!isReadOnly) {
       onEdit()
+      onClose()
     }
-  }, [isReadOnly, onEdit])
+  }, [isReadOnly, onEdit, onClose])
 
   const handleDelete = useCallback(() => {
     if (!isReadOnly) {
       onDelete()
+      onClose()
     }
-  }, [isReadOnly, onDelete])
+  }, [isReadOnly, onDelete, onClose])
 
   const handleShowInDesigner = useCallback(() => {
     onShowInDesigner()

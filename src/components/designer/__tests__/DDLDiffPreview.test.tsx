@@ -256,9 +256,7 @@ describe('getAffectedObjects', () => {
 // =============================================================================
 
 describe('trigger affected', () => {
-  it('shows in affected objects list (placeholder - triggers would come from worker)', () => {
-    // Note: In a real implementation, trigger information would be passed from the worker
-    // This test validates the UI rendering capability
+  it('shows in affected objects list with mocked trigger metadata', () => {
     const existingTable = createExistingTable();
     const columns: DesignerColumnDraft[] = [
       createColumn({ name: 'id', type: 'INTEGER', isPrimaryKey: true, isExisting: true, originalName: 'id' }),

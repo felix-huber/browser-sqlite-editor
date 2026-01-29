@@ -103,8 +103,7 @@ export function getShortcutDisplay(shortcut: Pick<KeyboardShortcut, 'key' | 'met
 
   // Format the key nicely
   let keyDisplay = shortcut.key;
-  if (keyDisplay === ',') keyDisplay = ',';
-  else if (keyDisplay === 'Enter') keyDisplay = '↩';
+  if (keyDisplay === 'Enter') keyDisplay = '↩';
   else if (keyDisplay === 'Escape') keyDisplay = 'Esc';
   else if (keyDisplay === 'ArrowUp') keyDisplay = '↑';
   else if (keyDisplay === 'ArrowDown') keyDisplay = '↓';
@@ -352,6 +351,9 @@ export function useKeyboardShortcuts(shortcuts: KeyboardShortcut[]): void {
   const shortcutsRef = useRef(shortcuts);
   shortcutsRef.current = shortcuts;
 
+  // Create a stable dependency string for the effect
+  const shortcutsDep = shortcuts.map(s => `${s.id}:${s.key}:${s.meta}:${s.shift}:${s.alt}:${s.scope}`).join('|');
+
   useEffect(() => {
     // Create wrapper shortcuts that use current ref values
     const unregisters = shortcutsRef.current.map((shortcut) => {
@@ -367,7 +369,7 @@ export function useKeyboardShortcuts(shortcuts: KeyboardShortcut[]): void {
     });
 
     return () => unregisters.forEach(fn => fn());
-  }, [shortcuts.map(s => `${s.id}:${s.key}:${s.meta}:${s.shift}:${s.alt}:${s.scope}`).join('|')]);
+  }, [shortcutsDep]);
 }
 
 /**
@@ -464,7 +466,10 @@ export function useGlobalShortcutHandlers(handlers: GlobalShortcutHandlers): voi
   useEffect(() => {
     const unregisters = shortcuts().map(s => registerShortcut(s));
     return () => unregisters.forEach(fn => fn());
-  }, [shortcuts, handlers]);
+  // Note: We intentionally don't include handlers in dependencies.
+  // The handlersRef pattern ensures we always call the latest handler.
+   
+  }, [shortcuts]);
 }
 
 // =============================================================================
@@ -527,7 +532,10 @@ export function useSqlEditorShortcuts(handlers: SqlEditorShortcutHandlers, isAct
       unregister();
       deactivateScope();
     };
-  }, [isActive, handlers.onExecute, handlers.onExecuteExplain, handlers.onCancel]);
+  // Note: We intentionally don't include handlers in dependencies.
+  // The handlersRef pattern ensures we always call the latest handler.
+   
+  }, [isActive]);
 }
 
 // =============================================================================
@@ -652,5 +660,8 @@ export function useDataGridShortcuts(handlers: DataGridShortcutHandlers, isActiv
       unregister();
       deactivateScope();
     };
-  }, [isActive, handlers]);
+  // Note: We intentionally don't include handlers in dependencies.
+  // The handlersRef pattern ensures we always call the latest handler.
+   
+  }, [isActive]);
 }

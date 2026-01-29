@@ -10,7 +10,7 @@ function el(tag, attrs = {}, ...kids) {
     else e.setAttribute(k, v);
   }
   for (const kid of kids) {
-    if (kid == null) continue;
+    if (kid === null || kid === undefined) continue;
     e.appendChild(typeof kid === "string" ? document.createTextNode(kid) : kid);
   }
   return e;
@@ -78,8 +78,7 @@ function bucketize(tasks) {
     pending: [],
     blocked: [],
     in_progress: [],
-    completed: [],
-    failed: []
+    completed: []
   };
   
   for (const t of tasks) {
@@ -98,12 +97,12 @@ function bucketize(tasks) {
 }
 
 function renderCard(task) {
-  // Normalize severity to lowercase for CSS class matching
-  const severityClass = (task.severity || "").toLowerCase();
+  const severityClass = task.severity || "";
+  const sourceClass = task.source || "";
   
   const pills = [];
   if (task.severity) {
-    pills.push(el("span", { class: `pill ${severityClass}` }, task.severity));
+    pills.push(el("span", { class: `pill ${task.severity}` }, task.severity));
   }
   if (task.source) {
     pills.push(el("span", { class: `pill ${task.source}` }, task.source));
@@ -158,7 +157,6 @@ function render(state) {
   board.appendChild(renderColumn("Blocked", tasksByCol.blocked, "⏳"));
   board.appendChild(renderColumn("In Progress", tasksByCol.in_progress, "🔄"));
   board.appendChild(renderColumn("Completed", tasksByCol.completed, "✅"));
-  board.appendChild(renderColumn("Failed", tasksByCol.failed, "❌"));
   
   // Summary
   const counts = meta.counts || {};
@@ -179,7 +177,6 @@ function buildReport(state) {
     `- Blocked: ${tasksByCol.blocked.length}`,
     `- In Progress: ${tasksByCol.in_progress.length}`,
     `- Completed: ${tasksByCol.completed.length}`,
-    `- Failed: ${tasksByCol.failed.length}`,
     ""
   ];
   
@@ -201,7 +198,6 @@ function buildReport(state) {
   addSection("⏳ Blocked", tasksByCol.blocked);
   addSection("📋 Pending", tasksByCol.pending);
   addSection("✅ Completed", tasksByCol.completed);
-  addSection("❌ Failed", tasksByCol.failed);
   
   return lines.join("\n");
 }

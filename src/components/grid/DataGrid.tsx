@@ -1138,7 +1138,7 @@ export const DataGrid = memo(function DataGrid({
       onSelectionChange?.(next);
       return next;
     });
-  }, [data.length, onSelectionChange, isReadOnly]);
+  }, [data, onSelectionChange, isReadOnly]);
 
   // Get filter for a specific column
   const getFilter = useCallback(

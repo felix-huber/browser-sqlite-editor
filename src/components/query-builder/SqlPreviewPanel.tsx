@@ -11,7 +11,7 @@
  * - Execution time display
  */
 
-import { memo, useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { memo, useState, useCallback, useMemo, useRef } from 'react'
 import { CodeMirrorEditor } from '../sql/CodeMirrorEditor'
 import { SqlResultsDisplay, type StatementResult } from '../sql/SqlResultsDisplay'
 import type { QueryResult, SqlError } from '../../types'
@@ -172,14 +172,6 @@ function SqlPreviewPanelComponent({
   const [executionTime, setExecutionTime] = useState<number | null>(null)
   const [copyFeedback, setCopyFeedback] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
-
-  // Clear results when SQL changes significantly
-  useEffect(() => {
-    // Only clear if we have results and SQL changed
-    if (results.length > 0 && sql.trim() !== '') {
-      // Don't clear immediately, just mark as stale if needed
-    }
-  }, [sql, results.length])
 
   // Handle query execution
   const handleExecute = useCallback(async () => {

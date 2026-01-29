@@ -372,8 +372,8 @@ export function ERDCanvas({
       setEditingFK(fkData)
       setEditDialogOpen(true)
     }
-    closeContextMenu()
-  }, [contextMenu.edgeId, getFKDataFromEdge, closeContextMenu])
+    // Note: context menu is closed by FKEdgeContextMenu after calling this
+  }, [contextMenu.edgeId, getFKDataFromEdge])
 
   /**
    * Handle delete FK from context menu
@@ -386,8 +386,8 @@ export function ERDCanvas({
       setDeletingFK(fkData)
       setDeleteDialogOpen(true)
     }
-    closeContextMenu()
-  }, [contextMenu.edgeId, getFKDataFromEdge, closeContextMenu])
+    // Note: context menu is closed by FKEdgeContextMenu after calling this
+  }, [contextMenu.edgeId, getFKDataFromEdge])
 
   /**
    * Handle show in table designer from context menu
@@ -399,8 +399,8 @@ export function ERDCanvas({
     if (fkData) {
       onShowInDesigner?.(fkData.childTable)
     }
-    closeContextMenu()
-  }, [contextMenu.edgeId, getFKDataFromEdge, onShowInDesigner, closeContextMenu])
+    // Note: context menu is closed by FKEdgeContextMenu after calling this
+  }, [contextMenu.edgeId, getFKDataFromEdge, onShowInDesigner])
 
   /**
    * Handle edge edit (double-click)

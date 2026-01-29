@@ -342,8 +342,8 @@ export function sqlAutocomplete(
           span.className = 'cm-completionLabel';
           span.textContent = completion.label;
 
-          // Add generated column indicator
-          if (completion.type === 'function' && completion.detail?.includes('generated')) {
+          // Add generated column indicator (generated columns use 'function' type and have stored/virtual in detail)
+          if (completion.type === 'function' && (completion.detail?.includes('stored') || completion.detail?.includes('virtual'))) {
             const indicator = document.createElement('span');
             indicator.className = 'cm-completion-generated';
             indicator.textContent = ' ⚡';

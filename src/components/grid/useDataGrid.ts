@@ -800,7 +800,11 @@ export function useDataGrid(options: UseDataGridOptions): UseDataGridResult {
 // =============================================================================
 
 declare module '@tanstack/react-table' {
-  interface ColumnMeta<TData extends RowData, TValue> {
+  type ColumnMetaTypeMarker<TData extends RowData, TValue> = Record<never, TData | TValue>;
+
+  type TableMetaTypeMarker<TData extends RowData> = Record<never, TData>;
+
+  interface ColumnMeta<TData extends RowData, TValue> extends ColumnMetaTypeMarker<TData, TValue> {
     type?: string;
     isPrimaryKey?: boolean;
     isNotNull?: boolean;
@@ -808,7 +812,7 @@ declare module '@tanstack/react-table' {
     generatedType?: 'stored' | 'virtual' | null;
   }
 
-  interface TableMeta<TData extends RowData> {
+  interface TableMeta<TData extends RowData> extends TableMetaTypeMarker<TData> {
     isReadOnly?: boolean;
     pagination?: PaginationState;
     rowHeight?: number;

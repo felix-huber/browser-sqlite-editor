@@ -40,9 +40,16 @@ export interface GridSkeletonProps {
 /**
  * Single skeleton cell with shimmer animation
  */
-const SkeletonCell = memo(function SkeletonCell({ width }: { width: number }) {
+const SkeletonCell = memo(function SkeletonCell({
+  width,
+  seed
+}: {
+  width: number;
+  seed: number;
+}) {
   // Vary the content width for visual variety (40-80% of cell)
-  const contentWidthPercent = 40 + Math.random() * 40;
+  // Use deterministic calculation based on seed to avoid re-render jitter
+  const contentWidthPercent = 40 + ((seed * 17) % 40);
 
   return (
     <div
@@ -102,7 +109,7 @@ const SkeletonRow = memo(function SkeletonRow({
 
       {/* Data cells */}
       {columnWidths.map((width, colIndex) => (
-        <SkeletonCell key={colIndex} width={width} />
+        <SkeletonCell key={colIndex} width={width} seed={rowIndex * 100 + colIndex} />
       ))}
     </div>
   );

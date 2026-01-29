@@ -41,15 +41,25 @@ You are implementing a specific task from a development plan.
 
 ## Instructions
 
+### TDD Workflow (for feature tasks with Unit Test Specs)
+If this task has UNIT TEST SPECS in the description:
+1. Create test file FIRST with all specified tests
+2. Run tests - they should FAIL (red phase)
+3. Implement code to make tests pass (green phase)
+4. Refactor if needed
+5. Continue to verification below
+
+### Standard Workflow
 1. Read `progress.txt` for learnings from previous tasks
 2. Examine all relevant files & dependencies first
 3. If anything is ambiguous, check the plan and UX spec
 4. Implement changes for ALL acceptance criteria
-5. Keep work **atomic and committable**
-6. For each file: read first, edit carefully, preserve formatting
-7. Run verification commands
-8. If pass, commit with message: `feat({{task_id}}): {{subject}}`
-9. Append learnings to `progress.txt`
+5. Write any additional unit tests for edge cases discovered
+6. Keep work **atomic and committable**
+7. For each file: read first, edit carefully, preserve formatting
+8. Run verification commands
+9. If pass, commit with message: `feat({{task_id}}): {{subject}}`
+10. Append learnings to `progress.txt`
 
 ## Critical Rules
 

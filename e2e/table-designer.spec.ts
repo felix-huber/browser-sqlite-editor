@@ -21,7 +21,7 @@ import { test, expect, type Page } from '@playwright/test';
 /**
  * SQLite magic header (first 16 bytes)
  */
-const SQLITE_MAGIC = [
+const _SQLITE_MAGIC = [
   0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, // "SQLite f"
   0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00, // "ormat 3\0"
 ];
@@ -29,12 +29,12 @@ const SQLITE_MAGIC = [
 /**
  * Create a valid SQLite database file header
  */
-function createValidSqliteBytes(pageSize = 4096): Uint8Array {
+function _createValidSqliteBytes(pageSize = 4096): Uint8Array {
   const bytes = new Uint8Array(pageSize);
 
   // SQLite file header (first 100 bytes)
-  for (let i = 0; i < SQLITE_MAGIC.length; i++) {
-    bytes[i] = SQLITE_MAGIC[i];
+  for (let i = 0; i < _SQLITE_MAGIC.length; i++) {
+    bytes[i] = _SQLITE_MAGIC[i];
   }
   bytes[16] = 0x10;
   bytes[17] = 0x00;
@@ -94,7 +94,7 @@ async function clearAllStorage(page: Page): Promise<void> {
 /**
  * Create a test database with the app's functionality and open it
  */
-async function createAndOpenTestDatabase(page: Page, dbName: string): Promise<void> {
+async function _createAndOpenTestDatabase(page: Page, dbName: string): Promise<void> {
   // Click the new database button
   const newDbButton = page.locator('[data-testid="header-new-database-button"]');
   await expect(newDbButton).toBeVisible();

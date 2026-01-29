@@ -4,13 +4,6 @@ set -euo pipefail
 # Oracle Lens Pack Runner
 # Runs all 8 review lenses for a given phase using Oracle browser mode.
 #
-# ⚠️⚠️⚠️ IMPORTANT: MODEL SELECTION ⚠️⚠️⚠️
-# This script MUST use ChatGPT 5.2 PRO!
-#
-# ✅ CORRECT: GPT-5.2 Pro (Extended Thinking is fine!)
-# ❌ WRONG:   o3 / o1 / o1-pro (reasoning models)
-# ❌ WRONG:   GPT-4 / GPT-4o (older models)
-#
 # Usage:
 #   ./scripts/oracle_lens_pack.sh <kind: prd|ux|plan|code> <file1> [file2...]
 #
@@ -24,8 +17,6 @@ shift || true
 if [[ -z "$KIND" || "$#" -lt 1 ]]; then
   echo "Usage: ./scripts/oracle_lens_pack.sh <kind: prd|ux|plan|code> <file1> [file2...]"
   echo ""
-  echo "⚠️  IMPORTANT: Ensure ChatGPT is set to GPT-5.2 PRO (not o1/o3/GPT-4)"
-  echo ""
   echo "Kinds:"
   echo "  prd  — Review product requirements"
   echo "  ux   — Review UX specification"
@@ -36,10 +27,6 @@ if [[ -z "$KIND" || "$#" -lt 1 ]]; then
   echo "  ./scripts/oracle_lens_pack.sh prd artifacts/01-prd.md artifacts/00-brief.md"
   exit 1
 fi
-
-echo ""
-echo "⚠️  MODEL CHECK: Ensure ChatGPT is set to GPT-5.2 PRO (not o1/o3/GPT-4)"
-echo ""
 
 # Validate kind
 case "$KIND" in

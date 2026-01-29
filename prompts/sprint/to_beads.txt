@@ -9,6 +9,18 @@ Include in EVERY bead description:
 - DEPENDENCIES: What must be done first and why
 - IMPLEMENTATION NOTES: Gotchas, patterns to follow, edge cases
 
+FOR FEATURE BEADS ONLY (not setup/chore/E2E beads):
+- UNIT TEST SPECS: Specific test cases to write FIRST (TDD)
+
+TDD WORKFLOW:
+For feature beads, agent should:
+1. Write unit tests FIRST based on specs
+2. Run tests (they should FAIL - red)
+3. Implement code to make tests pass (green)
+4. Refactor if needed
+
+Note: E2E/Integration tests remain as SEPARATE beads with dependencies on feature beads.
+
 OUTPUT REQUIREMENTS:
 1. Create epics for each sprint
 2. Create tasks under each epic with RICH descriptions
@@ -25,9 +37,18 @@ br create "Sprint 1: Foundation" -t epic -p 1 --json
 br create "Task title" -t task -p 2 --parent bd-xxxxx \
   --description "CONTEXT: Part of Sprint 1 - Foundation layer.
 
+UNIT TEST SPECS (write these FIRST):
+\`\`\`typescript
+describe('ModuleName', () => {
+  it('does expected behavior A')
+  it('handles edge case B')
+  it('throws on invalid input C')
+})
+\`\`\`
+
 DELIVERABLE: src/types/index.ts with all core interfaces
 
-VERIFICATION: npm run typecheck && npm run test
+VERIFICATION: npm run test -- ModuleName && npm run typecheck
 
 DEPENDENCIES: Requires S1-T1 (project setup) to be complete
 
@@ -37,9 +58,9 @@ IMPLEMENTATION NOTES:
 - Add JSDoc comments for IDE support
 
 ACCEPTANCE CRITERIA:
-- [ ] All interfaces defined
-- [ ] Types compile without errors
-- [ ] Tests pass" \
+- [ ] Unit tests written first (TDD)
+- [ ] All unit tests pass
+- [ ] Types compile without errors" \
   --json
 
 # Add dependency (child depends on parent)
@@ -93,10 +114,49 @@ VERIFICATION: npm install && npm run dev
 IMPLEMENTATION NOTES:
 - Use Vite for build tooling
 - Enable strict TypeScript
-- Set up path aliases" \
+- Set up path aliases
+- Configure test runner (vitest)
+
+ACCEPTANCE CRITERIA:
+- [ ] Project scaffolded
+- [ ] npm run dev starts without errors
+- [ ] Test runner configured" \
   --json | jq -r '.id')
 br label add "$S1T1" setup core
 echo "  Task: $S1T1"
+
+# Example FEATURE bead (with unit test specs - TDD)
+S1T2=$(br create "Implement item store" -t task -p 2 --parent "$S1" \
+  --description "CONTEXT: Core state management for items.
+
+UNIT TEST SPECS (write these FIRST):
+\`\`\`typescript
+describe('itemStore', () => {
+  it('starts with empty items array')
+  it('addItem appends to items')
+  it('removeItem filters out by id')
+  it('getItem returns item by id or undefined')
+})
+\`\`\`
+
+DELIVERABLE: src/stores/itemStore.ts
+
+VERIFICATION: npm run test -- itemStore
+
+DEPENDENCIES: S1-T1 (project setup)
+
+IMPLEMENTATION NOTES:
+- Use Zustand or simple useState
+- Keep it minimal
+
+ACCEPTANCE CRITERIA:
+- [ ] Unit tests written first (TDD)
+- [ ] All 4 tests pass
+- [ ] Store exports addItem, removeItem, getItem" \
+  --json | jq -r '.id')
+br dep add "$S1T2" "$S1T1"
+br label add "$S1T2" state core
+echo "  Task: $S1T2"
 
 # Continue for all tasks...
 

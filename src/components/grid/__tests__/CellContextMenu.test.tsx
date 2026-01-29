@@ -184,6 +184,34 @@ describe('CellContextMenu', () => {
 
       expect(screen.getByRole('tooltip')).toHaveTextContent('Generated columns cannot be edited');
     });
+
+    it('disables Paste for BLOB columns', () => {
+      render(
+        <CellContextMenu
+          {...defaultProps}
+          columnInfo={mockColumn('data', 'BLOB')}
+          cellValue={new Uint8Array([1, 2, 3])}
+        />
+      );
+
+      const pasteItem = screen.getByTestId('cell-context-menu-item-paste');
+      expect(pasteItem).toHaveAttribute('aria-disabled', 'true');
+    });
+
+    it('shows tooltip when Paste is disabled due to BLOB column', () => {
+      render(
+        <CellContextMenu
+          {...defaultProps}
+          columnInfo={mockColumn('data', 'BLOB')}
+          cellValue={new Uint8Array([1, 2, 3])}
+        />
+      );
+
+      const pasteItem = screen.getByTestId('cell-context-menu-item-paste');
+      fireEvent.mouseEnter(pasteItem);
+
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Cannot paste into BLOB columns');
+    });
   });
 
   describe('Set NULL Action', () => {

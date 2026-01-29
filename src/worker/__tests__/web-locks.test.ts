@@ -49,7 +49,8 @@ function createMockAdapter(state: MockLockState): LockManagerAdapter {
       // Check if lock is already held
       if (state.heldLocks.has(name)) {
         if (ifAvailable) {
-          // Return immediately without calling callback
+          // ifAvailable should invoke callback with null when lock isn't acquired
+          await callback(null);
           return;
         }
         // Queue the request
@@ -90,7 +91,7 @@ function createMockAdapter(state: MockLockState): LockManagerAdapter {
       }
 
       // Call the callback
-      await callback();
+      await callback({ name } as Lock);
       await releasePromise;
     }),
     queryLock: vi.fn(async (name): Promise<LockManagerSnapshot | null> => {

@@ -99,20 +99,21 @@ export function ImportProgress({
   const onConfirmImportRef = useRef(onConfirmImport);
   onConfirmImportRef.current = onConfirmImport;
 
-  // Track whether we've already triggered the import for this file
-  const importTriggeredRef = useRef(false);
+  // Track which file we've triggered import for (to prevent duplicates)
+  const importTriggeredForRef = useRef<File | null>(null);
 
   // Check for warnings when file changes
   useEffect(() => {
     if (!file) {
       setShowConfirmation(false);
       setWarningType(null);
-      importTriggeredRef.current = false;
+      importTriggeredForRef.current = null;
       return;
     }
 
     // Prevent duplicate import triggers for the same file
-    if (importTriggeredRef.current) {
+    // (e.g., if effect runs twice due to React strict mode or storageEstimate change)
+    if (importTriggeredForRef.current === file) {
       return;
     }
 
@@ -132,7 +133,7 @@ export function ImportProgress({
       // No warnings, start import directly
       setWarningType(null);
       setShowConfirmation(false);
-      importTriggeredRef.current = true;
+      importTriggeredForRef.current = file;
       onConfirmImportRef.current();
     }
   }, [file, storageEstimate]);
@@ -165,9 +166,9 @@ export function ImportProgress({
 
   const handleConfirm = useCallback(() => {
     setShowConfirmation(false);
-    importTriggeredRef.current = true;
+    importTriggeredForRef.current = file;
     onConfirmImport();
-  }, [onConfirmImport]);
+  }, [file, onConfirmImport]);
 
   const handleCancel = useCallback(() => {
     setShowConfirmation(false);

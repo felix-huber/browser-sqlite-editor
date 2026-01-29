@@ -20,7 +20,12 @@ Specific checks:
 5. Is the code readable and maintainable?
 6. Are there any security issues?
 7. Is performance acceptable?
-8. Do tests cover the new code?
+8. **UNIT TESTS**: Do tests exist and cover the new code?
+   - Happy path (normal operation)
+   - Edge cases (boundaries, empty inputs)
+   - Error paths (invalid inputs, exceptions)
+   - If NO tests exist for new feature code, CREATE THEM NOW
+   - (Setup/chore tasks may not need unit tests)
 
 After review, report:
 - Issues found and fixed

@@ -1,16 +1,6 @@
 #!/bin/bash
 # oracle_converge.sh - FULLY AUTOMATED Oracle convergence loop
 #
-# ⚠️⚠️⚠️ IMPORTANT: MODEL SELECTION ⚠️⚠️⚠️
-# This script MUST use ChatGPT 5.2 PRO!
-#
-# ✅ CORRECT: GPT-5.2 Pro
-# ✅ CORRECT: GPT-5.2 Pro with Extended Thinking (even better!)
-# ❌ WRONG:   o3 / o1 / o1-pro (reasoning models)
-# ❌ WRONG:   GPT-4 / GPT-4o (older models)
-#
-# Before running, verify ChatGPT is set to GPT-5.2 Pro.
-#
 # This script runs in your terminal and handles EVERYTHING:
 # 1. Runs Oracle (30-90 min per iteration)
 # 2. Reads issues AND suggestions
@@ -54,11 +44,6 @@ print_box() {
   printf "║  %-$((width-3))s║\n" "$title"
   printf "╚"; printf '═%.0s' $(seq 1 $width); printf "╝\n"
 }
-
-# Print model warning
-echo ""
-echo -e "${YELLOW}⚠️  MODEL CHECK: Ensure ChatGPT is set to GPT-5.2 PRO (not o1/o3/GPT-4)${NC}"
-echo ""
 
 if [ -z "$KIND" ] || [ -z "$PRIMARY_FILE" ]; then
   echo "Usage: $0 <kind> <primary_file> [context_files...]"
@@ -112,7 +97,7 @@ if [ -f "$HISTORY_FILE" ]; then
     LAST_BLOCKERS=$(echo "$LAST_ROUND" | jq -r '.blockers // 999')
     LAST_MAJORS=$(echo "$LAST_ROUND" | jq -r '.majors // 999')
     
-    # Check if already converged (rule: blockers + majors == 0)
+    # Check if already converged (0 blockers AND 0 majors per CLAUDE.md)
     if [ "$LAST_BLOCKERS" -eq 0 ] && [ "$LAST_MAJORS" -eq 0 ]; then
       echo -e "${GREEN}✅ Already converged! (0 blockers, 0 majors)${NC}"
       echo "   Previous runs found in: $OUTPUT_DIR"
@@ -255,12 +240,8 @@ while [ "$ROUND" -le "$MAX_ROUNDS" ]; do
   
   # Try to extract JSON from output
   if [ -f "$OUTPUT_FILE" ]; then
-    # Extract the FIRST ```json fenced block only (avoids invalid JSON when multiple fences exist)
-    # Handle variations: ```json, ``` json, ```JSON, etc.
-    awk 'BEGIN{found=0}
-         tolower($0) ~ /^```[ ]*json/ {found=1; next}
-         found && /^```/ {exit}
-         found {print}' "$OUTPUT_FILE" > "$ISSUES_FILE" 2>/dev/null || true
+    # Extract JSON block from markdown output
+    sed -n '/```json/,/```/p' "$OUTPUT_FILE" | sed '1d;$d' > "$ISSUES_FILE" 2>/dev/null || true
   fi
   
   # Count issues
@@ -273,11 +254,10 @@ while [ "$ROUND" -le "$MAX_ROUNDS" ]; do
   READY="unknown"
   
   if [ -f "$ISSUES_FILE" ] && [ -s "$ISSUES_FILE" ] && command -v jq &> /dev/null; then
-    # Use ascii_downcase for case-insensitive matching and handle severity synonyms
-    BLOCKERS=$(jq '[.issues[]? | select((.severity // "") | ascii_downcase | test("^(blocker|critical|sev0|p0|urgent)$"))] | length' "$ISSUES_FILE" 2>/dev/null || echo "0")
-    MAJORS=$(jq '[.issues[]? | select((.severity // "") | ascii_downcase | test("^(major|high|sev1|p1|medium|sev2|p2)$"))] | length' "$ISSUES_FILE" 2>/dev/null || echo "0")
-    MINORS=$(jq '[.issues[]? | select((.severity // "") | ascii_downcase | test("^(minor|low|sev3|p3)$"))] | length' "$ISSUES_FILE" 2>/dev/null || echo "0")
-    NITS=$(jq '[.issues[]? | select((.severity // "") | ascii_downcase | test("^(nit|trivial|cosmetic)$"))] | length' "$ISSUES_FILE" 2>/dev/null || echo "0")
+    BLOCKERS=$(jq '[.issues[]? | select(.severity == "blocker")] | length' "$ISSUES_FILE" 2>/dev/null || echo "0")
+    MAJORS=$(jq '[.issues[]? | select(.severity == "major")] | length' "$ISSUES_FILE" 2>/dev/null || echo "0")
+    MINORS=$(jq '[.issues[]? | select(.severity == "minor")] | length' "$ISSUES_FILE" 2>/dev/null || echo "0")
+    NITS=$(jq '[.issues[]? | select(.severity == "nit")] | length' "$ISSUES_FILE" 2>/dev/null || echo "0")
     SUGGESTIONS=$(jq '.suggestions | length' "$ISSUES_FILE" 2>/dev/null || echo "0")
     CONFIDENCE=$(jq '.overallAssessment.confidenceScore // 0' "$ISSUES_FILE" 2>/dev/null || echo "0")
     READY=$(jq -r '.overallAssessment.readyForImplementation // "unknown"' "$ISSUES_FILE" 2>/dev/null || echo "unknown")
@@ -345,10 +325,13 @@ while [ "$ROUND" -le "$MAX_ROUNDS" ]; do
           if [ -f "artifacts/04-task-graph.json" ]; then
             TASK_COUNT=$(jq '.tasks | length' artifacts/04-task-graph.json 2>/dev/null || echo "?")
             echo -e "  ${GREEN}✅ Task graph compiled: $TASK_COUNT tasks${NC}"
-            echo ""
-            echo -e "  ${GREEN}✅ Ready for execution${NC}"
           fi
         fi
+        echo ""
+        echo "Next steps:"
+        echo -e "  1. ${GREEN}bash artifacts/04-beads-setup.sh${NC}  # Create beads from tasks"
+        echo -e "  2. ${GREEN}/review beads${NC}                     # Run 6-9 times!"
+        echo -e "  3. ${GREEN}./scripts/ralph.sh --beads --fresh-eyes 100${NC}"
         ;;
       code) echo -e "  ${GREEN}/gates${NC} - Run quality gates" ;;
     esac

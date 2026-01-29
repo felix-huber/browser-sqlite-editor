@@ -56,11 +56,11 @@ function valueMatchesType(value: unknown, type: ColumnType): boolean {
   switch (type) {
     case 'INTEGER': {
       const num = Number(str);
-      return !isNaN(num) && Number.isInteger(num);
+      return !Number.isNaN(num) && Number.isInteger(num);
     }
     case 'REAL': {
       const num = Number(str);
-      return !isNaN(num);
+      return !Number.isNaN(num);
     }
     case 'BLOB':
       // BLOB accepts anything (but rarely used for import)
@@ -328,7 +328,7 @@ export function ImportPreview({
                         data-mismatch={isMismatch ? 'true' : undefined}
                       >
                         {isNull ? (
-                          <span className="text-navy-400 italic">NULL</span>
+                          <span className="italic">NULL</span>
                         ) : (
                           display
                         )}

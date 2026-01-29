@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import {
   SettingsPanel,
   useSettingsShortcut,
@@ -11,6 +12,7 @@ import {
 } from '../SettingsPanel';
 import * as storeModule from '../../../store';
 import * as workerClientModule from '../../../lib/worker-client';
+import type { WorkerClient } from '../../../lib/worker-client';
 
 // Mock the store
 vi.mock('../../../store', () => ({
@@ -191,6 +193,13 @@ describe('SettingsPanel', () => {
     onClose: vi.fn(),
   };
 
+  const renderSettingsPanel = async (props: Partial<SettingsPanelProps> = {}) => {
+    render(<SettingsPanel {...defaultProps} {...props} />);
+    await waitFor(() => {
+      expect(storageMock.estimate).toHaveBeenCalled();
+    });
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     localStorageMock.clear();
@@ -198,21 +207,21 @@ describe('SettingsPanel', () => {
   });
 
   describe('Rendering', () => {
-    it('renders panel when open', () => {
-      render(<SettingsPanel {...defaultProps} />);
+    it('renders panel when open', async () => {
+      await renderSettingsPanel();
 
       expect(screen.getByTestId('settings-panel')).toBeInTheDocument();
       expect(screen.getByText('Settings')).toBeInTheDocument();
     });
 
-    it('does not render when closed', () => {
-      render(<SettingsPanel {...defaultProps} isOpen={false} />);
+    it('does not render when closed', async () => {
+      await renderSettingsPanel({ isOpen: false });
 
       expect(screen.queryByTestId('settings-panel')).not.toBeInTheDocument();
     });
 
-    it('has proper accessibility attributes', () => {
-      render(<SettingsPanel {...defaultProps} />);
+    it('has proper accessibility attributes', async () => {
+      await renderSettingsPanel();
 
       const backdrop = screen.getByTestId('settings-panel-backdrop');
       expect(backdrop).toHaveAttribute('role', 'dialog');
@@ -223,7 +232,7 @@ describe('SettingsPanel', () => {
 
   describe('Storage Section', () => {
     it('displays storage mode', async () => {
-      render(<SettingsPanel {...defaultProps} />);
+      await renderSettingsPanel();
 
       await waitFor(() => {
         expect(screen.getByTestId('storage-mode')).toHaveTextContent('OPFS');
@@ -231,7 +240,7 @@ describe('SettingsPanel', () => {
     });
 
     it('displays storage usage', async () => {
-      render(<SettingsPanel {...defaultProps} />);
+      await renderSettingsPanel();
 
       await waitFor(() => {
         expect(screen.getByTestId('storage-usage')).toHaveTextContent('50.0 MB');
@@ -239,27 +248,29 @@ describe('SettingsPanel', () => {
       });
     });
 
-    it('shows clear data button', () => {
-      render(<SettingsPanel {...defaultProps} />);
+    it('shows clear data button', async () => {
+      await renderSettingsPanel();
 
       expect(screen.getByTestId('clear-data-button')).toBeInTheDocument();
     });
 
-    it('shows confirmation when clear data is clicked', () => {
-      render(<SettingsPanel {...defaultProps} />);
+    it('shows confirmation when clear data is clicked', async () => {
+      const user = userEvent.setup();
+      await renderSettingsPanel();
 
-      fireEvent.click(screen.getByTestId('clear-data-button'));
+      await user.click(screen.getByTestId('clear-data-button'));
 
       expect(screen.getByTestId('confirm-clear-button')).toBeInTheDocument();
       expect(screen.getByTestId('cancel-clear-button')).toBeInTheDocument();
       expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument();
     });
 
-    it('cancels clear confirmation', () => {
-      render(<SettingsPanel {...defaultProps} />);
+    it('cancels clear confirmation', async () => {
+      const user = userEvent.setup();
+      await renderSettingsPanel();
 
-      fireEvent.click(screen.getByTestId('clear-data-button'));
-      fireEvent.click(screen.getByTestId('cancel-clear-button'));
+      await user.click(screen.getByTestId('clear-data-button'));
+      await user.click(screen.getByTestId('cancel-clear-button'));
 
       expect(screen.queryByTestId('confirm-clear-button')).not.toBeInTheDocument();
       expect(screen.getByTestId('clear-data-button')).toBeInTheDocument();
@@ -278,7 +289,7 @@ describe('SettingsPanel', () => {
     });
 
     it('shows database section when a database is active', async () => {
-      render(<SettingsPanel {...defaultProps} />);
+      await renderSettingsPanel();
 
       await waitFor(() => {
         expect(screen.getByTestId('database-section')).toBeInTheDocument();
@@ -287,7 +298,7 @@ describe('SettingsPanel', () => {
     });
 
     it('shows FK toggle', async () => {
-      render(<SettingsPanel {...defaultProps} />);
+      await renderSettingsPanel();
 
       await waitFor(() => {
         expect(screen.getByTestId('fk-toggle')).toBeInTheDocument();
@@ -295,6 +306,7 @@ describe('SettingsPanel', () => {
     });
 
     it('FK toggle changes PRAGMA', async () => {
+      const user = userEvent.setup();
       const mockClient = {
         query: vi.fn()
           .mockResolvedValueOnce({ rows: [[1]], columns: ['foreign_keys'] })
@@ -302,16 +314,16 @@ describe('SettingsPanel', () => {
           .mockResolvedValueOnce({ rows: [[0]], columns: ['foreign_keys'] }),
         exec: vi.fn().mockResolvedValue({}),
         deleteDb: vi.fn(),
-      };
-      vi.mocked(workerClientModule.getWorkerClient).mockReturnValue(mockClient as any);
+      } satisfies Partial<WorkerClient>;
+      vi.mocked(workerClientModule.getWorkerClient).mockReturnValue(mockClient as WorkerClient);
 
-      render(<SettingsPanel {...defaultProps} />);
+      await renderSettingsPanel();
 
       await waitFor(() => {
         expect(screen.getByTestId('fk-toggle')).toBeInTheDocument();
       });
 
-      fireEvent.click(screen.getByTestId('fk-toggle'));
+      await user.click(screen.getByTestId('fk-toggle'));
 
       await waitFor(() => {
         expect(mockClient.exec).toHaveBeenCalledWith('PRAGMA foreign_keys = 0');
@@ -325,10 +337,10 @@ describe('SettingsPanel', () => {
           .mockResolvedValueOnce({ rows: [['wal']], columns: ['journal_mode'] }),
         exec: vi.fn(),
         deleteDb: vi.fn(),
-      };
-      vi.mocked(workerClientModule.getWorkerClient).mockReturnValue(mockClient as any);
+      } satisfies Partial<WorkerClient>;
+      vi.mocked(workerClientModule.getWorkerClient).mockReturnValue(mockClient as WorkerClient);
 
-      render(<SettingsPanel {...defaultProps} />);
+      await renderSettingsPanel();
 
       await waitFor(() => {
         // Journal mode is displayed uppercase
@@ -336,49 +348,51 @@ describe('SettingsPanel', () => {
       });
     });
 
-    it('hides database section when no database is active', () => {
+    it('hides database section when no database is active', async () => {
       vi.mocked(storeModule.useActiveDb).mockReturnValue(null);
 
-      render(<SettingsPanel {...defaultProps} />);
+      await renderSettingsPanel();
 
       expect(screen.queryByTestId('database-section')).not.toBeInTheDocument();
     });
   });
 
   describe('UI Preferences Section', () => {
-    it('shows theme selector', () => {
-      render(<SettingsPanel {...defaultProps} />);
+    it('shows theme selector', async () => {
+      await renderSettingsPanel();
 
       expect(screen.getByTestId('theme-select')).toBeInTheDocument();
     });
 
     it('theme selection updates UI', async () => {
-      render(<SettingsPanel {...defaultProps} />);
+      const user = userEvent.setup();
+      await renderSettingsPanel();
 
       const themeSelect = screen.getByTestId('theme-select');
-      fireEvent.change(themeSelect, { target: { value: 'dark' } });
+      await user.selectOptions(themeSelect, 'dark');
 
       await waitFor(() => {
         expect(localStorageMock.setItem).toHaveBeenCalled();
       });
     });
 
-    it('shows page size selector', () => {
-      render(<SettingsPanel {...defaultProps} />);
+    it('shows page size selector', async () => {
+      await renderSettingsPanel();
 
       expect(screen.getByTestId('page-size-select')).toBeInTheDocument();
     });
 
-    it('shows auto-save toggle', () => {
-      render(<SettingsPanel {...defaultProps} />);
+    it('shows auto-save toggle', async () => {
+      await renderSettingsPanel();
 
       expect(screen.getByTestId('autosave-toggle')).toBeInTheDocument();
     });
 
     it('auto-save toggle persists setting', async () => {
-      render(<SettingsPanel {...defaultProps} />);
+      const user = userEvent.setup();
+      await renderSettingsPanel();
 
-      fireEvent.click(screen.getByTestId('autosave-toggle'));
+      await user.click(screen.getByTestId('autosave-toggle'));
 
       await waitFor(() => {
         expect(localStorageMock.setItem).toHaveBeenCalled();
@@ -387,47 +401,52 @@ describe('SettingsPanel', () => {
   });
 
   describe('Close Actions', () => {
-    it('calls onClose when close button is clicked', () => {
+    it('calls onClose when close button is clicked', async () => {
       const onClose = vi.fn();
-      render(<SettingsPanel isOpen={true} onClose={onClose} />);
+      const user = userEvent.setup();
+      await renderSettingsPanel({ isOpen: true, onClose });
 
-      fireEvent.click(screen.getByTestId('settings-close-button'));
+      await user.click(screen.getByTestId('settings-close-button'));
 
       expect(onClose).toHaveBeenCalled();
     });
 
-    it('calls onClose when Done button is clicked', () => {
+    it('calls onClose when Done button is clicked', async () => {
       const onClose = vi.fn();
-      render(<SettingsPanel isOpen={true} onClose={onClose} />);
+      const user = userEvent.setup();
+      await renderSettingsPanel({ isOpen: true, onClose });
 
-      fireEvent.click(screen.getByTestId('settings-done-button'));
+      await user.click(screen.getByTestId('settings-done-button'));
 
       expect(onClose).toHaveBeenCalled();
     });
 
-    it('calls onClose when backdrop is clicked', () => {
+    it('calls onClose when backdrop is clicked', async () => {
       const onClose = vi.fn();
-      render(<SettingsPanel isOpen={true} onClose={onClose} />);
+      const user = userEvent.setup();
+      await renderSettingsPanel({ isOpen: true, onClose });
 
-      fireEvent.click(screen.getByTestId('settings-panel-backdrop'));
+      await user.click(screen.getByTestId('settings-panel-backdrop'));
 
       expect(onClose).toHaveBeenCalled();
     });
 
-    it('does not call onClose when panel content is clicked', () => {
+    it('does not call onClose when panel content is clicked', async () => {
       const onClose = vi.fn();
-      render(<SettingsPanel isOpen={true} onClose={onClose} />);
+      const user = userEvent.setup();
+      await renderSettingsPanel({ isOpen: true, onClose });
 
-      fireEvent.click(screen.getByTestId('settings-panel'));
+      await user.click(screen.getByTestId('settings-panel'));
 
       expect(onClose).not.toHaveBeenCalled();
     });
 
-    it('closes on Escape key', () => {
+    it('closes on Escape key', async () => {
       const onClose = vi.fn();
-      render(<SettingsPanel isOpen={true} onClose={onClose} />);
+      const user = userEvent.setup();
+      await renderSettingsPanel({ isOpen: true, onClose });
 
-      fireEvent.keyDown(document, { key: 'Escape' });
+      await user.keyboard('{Escape}');
 
       expect(onClose).toHaveBeenCalled();
     });

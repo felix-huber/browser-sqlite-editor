@@ -207,6 +207,7 @@ export function TableItem({
         onContextMenu={contextMenu.onContextMenu}
         tabIndex={0}
         role="treeitem"
+        aria-expanded={false}
         aria-selected={isSelected}
         data-testid={`item-${type}-${name}`}
       >

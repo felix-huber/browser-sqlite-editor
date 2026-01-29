@@ -128,7 +128,7 @@ function priorityFromSeverity(severity) {
 
 function typeFromTags(tags) {
   if (!tags || tags.length === 0) return 'task';
-  const t = tags.map(t => t.toLowerCase());
+  const t = tags.map(tag => tag.toLowerCase());
   if (t.includes('bug') || t.includes('fix')) return 'bug';
   if (t.includes('feature')) return 'feature';
   if (t.includes('chore') || t.includes('cleanup')) return 'chore';
@@ -147,9 +147,11 @@ function generateBeadsScript(taskGraph) {
   lines.push('#   cargo install --git https://github.com/Dicklesworthstone/beads_rust.git');
   lines.push('#   br init');
   lines.push('#');
-  lines.push('# After running, beads can be reviewed with:');
+  lines.push('# After running, iterate on beads with:');
   lines.push('#   br list  # Review all beads');
   lines.push('#   br ready # See actionable tasks');
+  lines.push('#');
+  lines.push('# IMPORTANT: Run the beads review prompt 6-9 times before implementation!');
   lines.push('');
   lines.push('set -euo pipefail');
   lines.push('');
@@ -325,7 +327,11 @@ function generateBeadsScript(taskGraph) {
   lines.push('echo "  Total beads: $TOTAL"');
   lines.push('echo "  Ready to start: $READY"');
   lines.push('echo ""');
-  lines.push('echo "✅ Beads setup complete!"');
+  lines.push('echo "NEXT STEPS:"');
+  lines.push('echo "  1. Review beads: br list"');
+  lines.push('echo "  2. Run beads review prompt 6-9 times (see skills/phase-transitions/SKILL.md)"');
+  lines.push('echo "  3. Sync to git: br sync --flush-only && git add .beads/ && git commit"');
+  lines.push('echo "  4. Start execution: ./scripts/ralph.sh --beads 50"');
   lines.push('echo ""');
   lines.push('');
   lines.push('# Export for git');

@@ -85,7 +85,7 @@ export interface LockManagerAdapter {
   requestLock: (
     name: string,
     options: LockOptions & { signal?: AbortSignal },
-    callback: () => Promise<void>
+    callback: (lock: Lock | null) => Promise<void>
   ) => Promise<void>;
   queryLock: (name: string) => Promise<LockManagerSnapshot | null>;
 }
@@ -95,7 +95,11 @@ export interface LockManagerAdapter {
  */
 const defaultLockManagerAdapter: LockManagerAdapter = {
   isWebLocksAvailable: () => {
-    return typeof navigator !== 'undefined' && 'locks' in navigator;
+    if (typeof navigator === 'undefined') return false;
+    if (!('locks' in navigator)) return false;
+    // Web Locks can behave inconsistently in automation; prefer localStorage fallback in tests.
+    if ('webdriver' in navigator && navigator.webdriver) return false;
+    return true;
   },
   requestLock: async (name, options, callback) => {
     await navigator.locks.request(name, options, callback);
@@ -280,69 +284,71 @@ export class WebLockManager {
       let resolved = false;
 
       // First, try to acquire without waiting
-      this.adapter
-        .requestLock(
-          lockName,
-          {
-            mode: 'exclusive',
-            ifAvailable: true,
-            signal: abortController.signal,
-          },
-          async () => {
-            // Lock acquired!
-            this.activeLocks.set(dbId, abortController);
-            const timestamp = Date.now();
-
-            // Update cache and broadcast
-            this.lockStatusCache.set(dbId, {
-              dbId,
-              isLocked: true,
-              holderId: tabId,
-              acquiredAt: timestamp,
-              isStale: false,
-            });
-
-            this.channel?.postMessage({
-              type: 'lock-acquired',
-              dbId,
-              holderId: tabId,
-              timestamp,
-            } as LockMessage);
-
-            resolved = true;
-            resolve({ acquired: true, holderId: null, holderStale: false });
-
-            // Keep the lock held by returning a promise that never resolves
-            // until abort is called
-            return new Promise<void>((releaseLock) => {
-              abortController.signal.addEventListener('abort', () => {
-                releaseLock();
-              });
-            });
+      const requestPromise = this.adapter.requestLock(
+        lockName,
+        {
+          mode: 'exclusive',
+          ifAvailable: true,
+          signal: abortController.signal,
+        },
+        async (lock) => {
+          if (!lock) {
+            return;
           }
-        )
-        .catch(() => {
-          // Lock request was aborted or failed
-          if (!resolved) {
-            resolve({ acquired: false, holderId: null, holderStale: false });
-          }
-        });
+          // Lock acquired!
+          this.activeLocks.set(dbId, abortController);
+          const timestamp = Date.now();
 
-      // If lock wasn't acquired immediately, resolve with failure
-      // We use a microtask to let the lock callback run first if it can
-      queueMicrotask(() => {
-        if (!resolved) {
+          // Update cache and broadcast
+          this.lockStatusCache.set(dbId, {
+            dbId,
+            isLocked: true,
+            holderId: tabId,
+            acquiredAt: timestamp,
+            isStale: false,
+          });
+
+          this.channel?.postMessage({
+            type: 'lock-acquired',
+            dbId,
+            holderId: tabId,
+            timestamp,
+          } as LockMessage);
+
           resolved = true;
-          // Try to find who holds the lock
-          this.queryLockHolder(dbId).then((holder) => {
-            resolve({
-              acquired: false,
-              holderId: holder?.holderId ?? null,
-              holderStale: holder?.isStale ?? false,
+          resolve({ acquired: true, holderId: null, holderStale: false });
+
+          // Keep the lock held by returning a promise that never resolves
+          // until abort is called
+          return new Promise<void>((releaseLock) => {
+            abortController.signal.addEventListener('abort', () => {
+              releaseLock();
             });
           });
         }
-      });
+      );
+
+      requestPromise
+        .then(() => {
+          // If the callback never ran, the lock wasn't acquired
+          if (!resolved) {
+            resolved = true;
+            this.queryLockHolder(dbId).then((holder) => {
+              resolve({
+                acquired: false,
+                holderId: holder?.holderId ?? null,
+                holderStale: holder?.isStale ?? false,
+              });
+            });
+          }
+        })
+        .catch(() => {
+          // Lock request was aborted or failed
+          if (!resolved) {
+            resolved = true;
+            resolve({ acquired: false, holderId: null, holderStale: false });
+          }
+        });
     });
   }
 

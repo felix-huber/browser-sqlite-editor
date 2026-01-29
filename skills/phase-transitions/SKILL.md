@@ -31,7 +31,6 @@ triggers:
 | Phase | Iterations Required | Convergence Criteria |
 |-------|--------------------|-----------------------|
 | Plan review | 4-5 passes | Suggestions become incremental |
-| **Sprint review** | Until clean | No critical/important issues |
 | Beads review | 6-9 passes | No more changes |
 | Fresh eyes code review | Until stable | No bugs found |
 | Oracle review | Until converged | 0 new blockers/majors |
@@ -141,35 +140,6 @@ and which you disagree with:
 
 **Keep iterating until suggestions become very incremental (usually 4-5 rounds).**
 
-### Step 1e: Sprint Quality Review (Subagent Pattern) — MANDATORY
-
-**Before Oracle review, run this critical sprint review:**
-
-```
-Review this sprint breakdown critically:
-
-1. Is every task an atomic, committable piece of work with tests?
-2. Does every sprint result in demoable software?
-3. Are architectural concerns (multi-tab locking, persistence, state) addressed early?
-4. Is E2E test setup in Sprint 1, with tests per-sprint (not deferred)?
-5. Are Sprint 1-2 demoable to stakeholders (not just invisible infra)?
-6. Are sprints focused on single concerns (not mixing unrelated features)?
-7. Are there missing tasks? (BLOB handling, autocomplete, edge cases)
-8. Are dependencies correct? Would tasks fail without their dependencies?
-
-For each issue, suggest specific fixes with sprint/task IDs.
-```
-
-**Common issues this catches:**
-- Multi-tab locking at Sprint 12 → Move to Sprint 2-3 (it's architectural)
-- E2E tests at Sprint 14 → Setup in Sprint 1, tests per-sprint
-- Sprint 1-2 not demoable → Add visible UI even for infra sprints
-- Mixed concerns → Split "Locking + Settings" into separate sprints
-
-**Run as Plan() subagent or paste to fresh Claude. Iterate until no critical issues.**
-
-See: `prompts/plan/sprint_review.md` for the full review prompt.
-
 ---
 
 ## PHASE 2: PLAN → BEADS (THE CRITICAL TRANSFORMATION)
@@ -193,12 +163,7 @@ Remember to ONLY use the `br` tool to create and modify the beads
 and add the dependencies. Use ultrathink.
 ```
 
-### Beads Review Prompt (OPTIONAL - for extra polish)
-
-**NOTE: This step is OPTIONAL for fully autonomous execution.**
-- Skip it and go straight to Ralph for autonomous flow
-- Ralph has self-healing that catches issues during execution
-- Run this later via `/review beads` if you want extra refinement
+### Beads Review Prompt (RUN 6-9 TIMES!)
 
 ```
 Reread AGENTS.md (or CLAUDE.md) so it's still fresh in your mind.
@@ -220,7 +185,7 @@ Remember to ONLY use the `br` tool to create and modify the beads and
 to add the dependencies to beads. Use ultrathink.
 ```
 
-**If running manually:** Run this prompt 6-9 times until it stops making changes.
+**Run this prompt 6-9 times until it stops making changes!**
 
 > "I used to only run that once or twice before starting implementation, 
 > but I experimented recently with running it 6+ times, and it kept 

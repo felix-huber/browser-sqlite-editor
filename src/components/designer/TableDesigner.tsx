@@ -17,8 +17,11 @@
  */
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { ColumnRow } from './ColumnRow';
+import { ColumnRow, SQLITE_RESERVED_WORDS } from './ColumnRow';
 import type { DesignerColumnDraft, TableInfo } from '../../types';
+
+// Re-export SQLITE_RESERVED_WORDS for backwards compatibility
+export { SQLITE_RESERVED_WORDS };
 
 // =============================================================================
 // Drag and Drop State
@@ -28,34 +31,6 @@ interface DragState {
   draggedId: string | null;
   dropTargetId: string | null;
 }
-
-// =============================================================================
-// Constants
-// =============================================================================
-
-/** SQLite reserved words that cannot be used as unquoted table names */
-export const SQLITE_RESERVED_WORDS = new Set([
-  'ABORT', 'ACTION', 'ADD', 'AFTER', 'ALL', 'ALTER', 'ALWAYS', 'ANALYZE', 'AND',
-  'AS', 'ASC', 'ATTACH', 'AUTOINCREMENT', 'BEFORE', 'BEGIN', 'BETWEEN', 'BY',
-  'CASCADE', 'CASE', 'CAST', 'CHECK', 'COLLATE', 'COLUMN', 'COMMIT', 'CONFLICT',
-  'CONSTRAINT', 'CREATE', 'CROSS', 'CURRENT', 'CURRENT_DATE', 'CURRENT_TIME',
-  'CURRENT_TIMESTAMP', 'DATABASE', 'DEFAULT', 'DEFERRABLE', 'DEFERRED', 'DELETE',
-  'DESC', 'DETACH', 'DISTINCT', 'DO', 'DROP', 'EACH', 'ELSE', 'END', 'ESCAPE',
-  'EXCEPT', 'EXCLUDE', 'EXCLUSIVE', 'EXISTS', 'EXPLAIN', 'FAIL', 'FILTER',
-  'FIRST', 'FOLLOWING', 'FOR', 'FOREIGN', 'FROM', 'FULL', 'GENERATED', 'GLOB',
-  'GROUP', 'GROUPS', 'HAVING', 'IF', 'IGNORE', 'IMMEDIATE', 'IN', 'INDEX',
-  'INDEXED', 'INITIALLY', 'INNER', 'INSERT', 'INSTEAD', 'INTERSECT', 'INTO',
-  'IS', 'ISNULL', 'JOIN', 'KEY', 'LAST', 'LEFT', 'LIKE', 'LIMIT', 'MATCH',
-  'MATERIALIZED', 'NATURAL', 'NO', 'NOT', 'NOTHING', 'NOTNULL', 'NULL', 'NULLS',
-  'OF', 'OFFSET', 'ON', 'OR', 'ORDER', 'OTHERS', 'OUTER', 'OVER', 'PARTITION',
-  'PLAN', 'PRAGMA', 'PRECEDING', 'PRIMARY', 'QUERY', 'RAISE', 'RANGE',
-  'RECURSIVE', 'REFERENCES', 'REGEXP', 'REINDEX', 'RELEASE', 'RENAME', 'REPLACE',
-  'RESTRICT', 'RETURNING', 'RIGHT', 'ROLLBACK', 'ROW', 'ROWS', 'SAVEPOINT',
-  'SELECT', 'SET', 'TABLE', 'TEMP', 'TEMPORARY', 'THEN', 'TIES', 'TO',
-  'TRANSACTION', 'TRIGGER', 'UNBOUNDED', 'UNION', 'UNIQUE', 'UPDATE', 'USING',
-  'VACUUM', 'VALUES', 'VIEW', 'VIRTUAL', 'WHEN', 'WHERE', 'WINDOW', 'WITH',
-  'WITHOUT',
-]);
 
 /** Validation debounce delay in ms */
 const VALIDATION_DEBOUNCE_MS = 150;
@@ -391,8 +366,12 @@ export function TableDesigner({
     [dragState.draggedId]
   );
 
-  // Get all column names for validation
-  const columnNames = useMemo(() => columns.map((c) => c.name), [columns]);
+  // Get column names for validation - returns names excluding a specific column ID
+  // This prevents false positive duplicate errors when validating a column's own name
+  const getOtherColumnNames = useCallback(
+    (excludeId: string) => columns.filter((c) => c.id !== excludeId).map((c) => c.name),
+    [columns]
+  );
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -505,7 +484,7 @@ export function TableDesigner({
               onToggleDeleteConfirm={handleToggleDeleteConfirm}
               isNew={newColumnId === column.id}
               index={index + 1}
-              existingColumnNames={columnNames}
+              existingColumnNames={getOtherColumnNames(column.id)}
               dragHandleProps={!isReadOnly ? createDragHandlers(column.id) : undefined}
               isDragging={dragState.draggedId === column.id}
               isDropTarget={dragState.dropTargetId === column.id}

@@ -18,7 +18,7 @@
  */
 export type WorkerRequest =
   | { type: 'ping' }
-  | { type: 'open'; dbName: string }
+  | { type: 'open'; dbName: string; readOnly?: boolean }
   | { type: 'close' }
   | { type: 'exec'; sql: string; params?: unknown[] }
   | {

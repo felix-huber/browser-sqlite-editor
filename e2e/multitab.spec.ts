@@ -1,4 +1,4 @@
-import { test, expect, type Page, type BrowserContext } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 /**
  * Multi-Tab Locking E2E Tests
@@ -366,6 +366,12 @@ test.describe('Multi-Tab Locking', () => {
       // Verify lock is released
       const statusAfterRelease = await checkLockStatus(page, dbName);
       expect(statusAfterRelease.isLocked).toBe(false);
+
+      // Wait for localStorage propagation to Tab B
+      await pageB.waitForFunction(
+        (name) => !localStorage.getItem(`sqlite-editor-lock-${name}`),
+        dbName
+      );
 
       // Tab B can now acquire lock
       tabBAcquired = await acquireLockInTab(pageB, dbName, tabBId);

@@ -189,6 +189,63 @@ async function clearAllStorage(page: Page): Promise<void> {
 async function readRegistry(page: Page): Promise<RegistryState | null> {
   return page.evaluate(async (): Promise<RegistryState | null> => {
     try {
+      const testApi = (window as Window & {
+        __sqliteEditorTest?: { getRegistry?: () => Promise<unknown> };
+      }).__sqliteEditorTest;
+
+      if (testApi?.getRegistry) {
+        try {
+          const registry = await testApi.getRegistry();
+          if (registry && typeof registry === 'object' && 'databases' in registry) {
+            const databases = (registry as { databases?: Array<Record<string, unknown>> }).databases;
+            if (Array.isArray(databases)) {
+              const fallbackTime = new Date(0).toISOString();
+              const mapped = databases.map((entry) => {
+                const name =
+                  typeof entry.name === 'string'
+                    ? entry.name
+                    : typeof entry.file === 'string'
+                      ? entry.file
+                      : 'unknown';
+                const file = typeof entry.file === 'string' ? entry.file : name;
+                const createdAt =
+                  typeof entry.createdAt === 'string' ? entry.createdAt : fallbackTime;
+                const lastOpenedAt =
+                  typeof entry.lastOpenedAt === 'string' ? entry.lastOpenedAt : createdAt;
+                const storageType =
+                  entry.storageType === 'opfs' || entry.storageType === 'idb'
+                    ? entry.storageType
+                    : file.endsWith('.sqlite')
+                      ? 'opfs'
+                      : 'idb';
+                const id = typeof entry.id === 'string' ? entry.id : name;
+                return { id, name, storageType, createdAt, lastOpenedAt };
+              });
+              if (mapped.length > 0) {
+                return { databases: mapped };
+              }
+            }
+          }
+        } catch {
+          // Fall through to storage-based registry read
+        }
+      }
+
+      if (navigator.storage?.getDirectory) {
+        try {
+          const root = await navigator.storage.getDirectory();
+          const dir = await root.getDirectoryHandle('sqlite-editor');
+          const file = await dir.getFileHandle('registry.json');
+          const blob = await file.getFile();
+          const text = await blob.text();
+          return JSON.parse(text) as RegistryState;
+        } catch (err) {
+          if (!(err instanceof DOMException && err.name === 'NotFoundError')) {
+            // Ignore OPFS errors and fall back to IDB
+          }
+        }
+      }
+
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         const req = indexedDB.open('sqlite-editor-registry', 1);
         req.onerror = () => reject(req.error);
@@ -658,12 +715,7 @@ test.describe('UI Import Tests', () => {
 
     test('drag-drop valid SQLite file onto drop zone imports successfully', async ({ page }) => {
       const dropZone = page.locator('[data-testid="drop-zone"]');
-
-      // Skip if drop zone is not visible (not integrated into current UI)
-      if (!(await dropZone.isVisible().catch(() => false))) {
-        test.skip();
-        return;
-      }
+      await expect(dropZone).toBeVisible();
 
       const bytes = createValidSqliteBytes();
       const filePath = await createTempFile(bytes, 'droptest.sqlite');
@@ -687,6 +739,22 @@ test.describe('UI Import Tests', () => {
         await page.waitForFunction(
           async () => {
             try {
+              if (navigator.storage?.getDirectory) {
+                try {
+                  const root = await navigator.storage.getDirectory();
+                  const dir = await root.getDirectoryHandle('sqlite-editor');
+                  const file = await dir.getFileHandle('registry.json');
+                  const blob = await file.getFile();
+                  const text = await blob.text();
+                  const data = JSON.parse(text) as { databases?: unknown[] };
+                  return (data?.databases?.length ?? 0) > 0;
+                } catch (err) {
+                  if (!(err instanceof DOMException && err.name === 'NotFoundError')) {
+                    // Ignore OPFS errors and fall back to IDB
+                  }
+                }
+              }
+
               const db = await new Promise<IDBDatabase>((resolve, reject) => {
                 const req = indexedDB.open('sqlite-editor-registry', 1);
                 req.onsuccess = () => resolve(req.result);
@@ -708,6 +776,8 @@ test.describe('UI Import Tests', () => {
           { timeout: 10000 }
         );
 
+        await expect(page.getByTestId('db-name-droptest')).toBeVisible({ timeout: 10000 });
+
         // Verify import succeeded
         const registry = await readRegistry(page);
         expect(registry?.databases?.length).toBeGreaterThan(0);
@@ -719,12 +789,7 @@ test.describe('UI Import Tests', () => {
 
     test('drop zone shows drag-over state during drag', async ({ page }) => {
       const dropZone = page.locator('[data-testid="drop-zone"]');
-
-      // Skip if drop zone is not visible
-      if (!(await dropZone.isVisible().catch(() => false))) {
-        test.skip();
-        return;
-      }
+      await expect(dropZone).toBeVisible();
 
       const bytes = createValidSqliteBytes();
 
@@ -756,12 +821,7 @@ test.describe('UI Import Tests', () => {
 
     test('drop invalid PNG file shows error toast', async ({ page }) => {
       const dropZone = page.locator('[data-testid="drop-zone"]');
-
-      // Skip if drop zone is not visible
-      if (!(await dropZone.isVisible().catch(() => false))) {
-        test.skip();
-        return;
-      }
+      await expect(dropZone).toBeVisible();
 
       const pngBytes = createPngBytes();
 
@@ -790,12 +850,7 @@ test.describe('UI Import Tests', () => {
 
     test('drop text file with wrong extension shows error toast', async ({ page }) => {
       const dropZone = page.locator('[data-testid="drop-zone"]');
-
-      // Skip if drop zone is not visible
-      if (!(await dropZone.isVisible().catch(() => false))) {
-        test.skip();
-        return;
-      }
+      await expect(dropZone).toBeVisible();
 
       const textBytes = createTextBytes();
 
@@ -823,12 +878,7 @@ test.describe('UI Import Tests', () => {
 
     test('drop unsupported file type (.exe) shows error toast', async ({ page }) => {
       const dropZone = page.locator('[data-testid="drop-zone"]');
-
-      // Skip if drop zone is not visible
-      if (!(await dropZone.isVisible().catch(() => false))) {
-        test.skip();
-        return;
-      }
+      await expect(dropZone).toBeVisible();
 
       // Create a DataTransfer with unsupported file type
       const dataTransfer = await page.evaluateHandle(() => {
@@ -880,16 +930,7 @@ test.describe('UI Import Tests', () => {
     });
 
     test('welcome screen Import Database button exists when visible', async ({ page }) => {
-      // Check for welcome screen import button (may not be visible in current UI)
       const importButton = page.locator('[data-testid="import-database-button"]');
-
-      // If welcome screen import button is not visible, skip
-      if (!(await importButton.isVisible().catch(() => false))) {
-        test.skip();
-        return;
-      }
-
-      // If visible, just verify it exists
       await expect(importButton).toBeVisible();
       await expect(importButton).toContainText(/Open|Import/i);
     });

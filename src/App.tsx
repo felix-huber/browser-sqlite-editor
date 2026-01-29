@@ -13,6 +13,9 @@ import { UpdateBanner } from './components/common/UpdateBanner';
 import { ReadOnlyBanner } from './components/common/ReadOnlyBanner';
 import { StorageFullBanner } from './components/common/StorageFullBanner';
 import { PersistenceErrorBanner } from './components/common/PersistenceErrorBanner';
+import { QuotaExceededModal } from './components/common/QuotaExceededModal';
+import { PersistenceErrorModal } from './components/common/PersistenceErrorModal';
+import { useFocusTrap } from './hooks/useFocusTrap';
 import { NewDatabaseDialog } from './components/common/NewDatabaseDialog';
 import { ConfirmDialog } from './components/common/ConfirmDialog';
 import { Welcome } from './components/welcome/Welcome';
@@ -33,7 +36,7 @@ import {
 import { getWorkerClient, WorkerClient } from './lib/worker-client';
 import { useGlobalShortcutHandlers } from './hooks/useKeyboardShortcuts';
 import { loadHistory, addToHistory } from './lib/history';
-import type { QueryResult, QueryHistoryItem } from './types';
+import type { QueryResult, QueryHistoryItem, DatabaseRegistry } from './types';
 
 /** View types for the main content area */
 type ViewType = 'welcome' | 'table' | 'sql' | 'erd' | 'designer' | 'query-builder';
@@ -43,6 +46,10 @@ interface ActiveView {
   tableName?: string;
   viewName?: string;
 }
+
+type TestApi = {
+  getRegistry: () => Promise<DatabaseRegistry | null>;
+};
 
 function App() {
   const databases = useDatabases();
@@ -56,17 +63,29 @@ function App() {
   const [activeView, setActiveView] = useState<ActiveView>({ type: 'welcome' });
   const [isLoading, setIsLoading] = useState(true);
   const [importError, setImportError] = useState<string | null>(null);
+  const [showQuotaModal, setShowQuotaModal] = useState(false);
+  const [showPersistenceModal, setShowPersistenceModal] = useState(false);
+  const [quotaModalShownForDb, setQuotaModalShownForDb] = useState<string | null>(null);
+  const [persistenceModalShown, setPersistenceModalShown] = useState(false);
+  const isAnyDialogOpen =
+    newDbDialogOpen || Boolean(importError) || showQuotaModal || showPersistenceModal;
+  const { containerRef: appFocusTrapRef } = useFocusTrap<HTMLDivElement>({
+    isActive: !isAnyDialogOpen,
+    autoFocus: false,
+    returnFocus: false,
+  });
 
   // Worker client ref
   const workerClientRef = useRef<WorkerClient | null>(null);
   const workerRef = useRef<Worker | null>(null);
+  const workerReadyRef = useRef<Promise<void> | null>(null);
 
   // Query history state
   const [history, setHistory] = useState<QueryHistoryItem[]>([]);
 
   // Initialize worker on mount
   useEffect(() => {
-    async function init() {
+    const initPromise = (async () => {
       try {
         // Create worker
         const worker = new Worker(
@@ -90,12 +109,50 @@ function App() {
       } finally {
         setIsLoading(false);
       }
-    }
-    init();
+    })();
+
+    workerReadyRef.current = initPromise;
 
     return () => {
       if (workerRef.current) {
         workerRef.current.terminate();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const hostname = window.location.hostname;
+    const isLocalhost =
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '[::1]' ||
+      hostname === '::1';
+    const isAutomation = navigator.webdriver ?? false;
+    if (!isAutomation && !isLocalhost) return;
+
+    const testApi: TestApi = {
+      getRegistry: async () => {
+        const ready = workerReadyRef.current;
+        if (ready) {
+          try {
+            await ready;
+          } catch {
+            return null;
+          }
+        }
+
+        const databases = useDatabaseStore.getState().databases;
+        return { v: 1, databases };
+      },
+    };
+
+    const win = window as Window & { __sqliteEditorTest?: TestApi };
+    win.__sqliteEditorTest = testApi;
+
+    return () => {
+      if (win.__sqliteEditorTest === testApi) {
+        delete win.__sqliteEditorTest;
       }
     };
   }, []);
@@ -107,11 +164,44 @@ function App() {
       setActiveView({ type: 'sql' });
       // Load query history for this database
       setHistory(loadHistory(activeDbId));
+      setQuotaModalShownForDb(null);
     } else {
       setActiveView({ type: 'welcome' });
       setHistory([]);
+      setQuotaModalShownForDb(null);
     }
   }, [activeDbId]);
+
+  // Show quota exceeded modal once per DB/session
+  useEffect(() => {
+    if (storageStatus === 'quota_exceeded') {
+      if (activeDbId && quotaModalShownForDb !== activeDbId) {
+        setShowQuotaModal(true);
+        setQuotaModalShownForDb(activeDbId);
+      } else if (!activeDbId) {
+        setShowQuotaModal(true);
+      }
+      return;
+    }
+
+    if (storageStatus === 'ok') {
+      setShowQuotaModal(false);
+    }
+  }, [storageStatus, activeDbId, quotaModalShownForDb]);
+
+  // Show persistence error modal once per degraded session
+  useEffect(() => {
+    if (storageStatus === 'degraded' && !persistenceModalShown) {
+      setShowPersistenceModal(true);
+      setPersistenceModalShown(true);
+      return;
+    }
+
+    if (storageStatus === 'ok') {
+      setShowPersistenceModal(false);
+      setPersistenceModalShown(false);
+    }
+  }, [storageStatus, persistenceModalShown]);
 
   // Handle creating a new database
   const handleCreateDb = useCallback(async (name: string) => {
@@ -136,20 +226,39 @@ function App() {
   const handleSqliteImport = useCallback(async (file: File) => {
     try {
       setImportError(null);
+      const ready = workerReadyRef.current;
+      if (ready) {
+        await ready;
+      }
       const client = workerClientRef.current;
       if (!client) throw new Error('Worker not initialized');
 
       // Extract database name from file name (remove extension)
       const baseName = file.name.replace(/\.(sqlite|db|sqlite3)$/i, '') || 'imported';
-      await client.importFile(file, baseName);
+      const importResult = await client.importFile(file, baseName);
       await loadRegistry();
       // Open the imported database
-      await openDb(baseName);
+      await openDb(importResult.dbName ?? baseName);
     } catch (err) {
       console.error('Failed to import SQLite file:', err);
       setImportError(err instanceof Error ? err.message : 'Failed to import database');
     }
   }, []);
+
+  const handleOpenSample = useCallback(async () => {
+    try {
+      const response = await fetch('/sakila.db');
+      if (!response.ok) {
+        throw new Error('Failed to load sample database');
+      }
+      const blob = await response.blob();
+      const file = new File([blob], 'sakila.db', { type: 'application/x-sqlite3' });
+      await handleSqliteImport(file);
+    } catch (err) {
+      console.error('Failed to open sample database:', err);
+      setImportError(err instanceof Error ? err.message : 'Failed to open sample database');
+    }
+  }, [handleSqliteImport]);
 
   // Handle table selection from sidebar
   const handleSelectTable = useCallback(async (dbName: string, tableName: string) => {
@@ -220,25 +329,28 @@ function App() {
 
   // Render main content based on active view
   const renderMainContent = () => {
-    if (isLoading) {
-      return (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <div className="w-8 h-8 border-2 border-navy-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-            <div className="text-navy-500">Initializing...</div>
-          </div>
-        </div>
-      );
-    }
-
     if (!activeDbId) {
       return (
-        <Welcome
-          onNewDatabase={() => setNewDbDialogOpen(true)}
-          onSqliteImport={handleSqliteImport}
-          onSelectDatabase={handleSelectDatabase}
-          showRecentDatabases={databases.length > 0}
-        />
+        <div className="relative flex-1 flex">
+          {isLoading && (
+            <div
+              className="absolute inset-0 z-10 flex items-center justify-center bg-navy-50/80"
+              aria-live="polite"
+            >
+              <div className="text-center">
+                <div className="w-8 h-8 border-2 border-navy-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                <div className="text-navy-500">Initializing...</div>
+              </div>
+            </div>
+          )}
+          <Welcome
+            onNewDatabase={() => setNewDbDialogOpen(true)}
+            onSqliteImport={handleSqliteImport}
+            onOpenSample={handleOpenSample}
+            onSelectDatabase={handleSelectDatabase}
+            showRecentDatabases={databases.length > 0}
+          />
+        </div>
       );
     }
 
@@ -269,6 +381,16 @@ function App() {
         );
       case 'welcome':
       default:
+        if (isLoading) {
+          return (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center">
+                <div className="w-8 h-8 border-2 border-navy-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                <div className="text-navy-500">Initializing...</div>
+              </div>
+            </div>
+          );
+        }
         return (
           <div className="flex-1 flex flex-col items-center justify-center p-8">
             <div className="text-center">
@@ -293,11 +415,15 @@ function App() {
   return (
     <>
       <UpdateBanner />
-      <div className="h-screen flex flex-col bg-navy-50 text-navy-900">
+      <div ref={appFocusTrapRef} className="h-screen flex flex-col bg-navy-50 text-navy-900">
         {/* Banners */}
         {isReadOnly && <ReadOnlyBanner />}
-        {storageStatus === 'quota_exceeded' && <StorageFullBanner onFreeSpaceClick={() => {/* TODO: show storage settings */}} />}
-        {storageStatus === 'degraded' && <PersistenceErrorBanner onDetailsClick={() => {/* TODO: show persistence details */}} />}
+        {storageStatus === 'quota_exceeded' && (
+          <StorageFullBanner onFreeSpaceClick={() => setShowQuotaModal(true)} />
+        )}
+        {storageStatus === 'degraded' && (
+          <PersistenceErrorBanner onDetailsClick={() => setShowPersistenceModal(true)} />
+        )}
 
         {/* Header */}
         <header className="h-12 bg-white border-b border-navy-200 flex items-center px-4 gap-4 shrink-0">
@@ -400,6 +526,22 @@ function App() {
         onCreate={handleCreateDb}
         existingNames={databases.map((db) => db.name)}
         isReadOnly={isReadOnly}
+      />
+
+      <QuotaExceededModal
+        isOpen={showQuotaModal}
+        onClose={() => setShowQuotaModal(false)}
+        onStorageFreed={() => {
+          setShowQuotaModal(false);
+          setQuotaModalShownForDb(activeDbId ?? null);
+        }}
+      />
+
+      <PersistenceErrorModal
+        isOpen={showPersistenceModal}
+        onClose={() => setShowPersistenceModal(false)}
+        onRetrySuccess={() => setPersistenceModalShown(false)}
+        onDiscardChanges={() => setPersistenceModalShown(false)}
       />
 
       {/* Import Error Dialog */}

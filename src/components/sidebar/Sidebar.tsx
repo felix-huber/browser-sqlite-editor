@@ -15,6 +15,18 @@ import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useDatabases, useDatabaseStore } from '../../store';
 import { DBTree } from './DBTree';
 
+const areSetsEqual = (left: Set<string>, right: Set<string>): boolean => {
+  if (left.size !== right.size) {
+    return false;
+  }
+  for (const value of left) {
+    if (!right.has(value)) {
+      return false;
+    }
+  }
+  return true;
+};
+
 export interface SidebarProps {
   /** Whether the sidebar is collapsed */
   collapsed?: boolean;
@@ -71,23 +83,31 @@ export function Sidebar({
   useEffect(() => {
     const hadFilter = prevSearchFilterRef.current.trim().length > 0;
     const hasFilter = searchFilter.trim().length > 0;
+    const allDbNames = new Set(databases.map((db) => db.name));
+    const expandedMatchesAll = areSetsEqual(expandedDbs, allDbNames);
 
     if (hasFilter && !hadFilter) {
       // Search is starting, save current expansion state and auto-expand all
       savedExpandedDbsRef.current = new Set(expandedDbs);
-      setExpandedDbs(new Set(databases.map((db) => db.name)));
+      if (!expandedMatchesAll) {
+        setExpandedDbs(allDbNames);
+      }
     } else if (!hasFilter && hadFilter && savedExpandedDbsRef.current !== null) {
       // Search is ending, restore previous expansion state
-      setExpandedDbs(savedExpandedDbsRef.current);
+      const savedExpanded = savedExpandedDbsRef.current;
       savedExpandedDbsRef.current = null;
+      if (!areSetsEqual(expandedDbs, savedExpanded)) {
+        setExpandedDbs(new Set(savedExpanded));
+      }
     } else if (hasFilter) {
       // Search is active and databases changed, keep all expanded
-      setExpandedDbs(new Set(databases.map((db) => db.name)));
+      if (!expandedMatchesAll) {
+        setExpandedDbs(allDbNames);
+      }
     }
 
     prevSearchFilterRef.current = searchFilter;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchFilter, databases]);
+  }, [searchFilter, databases, expandedDbs]);
 
   // Filter databases by search
   const filteredDatabases = useMemo(() => {

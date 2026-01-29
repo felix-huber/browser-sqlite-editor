@@ -2,77 +2,12 @@
 
 This extension adds artifact-driven workflows with GPT-5.2 Pro review loops to Compound Engineering.
 
-## Working Style
+## When Working With Me
 
 - Be concise, skip obvious explanations
 - Just make the fix, don't ask permission for small changes
 - If something's unclear, make a reasonable assumption and note it
 - **After starting/restarting the dev server**, always smoke test: wait for ready, curl the homepage, then agent-browser open key pages affected by recent changes
-
----
-
-## CORE PRINCIPLES (Karpathy-Inspired)
-
-### 1. Think Before Coding
-
-Don't assume. Don't hide confusion. Surface tradeoffs.
-
-**Before implementing:**
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them—don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- **If something is unclear, STOP. Name what's confusing. Ask.**
-
-### 2. Simplicity First
-
-Minimum code that solves the problem. Nothing speculative.
-
-- No features beyond what was asked
-- No abstractions for single-use code
-- No "flexibility" or "configurability" that wasn't requested
-- No error handling for impossible scenarios
-- If you write 200 lines and it could be 50, rewrite it
-
-**The test:** "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-### 3. Surgical Changes
-
-Touch only what you must. Clean up only your own mess.
-
-**When editing existing code:**
-- Don't "improve" adjacent code, comments, or formatting
-- Don't refactor things that aren't broken
-- Match existing style, even if you'd do it differently
-- If you notice unrelated dead code, mention it—don't delete it
-
-**When your changes create orphans:**
-- Remove imports/variables/functions that YOUR changes made unused
-- Don't remove pre-existing dead code unless asked
-
-**The test:** Every changed line should trace directly to the user's request.
-
-### 4. Goal-Driven Execution
-
-Define success criteria. Loop until verified.
-
-Transform tasks into verifiable goals:
-
-| Instead of... | Transform to... |
-|---------------|-----------------|
-| "Add validation" | "Write tests for invalid inputs, then make them pass" |
-| "Fix the bug" | "Write a test that reproduces it, then make it pass" |
-| "Refactor X" | "Ensure tests pass before and after" |
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
-
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
-
----
 
 ## CRITICAL RULES
 
@@ -94,7 +29,30 @@ New files are reserved for GENUINELY NEW FUNCTIONALITY that makes zero sense to 
 ### Rule 3: No Automated Code Transforms
 NEVER run a script that processes/changes code files in this repo. That sort of brittle, regex-based stuff is always a disaster. DO NOT BE LAZY. Make code changes manually, even when there are many instances to fix. If changes are many but simple, use several subagents in parallel.
 
----
+### Rule 4: Simplicity Check
+**Before committing any code, ask yourself:**
+> "Would a senior engineer say this is overcomplicated? If yes, simplify."
+
+Look for:
+- Abstractions not needed yet (YAGNI)
+- Multiple patterns where one would suffice
+- Premature optimization
+- Over-engineered solutions for simple problems
+
+## Recommended: Install DCG for Safety
+
+Prevents agents from running destructive git/filesystem commands:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/destructive_command_guard/master/install.sh?$(date +%s)" | bash
+```
+
+This auto-configures Claude Code, Codex, Gemini, Cursor, and Aider to block:
+- `git reset --hard`, `git clean -f`, `git push --force`
+- `rm -rf` outside temp directories
+- Other destructive patterns
+
+See: https://github.com/Dicklesworthstone/destructive_command_guard
 
 ## Non-negotiables
 
@@ -105,41 +63,18 @@ NEVER run a script that processes/changes code files in this repo. That sort of 
 5. **Clean shutdown**: For swarms, use requestShutdown → approvals → cleanup.
 6. **ITERATE UNTIL CONVERGENCE**: Oracle reviews and self-reviews must run multiple times.
 
----
+## CRITICAL: Iteration Requirements
 
-## ITERATION REQUIREMENTS (Doodlestein Methodology)
+Based on the Doodlestein methodology, **planning tokens are 100x cheaper than fixing code bugs**:
 
-> "Planning tokens are 100x cheaper than fixing code bugs."
-
-| Phase | Minimum Iterations | Convergence Criteria |
-|-------|-------------------|----------------------|
-| Plan review (Oracle) | 4-5 passes | Suggestions become incremental |
-| Plan → Beads review | 6-9 passes | No more changes |
-| Code review (Oracle) | Until converged | 0 new blockers/majors |
-| Fresh eyes review | Until stable | No bugs found |
+| Phase | Minimum Iterations |
+|-------|-------------------|
+| Plan review (Oracle) | 4-5 passes until stable |
+| Plan → Beads review | 6-9 passes until no changes |
+| Code review (Oracle) | Until 0 new blockers/majors |
+| Any self-review | Until stable (no changes) |
 
 **DO NOT SKIP ITERATIONS.** See `skills/phase-transitions/SKILL.md` for detailed prompts.
-
----
-
-## Fresh Eyes Review (AFTER EVERY TASK!)
-
-After completing any task, run this prompt until it finds nothing:
-
-```
-Great, now I want you to carefully read over all of the new code you
-just wrote and other existing code you just modified with "fresh eyes"
-looking super carefully for any obvious bugs, errors, problems, issues,
-confusion, etc.
-
-**FIRST CHECK**: Would a senior engineer say this is overcomplicated? 
-If yes, simplify it first.
-
-**SECOND CHECK**: Does every changed line trace directly to the user's request?
-If not, revert the unrelated changes.
-
-Carefully fix anything you uncover. Use ultrathink.
-```
 
 ---
 
@@ -166,17 +101,60 @@ Carefully fix anything you uncover. Use ultrathink.
 - Need raw speed or just hunting text → start with rg
 - Often combine: `rg` to shortlist files, then `ast-grep` to match/modify with precision
 
+**Snippets:**
+```bash
+# Find structured code (ignores comments/strings)
+ast-grep run -l Python -p 'def $NAME($PARAMS): $$$BODY'
+
+# Find all async function definitions
+ast-grep run -l Python -p 'async def $NAME($PARAMS): $$$BODY'
+
+# Quick textual hunt
+rg -n 'def .*research' -t py
+
+# Combine speed + precision
+rg -l -t py 'pandas' | xargs ast-grep run -l Python -p 'import pandas as $ALIAS' --json
+```
+
 ---
 
 ## UBS Quick Reference (Ultimate Bug Scanner)
 
 **Golden Rule:** `ubs --diff .` (or `ubs --staged`) before every commit. Exit 0 = safe. Exit >0 = fix & re-run.
 
+**Commands:**
 ```bash
 ubs --diff --only=js,python .    # Modified files (working tree vs HEAD) — USE THIS
 ubs --staged --only=js,python .  # Staged files — before commit
 ubs --ci --fail-on-warning --diff .  # CI mode for the diff — before PR
+ubs .                             # Whole project (slow, use sparingly)
 ```
+
+**Output Format:**
+```
+⚠️ Category (N errors)
+file.ts:42:5 – Issue description
+💡 Suggested fix
+Exit code: 1
+```
+
+**Fix Workflow:**
+1. Read finding → category + fix suggestion
+2. Navigate `file:line:col` → view context
+3. Verify real issue (not false positive)
+4. Fix root cause (not symptom)
+5. Re-run `ubs <file>` → exit 0
+6. Commit
+
+**Bug Severity:**
+- **Critical (always fix):** Null safety, XSS/injection, async/await, memory leaks
+- **Important (production):** Type narrowing, division-by-zero, resource leaks
+- **Contextual (judgment):** TODO/FIXME, console logs
+
+**Anti-Patterns:**
+- ❌ Ignore findings → ✅ Investigate each
+- ❌ Full scan per edit → ✅ Scope to file
+- ❌ Fix symptom (`if (x) { x.y }`) → ✅ Root cause (`x?.y`)
 
 ---
 
@@ -189,26 +167,86 @@ When starting a beads-tracked task:
    br ready --json  # Choose highest priority, no blockers
    ```
 
-2. **Transform to verifiable goal** — Before starting, reframe the task:
-   - "Implement X" → "Write test for X behavior, then make it pass"
-   - "Fix bug Y" → "Write test reproducing Y, then make it pass"
-
-3. **Announce start**
+2. **Announce start**
    ```bash
    br update <id> --status in_progress
    ```
 
-4. **Work and update**
+3. **Work and update**
    - If you discover new work, create a new bead with `--deps discovered-from:<parent-id>`
 
-5. **Fresh eyes review** — Run the fresh eyes prompt until no bugs found
-
-6. **Complete and release**
+4. **Complete and release**
    ```bash
    br close <id> --reason "Completed"
    ```
 
-7. **Commit .beads/ in the same commit as code changes**
+5. **Commit .beads/ in the same commit as code changes**
+
+**Mapping cheat-sheet:**
+- Thread ID / commit messages: `br-###` for traceability
+- File reservation reason: `br-###`
+
+**Key invariants:**
+- `.beads/` is authoritative state and must always be committed with code changes
+- Do not edit `.beads/*.jsonl` directly; only via `br`
+
+---
+
+## Landing the Plane (Session Completion)
+
+When ending a work session, you MUST complete ALL steps below. Work is NOT complete until git push succeeds.
+
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work**
+   - Create issues for anything that needs follow-up
+
+2. **Run quality gates (if code changed)**
+   ```bash
+   npm run lint
+   npm run typecheck
+   npm test
+   ```
+
+3. **Update issue status**
+   - Close finished work, update in-progress items
+
+4. **PUSH TO REMOTE** — This is MANDATORY:
+   ```bash
+   git pull --rebase
+   br sync --flush-only  # Export to JSONL (does NOT run git commands)
+   git add .beads/ && git commit -m "Update beads"
+   git push
+   git status  # MUST show "up to date with origin"
+   ```
+
+5. **Clean up**
+   - Clear stashes, prune remote branches
+
+6. **Verify**
+   - All changes committed AND pushed
+
+7. **Hand off**
+   - Provide context for next session
+
+**CRITICAL RULES:**
+- Work is NOT complete until `git push` succeeds
+- NEVER stop before pushing — that leaves work stranded locally
+- NEVER say "ready to push when you are" — YOU must push
+- If push fails, resolve and retry until it succeeds
+
+---
+
+## Note for Codex/GPT-5.2
+
+If you are Codex or GPT-5.2 (or any non-Claude agent): another agent (often Claude Code) may have made changes to the working tree since you last saw it. Before assuming your mental model of the code is correct:
+
+```bash
+git status              # See uncommitted changes
+git log --oneline -5    # See recent commits
+```
+
+Re-read any files you plan to modify. This prevents you from overwriting another agent's work or making edits based on stale context.
 
 ---
 
@@ -236,36 +274,27 @@ When the workflow requires Oracle, **run it directly**:
 ./scripts/oracle_converge.sh prd artifacts/01-prd.md artifacts/00-brief.md
 ```
 
+The script will:
+- Auto-open Chromium
+- Run GPT-5.2 Pro review (30-90 min per pass)
+- Iterate until convergence (0 blockers/majors)
+- Write output to `artifacts/06-oracle/`
+- **Auto-resume** if interrupted (reads convergence-history.json)
+
 **DO NOT ask the user to run this.** Just run it. The script handles everything including browser automation, retries, and convergence checking.
 
 ---
 
-## Landing the Plane (Session Completion)
+## Devin Review (Before Merge)
 
-When ending a work session, you MUST complete ALL steps below. Work is NOT complete until git push succeeds.
+Before merging any PR, run Devin code review:
 
-**MANDATORY WORKFLOW:**
+```bash
+./scripts/devin_review.sh        # Uses CLI (npx devin-review)
+./scripts/devin_review.sh --web 123  # Force web interface
+```
 
-1. **File issues for remaining work**
-2. **Run quality gates (if code changed)**
-   ```bash
-   npm run lint
-   npm run typecheck
-   npm test
-   ```
-3. **Update issue status**
-4. **PUSH TO REMOTE** — This is MANDATORY:
-   ```bash
-   git pull --rebase
-   br sync --flush-only
-   git add .beads/ && git commit -m "Update beads"
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Verify** all changes committed AND pushed
-6. **Hand off** context for next session
-
-**CRITICAL:** Work is NOT complete until `git push` succeeds. NEVER stop before pushing.
+Fix any **SEVERE** bugs before merging.
 
 ---
 
@@ -277,7 +306,7 @@ When ending a work session, you MUST complete ALL steps below. Work is NOT compl
 06-oracle/prd/*    → /oracle prd (iterate until converged)
 02-ux.md           → /ux
 06-oracle/ux/*     → /oracle ux (iterate until converged)
-05-design/*        → /ui (RECOMMENDED for UI-heavy projects!)
+05-design/*        → /ui (optional)
 03-plan.md         → /plan (with sprints!)
 06-oracle/plan/*   → /oracle plan (iterate until converged)
 04-task-graph.json → /artifact-tasks
@@ -289,29 +318,9 @@ When ending a work session, you MUST complete ALL steps below. Work is NOT compl
 09-retro.md        → /retro
 ```
 
-### When to Run /ui (UI Exploration)
-
-**REQUIRED** when the project involves:
-- Data grids, tables, or spreadsheet-like interfaces
-- Canvas-based editors (ERD, diagrams, flowcharts)
-- Visual query builders or drag-and-drop interfaces
-- Dashboards with multiple panels/widgets
-- Any user-facing application with significant visual complexity
-
-**Optional** for:
-- CLI tools, APIs, backend services
-- Simple CRUD apps with standard forms
-- Libraries, SDKs, infrastructure code
-
-**Detection heuristic:** If the PRD or UX spec mentions terms like "grid", "canvas", "drag", "panel", "visual", "editor", "designer", "workspace", or "dashboard" — run `/ui` before `/plan`.
-
-**What /ui produces:**
-- `artifacts/05-design/tasteboard.md` — Visual references and principles
-- `artifacts/05-design/keystone.html` — Primary screen prototype
-- `artifacts/05-design/variants/*.html` — 6-12 design alternatives
-- `artifacts/05-design/manifest.json` — Gallery metadata
-
 ---
+
+## Task Management Options
 
 ### Option 1: beads_rust (br) — Recommended for Autonomous Execution
 
@@ -323,17 +332,20 @@ cargo install --git https://github.com/Dicklesworthstone/beads_rust.git
 node scripts/generate_beads_setup.js
 bash artifacts/04-beads-setup.sh
 
-# (Optional) Run beads review for extra polish - see skills/phase-transitions/SKILL.md
-# For autonomous execution, skip directly to Ralph:
+# IMPORTANT: Run beads review prompt 6-9 times!
+# See skills/phase-transitions/SKILL.md
 
-# Execute with smart routing
+# Execute with smart routing (default)
 ./scripts/ralph.sh --beads 50
 ```
 
 ### Option 2: task-graph.json — Built-in, No External Deps
 
 ```bash
+# Compile task graph
 node scripts/compile_task_graph.js
+
+# Execute
 ./scripts/ralph.sh 50
 ```
 
@@ -351,7 +363,7 @@ node scripts/compile_task_graph.js
 
 ---
 
-## Commands Reference
+## Commands from This Extension
 
 | Command | Purpose |
 |---------|---------|
@@ -373,7 +385,7 @@ node scripts/compile_task_graph.js
 
 ---
 
-## Skills Reference
+## Skills from This Extension
 
 | Skill | Purpose |
 |-------|---------|
@@ -399,13 +411,3 @@ node scripts/compile_task_graph.js
 - Tools: `tools/` (tasteboard, design-gallery, task-board)
 - Artifacts: `artifacts/` (generated during workflow)
 - Docs: `docs/` (schema documentation, patterns)
-
----
-
-## How to Know These Guidelines Are Working
-
-✅ Fewer unnecessary changes in diffs
-✅ Fewer rewrites due to overcomplication
-✅ Clarifying questions come BEFORE implementation, not after mistakes
-✅ Clean, minimal PRs with every line traceable to requirements
-✅ Oracle reviews converge faster (fewer iterations needed)

@@ -10,7 +10,7 @@
  * Run with: npx playwright test e2e/perf/
  */
 
-import { test, expect, type Page, type CDPSession, type Browser } from '@playwright/test';
+import { test, expect, type Page, type CDPSession } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -39,8 +39,8 @@ const THRESHOLDS = {
 const SIZES = {
   /** Number of rows for scroll and heap tests */
   LARGE_ROW_COUNT: 100000,
-  /** Target size for large import test (bytes) - reduced for CI */
-  LARGE_IMPORT_BYTES: 10 * 1024 * 1024, // 10MB for practical testing (100MB would be too slow)
+  /** Target size for large import test (bytes) */
+  LARGE_IMPORT_BYTES: 100 * 1024 * 1024, // 100MB per plan requirement
 };
 
 /** Results file path */
@@ -81,7 +81,7 @@ interface PerfMetrics {
   };
 }
 
-interface FrameTiming {
+interface _FrameTiming {
   timestamp: number;
   duration: number;
 }
@@ -93,7 +93,7 @@ interface FrameTiming {
 /**
  * SQLite magic header bytes
  */
-const SQLITE_MAGIC = [
+const _SQLITE_MAGIC = [
   0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, // "SQLite f"
   0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00, // "ormat 3\0"
 ];
@@ -101,12 +101,12 @@ const SQLITE_MAGIC = [
 /**
  * Create a valid SQLite database file with test data
  */
-function createValidSqliteBytes(pageSize = 4096): Uint8Array {
+function _createValidSqliteBytes(pageSize = 4096): Uint8Array {
   const bytes = new Uint8Array(pageSize);
 
   // SQLite file header (first 100 bytes)
-  for (let i = 0; i < SQLITE_MAGIC.length; i++) {
-    bytes[i] = SQLITE_MAGIC[i];
+  for (let i = 0; i < _SQLITE_MAGIC.length; i++) {
+    bytes[i] = _SQLITE_MAGIC[i];
   }
   // Page size (bytes 16-17): 4096 = 0x1000 (big-endian)
   bytes[16] = 0x10;
@@ -139,14 +139,14 @@ function createValidSqliteBytes(pageSize = 4096): Uint8Array {
  * Create a large SQLite file for import testing
  * This creates a file with proper SQLite header but minimal valid structure
  */
-function createLargeSqliteFile(targetSizeBytes: number): Uint8Array {
+function _createLargeSqliteFile(targetSizeBytes: number): Uint8Array {
   const pageSize = 4096;
   const numPages = Math.ceil(targetSizeBytes / pageSize);
   const bytes = new Uint8Array(numPages * pageSize);
 
   // SQLite file header
-  for (let i = 0; i < SQLITE_MAGIC.length; i++) {
-    bytes[i] = SQLITE_MAGIC[i];
+  for (let i = 0; i < _SQLITE_MAGIC.length; i++) {
+    bytes[i] = _SQLITE_MAGIC[i];
   }
   // Page size
   bytes[16] = 0x10;
@@ -390,7 +390,7 @@ async function stopTracing(client: CDPSession, outputPath: string): Promise<void
 /**
  * Get heap usage via CDP
  */
-async function getHeapUsage(page: Page): Promise<number> {
+async function _getHeapUsage(page: Page): Promise<number> {
   const client = await page.context().newCDPSession(page);
 
   // Force garbage collection before measuring
@@ -410,7 +410,7 @@ async function getHeapUsage(page: Page): Promise<number> {
 // =============================================================================
 
 // Only run on Chromium (CDP required)
-test.describe('Performance Regression Tests', () => {
+test.describe.serial('Performance Regression Tests', () => {
   test.beforeAll(async () => {
     // Ensure results directory exists
     if (!fs.existsSync(RESULTS_DIR)) {
@@ -552,29 +552,62 @@ test.describe('Performance Regression Tests', () => {
   });
 
   // ===========================================================================
-  // Test: Large Import Performance (10MB SQLite, <30s)
-  // Note: Using 10MB instead of 100MB for practical CI performance
+  // Test: Large Import Performance (100MB SQLite, <30s)
   // ===========================================================================
-  test('large import: 10MB SQLite file, <30s', async ({ page }) => {
+  test('large import: 100MB SQLite file, <30s', async ({ page }) => {
     const metrics: PerfMetrics = {
       timestamp: new Date().toISOString(),
       tests: {},
       summary: { passed: true, failedTests: [] },
     };
 
-    // Create large SQLite file bytes
-    const fileBytes = createLargeSqliteFile(SIZES.LARGE_IMPORT_BYTES);
+    const fileSizeBytes = SIZES.LARGE_IMPORT_BYTES;
 
     // Start tracing
     const traceClient = await startTracing(page);
 
     // Measure import time
-    const startTime = Date.now();
-
-    // Import the file directly via page.evaluate
+    // Import the file directly via page.evaluate (generate bytes in-browser to avoid serialization overhead)
     const importResult = await page.evaluate(
-      async ({ bytesArray }) => {
-        const bytes = new Uint8Array(bytesArray);
+      async ({ byteLength }) => {
+        const bytes = new Uint8Array(byteLength);
+        const sqliteMagic = [
+          0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66,
+          0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00,
+        ];
+
+        for (let i = 0; i < sqliteMagic.length; i++) {
+          bytes[i] = sqliteMagic[i];
+        }
+
+        const pageSize = 4096;
+        const numPages = Math.ceil(byteLength / pageSize);
+
+        // Page size and header fields
+        bytes[16] = 0x10;
+        bytes[17] = 0x00;
+        bytes[18] = 0x01;
+        bytes[19] = 0x01;
+        bytes[20] = 0x00;
+        bytes[21] = 0x40;
+        bytes[22] = 0x20;
+        bytes[23] = 0x20;
+        // Database size in pages (big-endian)
+        bytes[28] = (numPages >> 24) & 0xff;
+        bytes[29] = (numPages >> 16) & 0xff;
+        bytes[30] = (numPages >> 8) & 0xff;
+        bytes[31] = numPages & 0xff;
+        bytes[43] = 0x01;
+        bytes[47] = 0x04;
+        bytes[59] = 0x01;
+        bytes[96] = 0x00;
+        bytes[97] = 0x2e;
+        bytes[98] = 0x68;
+        bytes[99] = 0x18;
+        bytes[100] = 0x0d;
+        bytes[105] = 0x10;
+        bytes[106] = 0x00;
+
         const startMs = performance.now();
 
         // Create registry entry
@@ -651,10 +684,10 @@ test.describe('Performance Regression Tests', () => {
           sizeBytes: bytes.length,
         };
       },
-      { bytesArray: Array.from(fileBytes) }
+      { byteLength: fileSizeBytes }
     );
 
-    const importTimeMs = Date.now() - startTime;
+    const importTimeMs = importResult.timeMs;
 
     // Stop tracing
     const tracePath = path.join(RESULTS_DIR, 'large-import-trace.json');
@@ -663,7 +696,7 @@ test.describe('Performance Regression Tests', () => {
     metrics.tests.largeImport = {
       importTimeMs,
       passed: importTimeMs <= THRESHOLDS.LARGE_IMPORT_MS,
-      fileSizeBytes: fileBytes.length,
+      fileSizeBytes,
     };
 
     if (!metrics.tests.largeImport.passed) {
@@ -674,7 +707,7 @@ test.describe('Performance Regression Tests', () => {
     saveMetrics(metrics);
 
     // Log results
-    console.log(`Large Import: time=${importTimeMs}ms, size=${(fileBytes.length / 1024 / 1024).toFixed(2)}MB`);
+    console.log(`Large Import: time=${importTimeMs}ms, size=${(fileSizeBytes / 1024 / 1024).toFixed(2)}MB`);
     console.log(`Trace saved to: ${tracePath}`);
 
     expect(importTimeMs).toBeLessThanOrEqual(THRESHOLDS.LARGE_IMPORT_MS);
@@ -831,20 +864,14 @@ test.describe('Performance Regression Tests', () => {
   // ===========================================================================
   // Summary Test: Verify all metrics and fail on regression
   // ===========================================================================
-  test('summary: verify metrics and fail on any regression', async ({ page }) => {
+  test('summary: verify metrics and fail on any regression', async ({ browserName }) => {
     // This test runs last and verifies the overall results
-    if (!fs.existsSync(RESULTS_FILE)) {
-      test.skip();
-      return;
-    }
+    test.skip(browserName !== 'chromium', 'Performance tests require Chromium (CDP)');
 
+    expect(fs.existsSync(RESULTS_FILE)).toBe(true);
     const results: PerfMetrics[] = JSON.parse(fs.readFileSync(RESULTS_FILE, 'utf-8'));
+    expect(results.length).toBeGreaterThan(0);
     const latestResult = results[results.length - 1];
-
-    if (!latestResult) {
-      test.skip();
-      return;
-    }
 
     // Log summary
     console.log('\n=== Performance Test Summary ===');

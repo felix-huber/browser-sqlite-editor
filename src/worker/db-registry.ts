@@ -264,7 +264,7 @@ function now(): string {
 /**
  * Derive filename from database name
  */
-function toFilename(name: string): string {
+export function toFilename(name: string): string {
   // Sanitize name for filesystem
   const sanitized = name
     .replace(/[<>:"/\\|?*]/g, '_')

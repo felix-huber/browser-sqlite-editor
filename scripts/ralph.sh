@@ -42,6 +42,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TASK_GRAPH="$PROJECT_ROOT/artifacts/04-task-graph.json"
 PROGRESS_FILE="$PROJECT_ROOT/progress.txt"
 LEARNINGS_FILE="$PROJECT_ROOT/learnings.md"
+LOGS_DIR="$PROJECT_ROOT/.beads/logs"
+CURRENT_TASK_ID=""  # Set during execution for logging
 
 # Defaults
 MAX_ITERATIONS=20
@@ -51,6 +53,7 @@ BACKEND_TOOL="codex"   # Backend/core/api tasks → Codex (fast iteration)
 FRONTEND_TOOL="claude" # Frontend/UI/design tasks → Claude Code (nuanced)
 USE_BEADS=""  # Empty = auto-detect/interactive, "true" = beads, "false" = task-graph
 FRESH_EYES="false"     # Set to "true" for post-task review
+REVIEW_TOOL=""         # Empty = same as coding tool, "codex" or "claude" = cross-model review
 DEVIN_REVIEW="true"    # Run Devin AI code review on completion (free for public PRs)
 
 # Self-healing (from task-orchestrator pattern)
@@ -74,15 +77,6 @@ log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_tool() { echo -e "${CYAN}[TOOL]${NC} $1"; }
-
-# Portable ISO timestamp (macOS `date` lacks -Iseconds)
-iso_now() {
-  if date -Iseconds >/dev/null 2>&1; then
-    date -Iseconds
-  else
-    date -u "+%Y-%m-%dT%H:%M:%SZ"
-  fi
-}
 
 # Parse arguments
 parse_args() {
@@ -127,6 +121,15 @@ parse_args() {
       --fresh-eyes)
         FRESH_EYES="true"
         shift
+        ;;
+      --review-tool)
+        if [[ -z "${2:-}" || "$2" == -* ]]; then
+          log_error "--review-tool requires a value (claude or codex)"
+          exit 1
+        fi
+        REVIEW_TOOL="$2"
+        FRESH_EYES="true"  # Implicitly enable fresh-eyes when review-tool is set
+        shift 2
         ;;
       --no-self-heal)
         SELF_HEAL="false"
@@ -183,6 +186,16 @@ parse_args() {
       exit 1
       ;;
   esac
+
+  if [[ -n "$REVIEW_TOOL" ]]; then
+    case "$REVIEW_TOOL" in
+      claude|codex) ;;
+      *)
+        log_error "--review-tool must be 'claude' or 'codex', got: $REVIEW_TOOL"
+        exit 1
+        ;;
+    esac
+  fi
 }
 
 show_help() {
@@ -202,6 +215,7 @@ Options:
   --beads                      Use beads_rust (br) for task tracking
   --no-beads, --graph          Use task-graph.json (Oracle Swarm built-in)
   --fresh-eyes                 Run fresh-eyes code review after each task
+  --review-tool <claude|codex> Use different tool for code review (cross-model)
   --no-self-heal               Disable auto-recovery of stuck tasks
   --stall-threshold <min>      Minutes before task is considered stuck (default: 20)
   --auto-pr                    Create PR after each completed task (default: on)
@@ -216,6 +230,14 @@ Tool Routing (Doodlestein Methodology):
   - Frontend tasks (ui, components, design, css, styles) → Claude Code (nuanced)
   
   Heavy document reviews (PRD, UX, Plan) use GPT-5.2 Pro via /oracle command.
+
+Cross-Model Review (--review-tool):
+  Use a different model for code review than for coding:
+  - Code with Claude (Opus 4.5), review with Codex (GPT 5.2)
+  - Code with Codex, review with Claude
+  Different models catch different types of issues!
+  
+  Example: ./scripts/ralph.sh --tool claude --review-tool codex --beads 50
 
 Task Source Selection:
   By default, Ralph will auto-detect available task sources:
@@ -294,6 +316,9 @@ EOF
 check_prerequisites() {
   local has_claude=false
   local has_codex=false
+  
+  # Create logs directory
+  mkdir -p "$LOGS_DIR"
   
   # Check which tools are available
   if command -v claude &> /dev/null; then
@@ -535,8 +560,8 @@ get_tool_for_task() {
     # Mixed - prefer frontend tool for UI safety
     echo "$FRONTEND_TOOL"
   else
-    # Default to the configured frontend tool (respects availability check)
-    echo "$FRONTEND_TOOL"
+    # Default to claude for unknown
+    echo "claude"
   fi
 }
 
@@ -545,6 +570,18 @@ run_with_tool() {
   local tool="$1"
   local prompt="$2"
   local output=""
+  local log_file=""
+  
+  # Create log file for this task if we have a task ID
+  if [[ -n "$CURRENT_TASK_ID" ]]; then
+    log_file="$LOGS_DIR/${CURRENT_TASK_ID}.log"
+    echo "=== Task: $CURRENT_TASK_ID ===" > "$log_file"
+    echo "=== Tool: $tool ===" >> "$log_file"
+    echo "=== Started: $(date -Iseconds) ===" >> "$log_file"
+    echo "" >> "$log_file"
+    log_info "Logging to: $log_file"
+    log_info "Watch with: tail -f $log_file"
+  fi
   
   log_tool "Using: $tool"
   
@@ -555,7 +592,11 @@ run_with_tool() {
       #   --dangerously-skip-permissions : Skip all approval prompts (YOLO mode)
       # Customize via CLAUDE_CMD env var if needed
       local claude_cmd="${CLAUDE_CMD:-claude -p --dangerously-skip-permissions}"
-      output=$($claude_cmd "$prompt" 2>&1 | tee /dev/stderr) || true
+      if [[ -n "$log_file" ]]; then
+        output=$($claude_cmd "$prompt" 2>&1 | tee -a "$log_file" | tee /dev/stderr) || true
+      else
+        output=$($claude_cmd "$prompt" 2>&1 | tee /dev/stderr) || true
+      fi
       ;;
     codex)
       # Codex CLI flags:
@@ -564,7 +605,11 @@ run_with_tool() {
       #   Alternative: --full-auto (safer, keeps sandbox but auto-approves)
       # Customize via CODEX_CMD env var if needed
       local codex_cmd="${CODEX_CMD:-codex exec --yolo}"
-      output=$($codex_cmd "$prompt" 2>&1 | tee /dev/stderr) || true
+      if [[ -n "$log_file" ]]; then
+        output=$($codex_cmd "$prompt" 2>&1 | tee -a "$log_file" | tee /dev/stderr) || true
+      else
+        output=$($codex_cmd "$prompt" 2>&1 | tee /dev/stderr) || true
+      fi
       ;;
     *)
       log_error "Unknown tool: $tool"
@@ -572,17 +617,147 @@ run_with_tool() {
       ;;
   esac
   
+  # Log completion
+  if [[ -n "$log_file" ]]; then
+    echo "" >> "$log_file"
+    echo "=== Finished: $(date -Iseconds) ===" >> "$log_file"
+  fi
+  
   echo "$output"
 }
 
 # Fresh Eyes Code Review (Doodlestein methodology)
 # Run after each task completion to catch bugs early
 # Keep running until no bugs are found
+# Supports cross-model review and Codex-optimized review prompts
 run_fresh_eyes_review() {
   local tool="$1"
   local max_review_passes=3
   local pass=1
   
+  # Check if we're in a git repo
+  local in_git_repo=false
+  if git rev-parse --git-dir &>/dev/null; then
+    in_git_repo=true
+  fi
+  
+  # Use Codex two-phase review if tool is codex and we have git
+  # Phase 1: Find issues (read-only analysis)
+  # Phase 2: Fix issues (apply changes)
+  if [[ "$tool" == "codex" && "$in_git_repo" == "true" ]]; then
+    log_info "  Using Codex two-phase code review..."
+    
+    # Check if there are uncommitted changes
+    if [[ -z "$(git status --porcelain 2>/dev/null)" ]]; then
+      log_info "  No uncommitted changes to review"
+      return 0
+    fi
+    
+    # Generate diff for Codex to review
+    local diff_content
+    diff_content=$(git diff HEAD 2>/dev/null || git diff 2>/dev/null || echo "")
+    local staged_diff
+    staged_diff=$(git diff --cached 2>/dev/null || echo "")
+    local changed_files
+    changed_files=$(git diff --name-status HEAD 2>/dev/null || git diff --name-status 2>/dev/null || echo "unknown")
+
+    local combined_diff=""
+    if [[ -n "$diff_content" ]]; then
+      combined_diff="$diff_content"
+    fi
+    if [[ -n "$staged_diff" ]]; then
+      if [[ -n "$combined_diff" ]]; then
+        combined_diff="${combined_diff}"$'\n'"$staged_diff"
+      else
+        combined_diff="$staged_diff"
+      fi
+    fi
+
+    local diff_note=""
+    if [[ -n "$combined_diff" ]]; then
+      local diff_line_count
+      diff_line_count=$(printf '%s\n' "$combined_diff" | wc -l | tr -d ' ')
+      if (( diff_line_count > 500 )); then
+        combined_diff=$(printf '%s\n' "$combined_diff" | head -n 500)
+        diff_note="NOTE: Diff truncated to first 500 lines to avoid context overflow."
+      fi
+    fi
+    
+    # PHASE 1: Find issues (using OpenAI's recommended review prompt)
+    log_info "  Phase 1: Analyzing code for issues..."
+    local review_prompt="You are acting as a reviewer for code changes made by another engineer.
+Focus on issues that impact correctness, performance, security, maintainability, or developer experience.
+Flag only actionable issues. When you flag an issue, provide a short, direct explanation and cite the affected file and line range.
+Prioritize severe issues (P1, P2) and avoid nit-level comments.
+
+CHANGED FILES:
+$changed_files
+
+DIFF:
+$diff_note
+$combined_diff
+
+Review the changes above and list any issues you find.
+Format each issue as:
+[P1] Issue title — file:line-range
+  Description of the problem and suggested fix.
+Use P1, P2, or P3 for severity.
+
+If no issues found, output exactly: NO_ISSUES_FOUND"
+
+    local review_output
+    set +e
+    review_output=$(run_with_tool "$tool" "$review_prompt" 2>&1)
+    set -e
+    
+    # Check if issues were found
+    if echo "$review_output" | grep -qx "NO_ISSUES_FOUND"; then
+      log_success "  Codex review complete - no issues found"
+      return 0
+    fi
+
+    local issue_lines
+    issue_lines=$(echo "$review_output" | grep -E '^\[P[123]\]' || true)
+    if [[ -z "$issue_lines" ]]; then
+      log_warn "  Codex review output contained no parsable issues"
+      return 0
+    fi
+    
+    # PHASE 2: Fix the issues found
+    log_info "  Phase 2: Fixing identified issues..."
+    local fix_prompt="You just reviewed this code and found issues. Now fix them.
+
+ISSUES FOUND IN REVIEW:
+$issue_lines
+
+CHANGED FILES:
+$changed_files
+
+Please fix ALL the issues identified above. For each fix:
+1. Read the relevant file
+2. Make the necessary changes
+3. Verify the fix is correct
+
+After fixing all issues, output: FIXES_APPLIED
+If you couldn't fix something, explain why and output: PARTIAL_FIX"
+
+    local fix_output
+    set +e
+    fix_output=$(run_with_tool "$tool" "$fix_prompt" 2>&1)
+    set -e
+    
+    if echo "$fix_output" | grep -qx "FIXES_APPLIED"; then
+      log_success "  Codex found and fixed all issues"
+    elif echo "$fix_output" | grep -qx "PARTIAL_FIX"; then
+      log_warn "  Codex fixed some issues but not all - manual review needed"
+    else
+      log_info "  Codex fix phase complete"
+    fi
+    
+    return 0
+  fi
+  
+  # Standard fresh-eyes prompt for Claude or non-git scenarios
   local review_prompt=$(cat <<'EOF'
 Great, now I want you to carefully read over all of the new code you
 just wrote and other existing code you just modified with "fresh eyes"
@@ -808,7 +983,7 @@ handle_stalled_task() {
   # Log the self-heal event
   {
     echo ""
-    echo "### Self-Heal Event - $(iso_now)"
+    echo "### Self-Heal Event - $(date -Iseconds)"
     echo "- Task: $task_id"
     echo "- Reason: Stalled (exceeded ${STALL_THRESHOLD}m threshold)"
     echo "- Action: Reset to pending for retry"
@@ -877,7 +1052,7 @@ Automated commit by Ralph autonomous execution loop.
 
 Task ID: $task_id
 Subject: $subject
-Timestamp: $(iso_now)" || {
+Timestamp: $(date -Iseconds)" || {
     log_warn "Nothing to commit"
     git checkout "${PR_BASE_BRANCH:-main}" 2>/dev/null || true
     return 0
@@ -944,7 +1119,7 @@ capture_learnings() {
   # Record to learnings file
   {
     echo ""
-    echo "## $(iso_now) - $task_id"
+    echo "## $(date -Iseconds) - $task_id"
     echo ""
     echo "**Task:** $subject"
     echo ""
@@ -999,14 +1174,6 @@ generate_prompt() {
   local setup=$(echo "$task_json" | jq -r '.setup // ""')
   local tags=$(echo "$task_json" | jq -r '(.tags // []) | join(", ")')
   
-  # Commit instruction varies based on AUTO_PR setting
-  local commit_instruction
-  if [[ "${AUTO_PR:-true}" == "true" ]]; then
-    commit_instruction="4. If all verifications pass, DO NOT commit. Leave changes uncommitted — Ralph will create a branch, commit, and open a PR automatically."
-  else
-    commit_instruction="4. If all verifications pass, commit your changes with message: \"feat($task_id): $subject\""
-  fi
-  
   cat << EOF
 You are an autonomous coding agent working on task: $task_id
 
@@ -1036,12 +1203,12 @@ $setup
 1. Read progress.txt for context from previous iterations
 2. Implement the task following the description
 3. Run the verification commands to confirm success
-$commit_instruction
+4. If all verifications pass, commit your changes with message: "feat($task_id): $subject"
 
 ## Critical Rules
 
 - Only modify files in allowed paths
-- Run ALL verification commands before marking complete
+- Run ALL verification commands before committing
 - If verification fails, fix the issue and retry
 - If you cannot complete the task, explain why clearly
 
@@ -1054,7 +1221,7 @@ If you discover something useful, output it with a marker:
 
 ## When Complete
 
-If ALL verification commands pass:
+If ALL verification commands pass and you've committed:
 Output exactly: <promise>TASK_COMPLETE</promise>
 
 If you cannot complete the task:
@@ -1110,6 +1277,10 @@ main() {
   echo "║                                                                ║"
   echo "║  Based on Geoffrey Huntley's Ralph pattern                     ║"
   echo "║  Fresh context each iteration • Memory via git + progress.txt ║"
+  echo "╠════════════════════════════════════════════════════════════════╣"
+  echo "║  WATCH LOGS:                                                   ║"
+  echo "║    tail -f .beads/logs/*.log     # All tasks                   ║"
+  echo "║    tail -f progress.txt          # Summary                     ║"
   echo "╚════════════════════════════════════════════════════════════════╝"
   echo ""
   log_info "Tool mode: $TOOL"
@@ -1134,11 +1305,12 @@ main() {
     
     # SELF-HEAL: Check for stalled tasks and recover them
     if [[ "${SELF_HEAL:-true}" == "true" ]]; then
+      local heal_attempt
       while IFS= read -r stalled_task_id; do
         [[ -z "$stalled_task_id" ]] && continue
         if check_task_stalled "$stalled_task_id"; then
           # Get current heal attempt count
-          local heal_attempt=1
+          heal_attempt=1
           if [[ "$USE_BEADS" != "true" ]]; then
             heal_attempt=$(jq -r --arg id "$stalled_task_id" '.tasks[] | select(.id == $id) | .healAttempt // 0' "$TASK_GRAPH" 2>/dev/null || echo "0")
             heal_attempt=$((heal_attempt + 1))
@@ -1243,12 +1415,19 @@ main() {
     # Save prompt for debugging
     echo "$prompt" > "/tmp/ralph-prompt-$task_id.md"
     
+    # Set current task for logging
+    CURRENT_TASK_ID="$task_id"
+    
     # Run with selected tool
     log_info "Spawning $selected_tool instance..."
+    log_info "Log file: $LOGS_DIR/${task_id}.log"
     
     set +e
     OUTPUT=$(run_with_tool "$selected_tool" "$prompt")
     set -e
+    
+    # Clear current task ID
+    CURRENT_TASK_ID=""
     
     # Check for completion signal
     if echo "$OUTPUT" | grep -q "<promise>TASK_COMPLETE</promise>"; then
@@ -1260,7 +1439,7 @@ main() {
       # Log to progress
       {
         echo ""
-        echo "### Iteration $i - $(iso_now)"
+        echo "### Iteration $i - $(date -Iseconds)"
         echo "- Task: $task_id - $subject"
         echo "- Tool: $selected_tool"
         echo "- Status: ✅ COMPLETED"
@@ -1273,9 +1452,15 @@ main() {
       
       # FRESH EYES REVIEW (if enabled)
       # Per Doodlestein methodology: review code after each task until no bugs found
+      # Supports cross-model review: code with Claude, review with Codex (or vice versa)
       if [[ "${FRESH_EYES:-false}" == "true" ]]; then
-        log_info "Running fresh eyes code review..."
-        run_fresh_eyes_review "$selected_tool"
+        local review_tool="${REVIEW_TOOL:-$selected_tool}"
+        if [[ -n "$REVIEW_TOOL" && "$REVIEW_TOOL" != "$selected_tool" ]]; then
+          log_info "Cross-model review: coded with $selected_tool, reviewing with $review_tool"
+        else
+          log_info "Running fresh eyes code review..."
+        fi
+        run_fresh_eyes_review "$review_tool"
       fi
       
       # AUTO-PR: Create PR for completed task
@@ -1286,13 +1471,10 @@ main() {
     elif echo "$OUTPUT" | grep -q "<promise>TASK_FAILED</promise>"; then
       mark_task_failed "$task_id"
       
-      # Clear stall tracking (task is no longer in-progress)
-      clear_task_tracking "$task_id"
-      
       # Log to progress
       {
         echo ""
-        echo "### Iteration $i - $(iso_now)"
+        echo "### Iteration $i - $(date -Iseconds)"
         echo "- Task: $task_id - $subject"
         echo "- Tool: $selected_tool"
         echo "- Status: ❌ FAILED"
@@ -1303,9 +1485,6 @@ main() {
     else
       # No clear signal - assume incomplete, retry next iteration
       log_warn "No completion signal. Will retry if iterations remain."
-      
-      # Clear stall tracking (we're reverting status to pending/open)
-      clear_task_tracking "$task_id"
       
       # Reset to pending/open for retry
       if [[ "$USE_BEADS" == "true" ]]; then

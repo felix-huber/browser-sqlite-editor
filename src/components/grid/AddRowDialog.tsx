@@ -197,11 +197,21 @@ export const AddRowDialog = memo(function AddRowDialog({
   // Handle keyboard events
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && !isSubmitting) {
         onClose();
       }
     },
-    [onClose]
+    [onClose, isSubmitting]
+  );
+
+  // Handle backdrop click (only close if not submitting)
+  const handleBackdropClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.target === e.currentTarget && !isSubmitting) {
+        onClose();
+      }
+    },
+    [onClose, isSubmitting]
   );
 
   if (!isOpen) {
@@ -211,7 +221,7 @@ export const AddRowDialog = memo(function AddRowDialog({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      onClick={onClose}
+      onClick={handleBackdropClick}
       onKeyDown={handleKeyDown}
       role="dialog"
       aria-modal="true"

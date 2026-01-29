@@ -121,7 +121,7 @@ function printTeamStatus(team, verbose = false) {
       if (messages.length > 0) {
         const last = messages[messages.length - 1];
         const ts = last?.timestamp ?? last?.createdAt ?? last?.ts;
-        if (typeof ts === "number") {
+        if (typeof ts === "number" && ts > 0) {
           console.log(`║      Last message: ${formatDuration(Date.now() - ts)} ago`.padEnd(61) + "║");
         }
       }

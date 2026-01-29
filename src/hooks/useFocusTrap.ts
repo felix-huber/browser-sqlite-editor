@@ -33,21 +33,21 @@ export interface UseFocusTrapOptions {
   initialFocusSelector?: string;
 }
 
-export interface UseFocusTrapResult {
+export interface UseFocusTrapResult<T extends HTMLElement = HTMLElement> {
   /** Ref to attach to the container element */
-  containerRef: React.RefObject<HTMLElement | null>;
+  containerRef: React.RefObject<T>;
 }
 
 /**
  * Hook for creating an accessible focus trap
  */
-export function useFocusTrap({
+export function useFocusTrap<T extends HTMLElement = HTMLElement>({
   isActive,
   autoFocus = true,
   returnFocus = true,
   initialFocusSelector,
-}: UseFocusTrapOptions): UseFocusTrapResult {
-  const containerRef = useRef<HTMLElement | null>(null);
+}: UseFocusTrapOptions): UseFocusTrapResult<T> {
+  const containerRef = useRef<T | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
 
   // Get all focusable elements within the container
@@ -143,7 +143,7 @@ export function useFocusTrap({
     }
   }, [isActive, returnFocus]);
 
-  return { containerRef };
+  return { containerRef: containerRef as React.RefObject<T> };
 }
 
 export default useFocusTrap;

@@ -291,6 +291,27 @@ export const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEdi
     })
   }, [])
 
+  const initialConfigRef = useRef<{
+    value: string
+    readOnly: boolean
+    showLineNumbers: boolean
+    placeholder?: string
+  } | null>(null)
+
+  if (!initialConfigRef.current) {
+    initialConfigRef.current = {
+      value,
+      readOnly,
+      showLineNumbers,
+      placeholder,
+    }
+  }
+
+  const updateListenerRef = useRef<Extension | null>(null)
+  if (!updateListenerRef.current) {
+    updateListenerRef.current = createUpdateListener()
+  }
+
   // Expose imperative methods via ref
   useImperativeHandle(ref, () => ({
     jumpToLocation: (line: number, column?: number) => {
@@ -329,6 +350,12 @@ export const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEdi
   useEffect(() => {
     if (!containerRef.current) return
 
+    const initialConfig = initialConfigRef.current
+    if (!initialConfig) return
+
+    const updateListener = updateListenerRef.current
+    if (!updateListener) return
+
     const extensions: Extension[] = [
       editorTheme,
       errorHighlightTheme,
@@ -342,20 +369,20 @@ export const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEdi
       keymap.of([...defaultKeymap, ...historyKeymap]),
       highlightActiveLine(),
       highlightActiveLineGutter(),
-      readOnlyCompartment.current.of(EditorState.readOnly.of(readOnly)),
-      createUpdateListener(),
+      readOnlyCompartment.current.of(EditorState.readOnly.of(initialConfig.readOnly)),
+      updateListener,
     ]
 
-    if (showLineNumbers) {
+    if (initialConfig.showLineNumbers) {
       extensions.push(lineNumbers())
     }
 
-    if (placeholder) {
-      extensions.push(EditorView.contentAttributes.of({ 'aria-placeholder': placeholder }))
+    if (initialConfig.placeholder) {
+      extensions.push(EditorView.contentAttributes.of({ 'aria-placeholder': initialConfig.placeholder }))
     }
 
     const state = EditorState.create({
-      doc: value,
+      doc: initialConfig.value,
       extensions,
     })
 

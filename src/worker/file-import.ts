@@ -581,8 +581,45 @@ export async function importDatabase(
         ? await listOpfsFiles()
         : await listIdbDatabases();
 
-    const uniqueName = resolveUniqueName(nameHint, new Set(existingNames));
-    const filename = storageMode === 'opfs' ? `${uniqueName.toLowerCase().replace(/\s+/g, '_')}.sqlite` : uniqueName;
+    // Helper to sanitize name for OPFS (must match db-registry.ts toFilename logic)
+    const sanitizeName = (name: string): string =>
+      name
+        .replace(/\.sqlite$/i, '') // Strip .sqlite extension first
+        .replace(/[<>:"/\\|?*]/g, '_')
+        .replace(/\s+/g, '_')
+        .toLowerCase();
+
+    // For OPFS: Work with sanitized names since that's how files are stored
+    // For IDB: Work with display names directly
+    let uniqueName: string;
+    let filename: string;
+
+    if (storageMode === 'opfs') {
+      // For OPFS, resolve uniqueness using sanitized names to match the actual filenames
+      // Step 1: Sanitize the hint
+      const sanitizedHint = sanitizeName(nameHint);
+
+      // Step 2: Resolve uniqueness - generate candidates with underscores to match filenames
+      const existingSet = new Set(existingNames);
+      let uniqueSanitized = sanitizedHint;
+      let counter = 0;
+      while (existingSet.has(uniqueSanitized)) {
+        counter++;
+        // Use underscore before parenthesis to match sanitization pattern
+        uniqueSanitized = `${sanitizedHint}_(${counter})`;
+        if (counter > 1000) {
+          throw new Error('Unable to generate unique name after 1000 attempts');
+        }
+      }
+
+      filename = `${uniqueSanitized}.sqlite`;
+      // Convert back to display name (replace underscores with spaces)
+      uniqueName = uniqueSanitized.replace(/_/g, ' ');
+    } else {
+      // IDB: use display names directly
+      uniqueName = resolveUniqueName(nameHint, new Set(existingNames));
+      filename = uniqueName;
+    }
 
     // Step 3: Stream file in chunks (0-50% progress)
     const data = await streamFileChunks(file, onProgress);

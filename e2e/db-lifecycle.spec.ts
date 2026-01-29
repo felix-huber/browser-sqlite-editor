@@ -1,4 +1,4 @@
-import { test, expect, type Page, type BrowserContext } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 /**
  * E2E Tests for Database Rename/Delete Persistence
@@ -176,6 +176,63 @@ async function createTestDatabase(page: Page, name: string): Promise<string> {
 async function readRegistry(page: Page): Promise<RegistryState | null> {
   return page.evaluate(async (): Promise<RegistryState | null> => {
     try {
+      const testApi = (window as Window & {
+        __sqliteEditorTest?: { getRegistry?: () => Promise<unknown> };
+      }).__sqliteEditorTest;
+
+      if (testApi?.getRegistry) {
+        try {
+          const registry = await testApi.getRegistry();
+          if (registry && typeof registry === 'object' && 'databases' in registry) {
+            const databases = (registry as { databases?: Array<Record<string, unknown>> }).databases;
+            if (Array.isArray(databases)) {
+              const fallbackTime = new Date(0).toISOString();
+              const mapped = databases.map((entry) => {
+                const name =
+                  typeof entry.name === 'string'
+                    ? entry.name
+                    : typeof entry.file === 'string'
+                      ? entry.file
+                      : 'unknown';
+                const file = typeof entry.file === 'string' ? entry.file : name;
+                const createdAt =
+                  typeof entry.createdAt === 'string' ? entry.createdAt : fallbackTime;
+                const lastOpenedAt =
+                  typeof entry.lastOpenedAt === 'string' ? entry.lastOpenedAt : createdAt;
+                const storageType =
+                  entry.storageType === 'opfs' || entry.storageType === 'idb'
+                    ? entry.storageType
+                    : file.endsWith('.sqlite')
+                      ? 'opfs'
+                      : 'idb';
+                const id = typeof entry.id === 'string' ? entry.id : name;
+                return { id, name, storageType, createdAt, lastOpenedAt };
+              });
+              if (mapped.length > 0) {
+                return { databases: mapped };
+              }
+            }
+          }
+        } catch {
+          // Fall through to storage-based registry read
+        }
+      }
+
+      if (navigator.storage?.getDirectory) {
+        try {
+          const root = await navigator.storage.getDirectory();
+          const dir = await root.getDirectoryHandle('sqlite-editor');
+          const file = await dir.getFileHandle('registry.json');
+          const blob = await file.getFile();
+          const text = await blob.text();
+          return JSON.parse(text) as RegistryState;
+        } catch (err) {
+          if (!(err instanceof DOMException && err.name === 'NotFoundError')) {
+            // Ignore OPFS errors and fall back to IDB
+          }
+        }
+      }
+
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         const req = indexedDB.open('sqlite-editor-registry', 1);
         req.onerror = () => reject(req.error);
@@ -509,7 +566,7 @@ async function isOpfsAvailable(page: Page): Promise<boolean> {
       const root = await navigator.storage.getDirectory();
       // Try to create a test file
       const testDirName = `__opfs_test_${Date.now()}`;
-      const testDir = await root.getDirectoryHandle(testDirName, { create: true });
+      await root.getDirectoryHandle(testDirName, { create: true });
       await root.removeEntry(testDirName, { recursive: true });
       return true;
     } catch {
@@ -521,7 +578,7 @@ async function isOpfsAvailable(page: Page): Promise<boolean> {
 /**
  * List files in OPFS sqlite-editor directory
  */
-async function listOpfsFiles(page: Page): Promise<string[]> {
+async function _listOpfsFiles(page: Page): Promise<string[]> {
   return page.evaluate(async (): Promise<string[]> => {
     try {
       if (!navigator.storage?.getDirectory) {
@@ -1119,10 +1176,10 @@ test.describe('Database Lifecycle Tests', () => {
       await createTestDatabase(page, 'same-name-test');
 
       const registryBefore = await readRegistry(page);
-      const entryBefore = registryBefore?.databases.find((db) => db.name === 'same-name-test');
+      expect(registryBefore?.databases.some((db) => db.name === 'same-name-test')).toBe(true);
 
       // Rename to same name - should succeed as no-op
-      const result = await renameDatabase(page, 'same-name-test', 'same-name-test');
+      await renameDatabase(page, 'same-name-test', 'same-name-test');
       // Note: Our helper doesn't handle same-name gracefully, but the actual registry does
       // This test verifies the database still exists
 

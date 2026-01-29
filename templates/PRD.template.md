@@ -31,6 +31,19 @@ As a [persona], I want to [action] so that [outcome].
 **Edge Cases**
 - What if [condition]? → [behavior]
 
+**E2E Test Scenario** (these become dedicated test beads)
+```gherkin
+Scenario: [Happy path name]
+  Given [initial state]
+  When [user action]
+  Then [expected result]
+
+Scenario: [Error case name]  
+  Given [initial state]
+  When [invalid action]
+  Then [error message shown]
+```
+
 ### Story 2: [Title]
 …
 

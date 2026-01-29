@@ -752,7 +752,7 @@ describe('Database Actions', () => {
       await openDb('test-db-1');
 
       expect(mockLockManager.acquireLock).toHaveBeenCalledWith('test-db-1');
-      expect(mockWorkerClient.openDb).toHaveBeenCalledWith('test-db-1');
+      expect(mockWorkerClient.openDb).toHaveBeenCalledWith('test-db-1', { readOnly: false });
       expect(mockWorkerClient.getSchema).toHaveBeenCalledTimes(1);
 
       const state = getState();
@@ -864,7 +864,7 @@ describe('Database Actions', () => {
 
       expect(mockWorkerClient.createDb).toHaveBeenCalledWith('new-db');
       expect(mockWorkerClient.getRegistry).toHaveBeenCalledTimes(1);
-      expect(mockWorkerClient.openDb).toHaveBeenCalledWith('new-db');
+      expect(mockWorkerClient.openDb).toHaveBeenCalledWith('new-db', { readOnly: false });
 
       const state = getState();
       expect(state.databases).toHaveLength(1);

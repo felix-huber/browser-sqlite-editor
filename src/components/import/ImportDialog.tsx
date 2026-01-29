@@ -276,6 +276,14 @@ export function ImportDialog({
     fileInputRef.current?.click();
   }, []);
 
+  // Handle drop zone keyboard activation (Enter/Space)
+  const handleDropZoneKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      fileInputRef.current?.click();
+    }
+  }, []);
+
   // Drag and drop handlers
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -287,7 +295,9 @@ export function ImportDialog({
     e.preventDefault();
     e.stopPropagation();
     // Only set isDragging to false if we're leaving the drop zone entirely
-    if (e.currentTarget === e.target) {
+    // Check if the related target (element being entered) is outside the drop zone
+    const relatedTarget = e.relatedTarget as Node | null;
+    if (!relatedTarget || !e.currentTarget.contains(relatedTarget)) {
       setIsDragging(false);
     }
   }, []);
@@ -482,6 +492,7 @@ export function ImportDialog({
             <div
               ref={dropZoneRef}
               onClick={handleDropZoneClick}
+              onKeyDown={handleDropZoneKeyDown}
               onDragEnter={handleDragEnter}
               onDragLeave={handleDragLeave}
               onDragOver={handleDragOver}
@@ -789,8 +800,6 @@ export function ImportDialog({
               </div>
               <ProgressBar
                 percent={importProgress}
-                bytesProcessed={Math.round((importProgress / 100) * (parsedData?.rows.length || 0))}
-                totalBytes={parsedData?.rows.length || 0}
               />
             </div>
           )}

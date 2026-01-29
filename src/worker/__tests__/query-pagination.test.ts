@@ -9,7 +9,7 @@
  * - Empty table handling
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   wrapQueryWithPagination,
   buildCountQuery,
@@ -20,9 +20,20 @@ import {
   getFirstPageOffset,
   getLastPageOffset,
   invalidateCountCache,
+  executePaginatedQuery,
   type PaginatedQueryResult,
   type ColumnMeta,
 } from '../query-pagination';
+import type { QueryResult } from '../../types';
+import type { DatabaseEngine } from '../../lib/db-engine';
+
+type QueryHandler = (sql: string, params?: unknown[]) => QueryResult;
+
+function createMockEngine(handler: QueryHandler): DatabaseEngine {
+  return {
+    query: vi.fn(async (sql: string, params?: unknown[]) => handler(sql, params)),
+  } as unknown as DatabaseEngine;
+}
 
 // =============================================================================
 // Query Wrapping Tests
@@ -356,28 +367,200 @@ describe('PaginatedQueryResult type contract', () => {
 });
 
 // =============================================================================
-// Integration Tests (require mock engine)
+// Integration Tests (mock engine)
 // =============================================================================
 
-describe('Integration tests placeholder', () => {
-  /**
-   * These tests would require a mock DatabaseEngine.
-   * They are documented here for implementation via e2e tests:
-   *
-   * 1. executePaginatedQuery with LIMIT 100 OFFSET 0 returns first 100 rows
-   * 2. executePaginatedQuery with LIMIT 100 OFFSET 200 returns rows 201-300
-   * 3. Order by rowid: rows returned in consistent order across pages
-   * 4. WITHOUT ROWID table: orders by PK columns for stable pagination
-   * 5. totalCount matches actual row count
-   * 6. Empty table returns empty rows and totalCount=0
-   * 7. Generated columns have isGenerated=true and correct expression
-   * 8. Cache invalidation clears count cache correctly
-   * 9. Cached count is reused on subsequent page requests
-   * 10. User sort + tie-breaker produces stable pagination
-   */
+describe('executePaginatedQuery integration', () => {
+  const createSql = 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)';
 
-  it('should be tested via e2e tests with real WASM', () => {
-    // Placeholder to document integration test requirements
-    expect(true).toBe(true);
+  beforeEach(() => {
+    invalidateCountCache();
+  });
+
+  it('executes paginated query with rowid tie-breaker and returns metadata', async () => {
+    const engine = createMockEngine((sql) => {
+      if (sql.startsWith('SELECT COUNT(*)')) {
+        return { columns: ['COUNT(*)'], columnTypes: ['INTEGER'], rows: [[3]] };
+      }
+      if (sql.startsWith('SELECT sql FROM sqlite_master')) {
+        return { columns: ['sql'], columnTypes: ['TEXT'], rows: [[createSql]] };
+      }
+      if (sql.startsWith('PRAGMA table_xinfo("users")')) {
+        return {
+          columns: ['cid', 'name', 'type', 'notnull', 'dflt_value', 'pk', 'hidden'],
+          columnTypes: ['INTEGER', 'TEXT', 'TEXT', 'INTEGER', 'TEXT', 'INTEGER', 'INTEGER'],
+          rows: [
+            [0, 'id', 'INTEGER', 0, null, 1, 0],
+            [1, 'name', 'TEXT', 0, null, 0, 0],
+          ],
+        };
+      }
+      if (sql === 'SELECT * FROM users ORDER BY rowid LIMIT 2 OFFSET 0') {
+        return {
+          columns: ['id', 'name'],
+          columnTypes: ['INTEGER', 'TEXT'],
+          rows: [
+            [1, 'Alice'],
+            [2, 'Bob'],
+          ],
+        };
+      }
+      return { columns: [], columnTypes: [], rows: [] };
+    });
+
+    const result = await executePaginatedQuery(engine, {
+      sql: 'SELECT * FROM users',
+      limit: 2,
+      offset: 0,
+      tableName: 'users',
+    });
+
+    expect(result.totalCount).toBe(3);
+    expect(result.columns).toEqual([
+      { name: 'id', type: 'INTEGER', isGenerated: false, generatedExpression: null },
+      { name: 'name', type: 'TEXT', isGenerated: false, generatedExpression: null },
+    ]);
+    expect(result.rows).toEqual([
+      [1, 'Alice'],
+      [2, 'Bob'],
+    ]);
+    expect((engine.query as unknown as { mock: { calls: Array<[string, unknown[] | undefined]> } }).mock.calls).toEqual(
+      expect.arrayContaining([['SELECT * FROM users ORDER BY rowid LIMIT 2 OFFSET 0', undefined]]),
+    );
+  });
+
+  it('uses primary key columns for WITHOUT ROWID tables', async () => {
+    const engine = createMockEngine((sql) => {
+      if (sql.startsWith('SELECT COUNT(*)')) {
+        return { columns: ['COUNT(*)'], columnTypes: ['INTEGER'], rows: [[2]] };
+      }
+      if (sql.startsWith('SELECT sql FROM sqlite_master')) {
+        return {
+          columns: ['sql'],
+          columnTypes: ['TEXT'],
+          rows: [[`CREATE TABLE items (id INTEGER, name TEXT, PRIMARY KEY (id, name)) WITHOUT ROWID`]],
+        };
+      }
+      if (sql.startsWith('PRAGMA table_info("items")')) {
+        return {
+          columns: ['cid', 'name', 'type', 'notnull', 'dflt_value', 'pk'],
+          columnTypes: ['INTEGER', 'TEXT', 'TEXT', 'INTEGER', 'TEXT', 'INTEGER'],
+          rows: [
+            [0, 'id', 'INTEGER', 0, null, 1],
+            [1, 'name', 'TEXT', 0, null, 2],
+          ],
+        };
+      }
+      if (sql.startsWith('PRAGMA table_xinfo("items")')) {
+        return {
+          columns: ['cid', 'name', 'type', 'notnull', 'dflt_value', 'pk', 'hidden'],
+          columnTypes: ['INTEGER', 'TEXT', 'TEXT', 'INTEGER', 'TEXT', 'INTEGER', 'INTEGER'],
+          rows: [
+            [0, 'id', 'INTEGER', 0, null, 1, 0],
+            [1, 'name', 'TEXT', 0, null, 2, 0],
+          ],
+        };
+      }
+      if (sql === 'SELECT * FROM items ORDER BY "id", "name" LIMIT 1 OFFSET 1') {
+        return {
+          columns: ['id', 'name'],
+          columnTypes: ['INTEGER', 'TEXT'],
+          rows: [[2, 'Two']],
+        };
+      }
+      return { columns: [], columnTypes: [], rows: [] };
+    });
+
+    const result = await executePaginatedQuery(engine, {
+      sql: 'SELECT * FROM items',
+      limit: 1,
+      offset: 1,
+      tableName: 'items',
+    });
+
+    expect(result.rows).toEqual([[2, 'Two']]);
+    expect((engine.query as unknown as { mock: { calls: Array<[string, unknown[] | undefined]> } }).mock.calls).toEqual(
+      expect.arrayContaining([['SELECT * FROM items ORDER BY "id", "name" LIMIT 1 OFFSET 1', undefined]]),
+    );
+  });
+
+  it('extracts generated column expressions', async () => {
+    const createSqlWithGenerated =
+      'CREATE TABLE calc (a INTEGER, b TEXT GENERATED ALWAYS AS (a || "x") STORED)';
+    const engine = createMockEngine((sql) => {
+      if (sql.startsWith('SELECT COUNT(*)')) {
+        return { columns: ['COUNT(*)'], columnTypes: ['INTEGER'], rows: [[1]] };
+      }
+      if (sql.startsWith('SELECT sql FROM sqlite_master')) {
+        return { columns: ['sql'], columnTypes: ['TEXT'], rows: [[createSqlWithGenerated]] };
+      }
+      if (sql.startsWith('PRAGMA table_xinfo("calc")')) {
+        return {
+          columns: ['cid', 'name', 'type', 'notnull', 'dflt_value', 'pk', 'hidden'],
+          columnTypes: ['INTEGER', 'TEXT', 'TEXT', 'INTEGER', 'TEXT', 'INTEGER', 'INTEGER'],
+          rows: [
+            [0, 'a', 'INTEGER', 0, null, 0, 0],
+            [1, 'b', 'TEXT', 0, null, 0, 2],
+          ],
+        };
+      }
+      if (sql === 'SELECT * FROM calc ORDER BY rowid LIMIT 1 OFFSET 0') {
+        return {
+          columns: ['a', 'b'],
+          columnTypes: ['INTEGER', 'TEXT'],
+          rows: [[1, '1x']],
+        };
+      }
+      return { columns: [], columnTypes: [], rows: [] };
+    });
+
+    const result = await executePaginatedQuery(engine, {
+      sql: 'SELECT * FROM calc',
+      limit: 1,
+      offset: 0,
+      tableName: 'calc',
+    });
+
+    expect(result.columns[1]).toMatchObject({
+      name: 'b',
+      isGenerated: true,
+      generatedExpression: 'a || "x"',
+    });
+  });
+
+  it('reuses cached count for repeated queries', async () => {
+    const engine = createMockEngine((sql) => {
+      if (sql.startsWith('SELECT COUNT(*)')) {
+        return { columns: ['COUNT(*)'], columnTypes: ['INTEGER'], rows: [[2]] };
+      }
+      if (sql.startsWith('SELECT sql FROM sqlite_master')) {
+        return { columns: ['sql'], columnTypes: ['TEXT'], rows: [[createSql]] };
+      }
+      if (sql.startsWith('PRAGMA table_xinfo("users")')) {
+        return {
+          columns: ['cid', 'name', 'type', 'notnull', 'dflt_value', 'pk', 'hidden'],
+          columnTypes: ['INTEGER', 'TEXT', 'TEXT', 'INTEGER', 'TEXT', 'INTEGER', 'INTEGER'],
+          rows: [
+            [0, 'id', 'INTEGER', 0, null, 1, 0],
+            [1, 'name', 'TEXT', 0, null, 0, 0],
+          ],
+        };
+      }
+      if (sql.startsWith('SELECT * FROM users ORDER BY rowid LIMIT')) {
+        return {
+          columns: ['id', 'name'],
+          columnTypes: ['INTEGER', 'TEXT'],
+          rows: [[1, 'Alice']],
+        };
+      }
+      return { columns: [], columnTypes: [], rows: [] };
+    });
+
+    await executePaginatedQuery(engine, { sql: 'SELECT * FROM users', limit: 1, offset: 0, tableName: 'users' });
+    await executePaginatedQuery(engine, { sql: 'SELECT * FROM users', limit: 1, offset: 1, tableName: 'users' });
+
+    const countCalls = (engine.query as unknown as { mock: { calls: Array<[string, unknown[] | undefined]> } })
+      .mock.calls.filter(([sql]) => sql.startsWith('SELECT COUNT(*)'));
+    expect(countCalls).toHaveLength(1);
   });
 });

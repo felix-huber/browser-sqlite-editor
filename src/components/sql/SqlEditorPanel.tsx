@@ -12,18 +12,146 @@ import type { QueryResult, SqlError, QueryHistoryItem } from '../../types'
 function isReadOnlyStatement(sql: string): boolean {
   const normalized = sql.trim().toUpperCase()
 
-  // SELECT and WITH (CTE) are always read-only
-  if (normalized.startsWith('SELECT') || normalized.startsWith('WITH')) {
-    return true
+  const statementKeywords = new Set([
+    'SELECT',
+    'INSERT',
+    'UPDATE',
+    'DELETE',
+    'REPLACE',
+    'CREATE',
+    'ALTER',
+    'DROP',
+    'PRAGMA',
+    'EXPLAIN',
+    'VACUUM',
+    'REINDEX',
+    'ANALYZE',
+    'BEGIN',
+    'COMMIT',
+    'ROLLBACK',
+    'SAVEPOINT',
+    'RELEASE',
+  ])
+
+  const isWordChar = (ch: string): boolean => {
+    const code = ch.charCodeAt(0)
+    return (
+      (code >= 48 && code <= 57) || // 0-9
+      (code >= 65 && code <= 90) || // A-Z
+      (code >= 97 && code <= 122) || // a-z
+      ch === '_'
+    )
   }
 
-  // EXPLAIN is read-only
-  if (normalized.startsWith('EXPLAIN')) {
+  const getPrimaryKeyword = (text: string): string | null => {
+    let i = 0
+    let depth = 0
+    let sawWith = false
+
+    while (i < text.length) {
+      const ch = text[i]
+
+      // Whitespace
+      if (ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t') {
+        i += 1
+        continue
+      }
+
+      // Line comments --
+      if (ch === '-' && text[i + 1] === '-') {
+        i += 2
+        while (i < text.length && text[i] !== '\n') i += 1
+        continue
+      }
+
+      // Block comments /* */
+      if (ch === '/' && text[i + 1] === '*') {
+        i += 2
+        while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i += 1
+        i += 2
+        continue
+      }
+
+      // String literals / quoted identifiers
+      if (ch === '\'' || ch === '"' || ch === '`') {
+        const quote = ch
+        i += 1
+        while (i < text.length) {
+          if (text[i] === quote) {
+            // Handle doubled quotes '' or ""
+            if (text[i + 1] === quote) {
+              i += 2
+              continue
+            }
+            i += 1
+            break
+          }
+          i += 1
+        }
+        continue
+      }
+
+      // Bracket-quoted identifiers
+      if (ch === '[') {
+        i += 1
+        while (i < text.length && text[i] !== ']') i += 1
+        i += 1
+        continue
+      }
+
+      // Parentheses tracking (CTE bodies, subqueries)
+      if (ch === '(') {
+        depth += 1
+        i += 1
+        continue
+      }
+      if (ch === ')') {
+        depth = Math.max(0, depth - 1)
+        i += 1
+        continue
+      }
+
+      // Keywords / identifiers
+      if (isWordChar(ch)) {
+        const start = i
+        i += 1
+        while (i < text.length && isWordChar(text[i])) i += 1
+        const word = text.slice(start, i).toUpperCase()
+
+        if (depth === 0) {
+          if (!sawWith) {
+            if (word === 'WITH') {
+              sawWith = true
+              continue
+            }
+            return word
+          }
+
+          if (word === 'RECURSIVE') {
+            continue
+          }
+
+          if (statementKeywords.has(word)) {
+            return word
+          }
+        }
+        continue
+      }
+
+      i += 1
+    }
+
+    return null
+  }
+
+  const primary = getPrimaryKeyword(sql)
+
+  if (primary === 'SELECT' || primary === 'EXPLAIN') {
     return true
   }
 
   // PRAGMA: only certain ones are read-only
-  if (normalized.startsWith('PRAGMA')) {
+  if (primary === 'PRAGMA') {
     // Write PRAGMAs (setting values)
     const writePragmas = [
       'PRAGMA JOURNAL_MODE',

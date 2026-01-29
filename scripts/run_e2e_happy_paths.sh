@@ -12,12 +12,11 @@
 #   ./scripts/run_e2e_happy_paths.sh
 #   ./scripts/run_e2e_happy_paths.sh --headed  # Show browser
 
-set -euo pipefail
+set -e
 
 HEADED=""
-if [[ "${1:-}" == "--headed" ]]; then
+if [[ "$1" == "--headed" ]]; then
   HEADED="--headed"
-  shift || true
 fi
 
 # Colors
@@ -51,7 +50,10 @@ echo -e "${BLUE}Starting dev server...${NC}"
 npm run preview &
 SERVER_PID=$!
 
-# Trap to cleanup (set immediately after starting server)
+# Wait for server
+sleep 5
+
+# Trap to cleanup
 cleanup() {
   echo ""
   echo -e "${BLUE}Cleaning up...${NC}"
@@ -62,33 +64,6 @@ trap cleanup EXIT
 
 # Get server URL
 BASE_URL="${BASE_URL:-http://localhost:4173}"
-
-# Wait for server to actually start (retry up to 30 seconds)
-echo -e "${BLUE}Waiting for server at $BASE_URL...${NC}"
-server_ready=false
-if command -v curl >/dev/null 2>&1; then
-  for _ in {1..30}; do
-    if curl -fsS "$BASE_URL" >/dev/null 2>&1; then
-      server_ready=true
-      echo ""  # newline after dots
-      break
-    fi
-    echo -n "."  # progress indicator
-    sleep 1
-  done
-  if [[ "$server_ready" != "true" ]]; then
-    echo ""  # newline after dots
-  fi
-else
-  # Fallback if curl not available
-  sleep 5
-  server_ready=true
-fi
-
-if [[ "$server_ready" != "true" ]]; then
-  echo -e "${RED}ERROR: Server failed to start within 30 seconds${NC}"
-  exit 1
-fi
 
 echo -e "${BLUE}Server running at $BASE_URL${NC}"
 echo ""

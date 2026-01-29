@@ -37,6 +37,38 @@ interface Entity {
 - `POST /api/...` — …
 - `GET /api/...` — …
 
+## Test Strategy
+
+### Test Layers
+| Layer | Scope | Location | Written |
+|-------|-------|----------|---------|
+| Unit | Individual functions/classes | `*.test.ts` next to source | With feature (TDD) |
+| Integration | API contracts, module interactions | `tests/integration/` | Separate bead |
+| E2E | Full user flows | `e2e/` | Separate bead |
+
+### Unit Test Contracts (TDD - per module)
+For each module, define the test contract that agents write FIRST:
+
+**Module: [name]**
+```typescript
+describe('[ModuleName]', () => {
+  it('[expected behavior]')
+  it('[edge case]')
+  it('[error handling]')
+})
+```
+
+### Integration Test Contracts
+| Component A | Component B | Contract | Test |
+|-------------|-------------|----------|------|
+| Form | API | onSubmit calls createItem() | form-api.test.ts |
+| API | Store | success updates items array | api-store.test.ts |
+
+### E2E Scenarios (from PRD acceptance criteria)
+| User Story | Scenario | Expected | Priority |
+|------------|----------|----------|----------|
+| … | … | … | P1 |
+
 ## Key Technical Decisions
 
 ### Decision 1: [Topic]
@@ -97,6 +129,7 @@ Use this **exact format** (parsed by task compiler):
       - Deliverable: What artifact is produced
       - Files: src/path/file.ts, src/other/file.ts
       - Allowed paths: src/path/*, src/other/*
+      - Unit Test Specs: (for feature tasks) List specific tests to write first
       - Verification: npm run test (or other command)
       - Complexity: 1-10 (perceived difficulty)
       - DependsOn: (optional) S1-T1, S1-T2
@@ -127,7 +160,8 @@ Use this **exact format** (parsed by task compiler):
       - Deliverable: src/types/index.ts with Database, Table, Column types
       - Files: src/types/index.ts
       - Allowed paths: src/types/*
-      - Verification: tsc --noEmit passes
+      - Unit Test Specs: isDatabase() returns true for valid db; isTable() validates required fields; serialization round-trips correctly
+      - Verification: npm run test -- types && tsc --noEmit
       - Complexity: 3
       - DependsOn: S1-T1
 

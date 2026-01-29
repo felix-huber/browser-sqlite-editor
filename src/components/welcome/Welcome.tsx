@@ -31,6 +31,8 @@ export interface WelcomeProps {
   onJsonImport?: (file: File) => void;
   /** Legacy callback for file(s) import via picker (supports multiple) */
   onImportFiles?: (files: File[]) => void;
+  /** Callback to open the bundled sample database */
+  onOpenSample?: () => void;
   /** Callback when a recent database is selected */
   onSelectDatabase?: (dbName: string) => void;
   /** Whether to show recent databases list */
@@ -58,6 +60,7 @@ export function Welcome({
   onCsvImport,
   onJsonImport,
   onImportFiles,
+  onOpenSample,
   onSelectDatabase,
   showRecentDatabases = true,
 }: WelcomeProps) {
@@ -197,13 +200,14 @@ export function Welcome({
             data-testid="new-database-button"
           >
             New Database
-            <span className="ml-2 text-navy-300 text-sm">{shortcutKey}</span>
+            <span className="ml-2 text-white text-sm opacity-80">{shortcutKey}</span>
           </button>
 
           <OpenDatabaseButton
             onFileSelect={handleSqliteFile}
             prominent
             testId="import-database-button"
+            fileInputTestId="welcome-open-database-file-input"
           />
 
           {/* Legacy file input for CSV/JSON imports */}
@@ -217,6 +221,17 @@ export function Welcome({
             multiple
           />
         </div>
+
+        {onOpenSample && (
+          <button
+            type="button"
+            onClick={onOpenSample}
+            className="text-sm text-navy-600 hover:text-navy-800 underline underline-offset-4"
+            data-testid="open-sakila-sample-button"
+          >
+            Open Sakila sample database
+          </button>
+        )}
 
         {/* Drop Zone */}
         <DropZone

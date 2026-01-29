@@ -19,6 +19,7 @@ function createMockDb() {
   let shouldFailOnInsert = false;
   let failAtRow = -1;
   let failError = 'UNIQUE constraint failed';
+  let insertCount = 0;
 
   const db: DatabaseExecutor = {
     async exec(sql: string) {
@@ -27,7 +28,9 @@ function createMockDb() {
     async run(sql: string, params?: unknown[]) {
       executedSql.push({ sql, params });
       // Track insert count for failure simulation
-      const insertCount = executedSql.filter((s) => s.sql.startsWith('INSERT')).length;
+      if (sql.startsWith('INSERT')) {
+        insertCount += 1;
+      }
       if (shouldFailOnInsert && (failAtRow === -1 || insertCount === failAtRow)) {
         throw new Error(failError);
       }
@@ -47,6 +50,7 @@ function createMockDb() {
       executedSql.length = 0;
       shouldFailOnInsert = false;
       failAtRow = -1;
+      insertCount = 0;
     },
   };
 }

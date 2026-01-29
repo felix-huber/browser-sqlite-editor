@@ -77,6 +77,17 @@ describe('Welcome', () => {
     expect(screen.getByText('Drop a .sqlite file here')).toBeInTheDocument();
   });
 
+  it('renders and triggers sample database button when provided', () => {
+    const onOpenSample = vi.fn();
+    render(<Welcome {...defaultProps} onOpenSample={onOpenSample} />);
+
+    const button = screen.getByTestId('open-sakila-sample-button');
+    expect(button).toBeInTheDocument();
+
+    fireEvent.click(button);
+    expect(onOpenSample).toHaveBeenCalledTimes(1);
+  });
+
   describe('New Database action', () => {
     it('calls onNewDatabase when button is clicked', () => {
       const onNewDatabase = vi.fn();
@@ -141,7 +152,7 @@ describe('Welcome', () => {
       render(<Welcome {...defaultProps} />);
 
       // The OpenDatabaseButton component has its own internal file input
-      const openDbFileInput = screen.getByTestId('open-database-file-input') as HTMLInputElement;
+      const openDbFileInput = screen.getByTestId('welcome-open-database-file-input') as HTMLInputElement;
       const clickSpy = vi.spyOn(openDbFileInput, 'click');
 
       fireEvent.click(screen.getByTestId('import-database-button'));

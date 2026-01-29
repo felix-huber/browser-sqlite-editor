@@ -19,7 +19,7 @@ export default defineConfig({
       includeAssets: ['icons/**/*'],
       manifest: false, // Use existing manifest.json from public/
       workbox: {
-        globPatterns: ['**/*.{js,css,html,wasm}'],
+        globPatterns: ['**/*.{js,css,html,wasm,db,sqlite}'],
         // Precache wa-sqlite.wasm and all chunks
         maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB for WASM
         runtimeCaching: [

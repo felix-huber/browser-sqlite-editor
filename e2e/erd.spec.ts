@@ -50,7 +50,7 @@ async function clearAllStorage(page: Page): Promise<void> {
 /**
  * Create a test database with tables via the app
  */
-async function createTestDatabaseWithTables(page: Page, dbName: string): Promise<void> {
+async function _createTestDatabaseWithTables(page: Page, dbName: string): Promise<void> {
   // Click the new database button
   const newDbButton = page.locator('[data-testid="header-new-database-button"]');
   await expect(newDbButton).toBeVisible();

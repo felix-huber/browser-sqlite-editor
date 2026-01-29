@@ -440,7 +440,8 @@ describe('importDatabase', () => {
     });
 
     it('should resolve name collision with (1) suffix', async () => {
-      mockState.existingNames = ['mydb', 'mydb (1)'];
+      // For OPFS mode, existing names are sanitized filenames (with underscores)
+      mockState.existingNames = ['mydb', 'mydb_(1)'];
       const data = createSqliteHeader();
       const file = createMockFile(data, 'mydb.sqlite');
 
@@ -452,6 +453,7 @@ describe('importDatabase', () => {
 
       expect(result.success).toBe(true);
       if (result.success) {
+        // Display name has spaces (converted from underscores)
         expect(result.dbName).toBe('mydb (2)');
       }
     });
@@ -614,11 +616,9 @@ describe('importDatabase', () => {
     it('should clean up partial file on validation failure', async () => {
       // First let the file write succeed, then fail validation
       // We need to make validateSqlite fail AFTER write
-      let writeCallCount = 0;
       const customAdapter: ImportStorageAdapter = {
         ...mockAdapter,
         writeFile: vi.fn(async (name: string, data: Uint8Array) => {
-          writeCallCount++;
           mockState.writtenFiles.set(name, data);
         }),
         validateSqlite: vi.fn(async () => {

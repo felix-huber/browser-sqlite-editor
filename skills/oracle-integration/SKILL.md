@@ -15,22 +15,6 @@ triggers:
 
 Integrate GPT-5.2 Pro reviews into your development workflow via the Oracle CLI.
 
-## ⚠️⚠️⚠️ CRITICAL: MODEL SELECTION ⚠️⚠️⚠️
-
-**Oracle MUST use ChatGPT 5.2 PRO!**
-
-```
-✅ USE:     GPT-5.2 Pro
-✅ USE:     GPT-5.2 Pro with Extended Thinking (even better!)
-❌ NOT:     o3 / o1 / o1-pro (reasoning models - wrong format)
-❌ NOT:     GPT-4 / GPT-4o (older models)
-```
-
-**Before Oracle runs, verify in ChatGPT:**
-1. Model selector shows "GPT-5.2 Pro"
-2. Extended Thinking is fine (beneficial even!)
-3. If browser automation fails, manually verify model selection
-
 ## Overview
 
 Oracle bundles your artifacts and runs them through GPT-5.2 Pro (browser mode) with specialized review lenses. This skill guides the integration process.
@@ -38,10 +22,9 @@ Oracle bundles your artifacts and runs them through GPT-5.2 Pro (browser mode) w
 ## Key Principles
 
 1. **Browser mode only**: Oracle runs use your ChatGPT session, not API (cheaper, fully automated)
-2. **GPT-5.2 PRO only**: Not thinking mode, not o1, not GPT-4
-3. **8 specialized lenses**: product, ux, architecture, security, performance, tests, simplicity, ops
-4. **Structured output**: All reviews produce normalized `issues.json` with consistent schema
-5. **Fully autonomous**: Run Oracle scripts directly - DO NOT ask user to run commands
+2. **8 specialized lenses**: product, ux, architecture, security, performance, tests, simplicity, ops
+3. **Structured output**: All reviews produce normalized `issues.json` with consistent schema
+4. **Fully autonomous**: Run Oracle scripts directly - DO NOT ask user to run commands
 
 ---
 

@@ -376,7 +376,7 @@ export async function openDb(id: string): Promise<void> {
   const lockResult = await _deps.lockManager.acquireLock(id);
 
   // Open the database via worker
-  await _deps.workerClient.openDb(id);
+  await _deps.workerClient.openDb(id, { readOnly: !lockResult.acquired });
 
   // Determine lock state
   const isWriter = lockResult.acquired;

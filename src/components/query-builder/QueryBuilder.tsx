@@ -24,8 +24,8 @@ const nodeTypes = tableBoxNodeTypes
 /** Combined edge types for React Flow */
 const edgeTypes = joinEdgeTypes
 
-/** Re-exported node data interface for backwards compatibility */
-export interface TableBoxNodeData extends TableBoxData {}
+/** Re-exported node data type for backwards compatibility */
+export type TableBoxNodeData = TableBoxData
 
 export type TableBoxNode = Node<TableBoxNodeData>
 
@@ -204,6 +204,42 @@ export function QueryBuilder({ tables, onTablesChange, onJoinsChange }: QueryBui
     [extractColumnFromHandle]
   )
 
+  // Handle edge deletion
+  const handleDeleteEdge = useCallback(
+    (edgeId: string) => {
+      setEdges((eds) => {
+        const updated = eds.filter((edge) => edge.id !== edgeId)
+        notifyJoinsChange(updated)
+        return updated
+      })
+    },
+    [setEdges, notifyJoinsChange]
+  )
+
+  // Handle join type change
+  const handleJoinTypeChange = useCallback(
+    (edgeId: string, newJoinType: JoinType) => {
+      setEdges((eds) => {
+        const updated = eds.map((edge) =>
+          edge.id === edgeId
+            ? {
+                ...edge,
+                data: {
+                  ...edge.data,
+                  joinType: newJoinType,
+                  onJoinTypeChange: handleJoinTypeChange,
+                  onDelete: handleDeleteEdge,
+                },
+              }
+            : edge
+        ) as JoinEdgeType[]
+        notifyJoinsChange(updated)
+        return updated
+      })
+    },
+    [setEdges, notifyJoinsChange, handleDeleteEdge]
+  )
+
   // Handle new connection (join creation)
   const handleConnect: OnConnect = useCallback(
     (connection) => {
@@ -241,43 +277,7 @@ export function QueryBuilder({ tables, onTablesChange, onJoinsChange }: QueryBui
         return updated
       })
     },
-    [edges, setEdges, extractColumnFromHandle, notifyJoinsChange]
-  )
-
-  // Handle join type change
-  const handleJoinTypeChange = useCallback(
-    (edgeId: string, newJoinType: JoinType) => {
-      setEdges((eds) => {
-        const updated = eds.map((edge) =>
-          edge.id === edgeId
-            ? {
-                ...edge,
-                data: {
-                  ...edge.data,
-                  joinType: newJoinType,
-                  onJoinTypeChange: handleJoinTypeChange,
-                  onDelete: handleDeleteEdge,
-                },
-              }
-            : edge
-        ) as JoinEdgeType[]
-        notifyJoinsChange(updated)
-        return updated
-      })
-    },
-    [setEdges, notifyJoinsChange]
-  )
-
-  // Handle edge deletion
-  const handleDeleteEdge = useCallback(
-    (edgeId: string) => {
-      setEdges((eds) => {
-        const updated = eds.filter((edge) => edge.id !== edgeId)
-        notifyJoinsChange(updated)
-        return updated
-      })
-    },
-    [setEdges, notifyJoinsChange]
+    [edges, setEdges, extractColumnFromHandle, notifyJoinsChange, handleJoinTypeChange, handleDeleteEdge]
   )
 
   return (

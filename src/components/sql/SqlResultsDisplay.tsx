@@ -46,8 +46,6 @@ export interface SqlResultsDisplayProps {
   results: StatementResult[];
   /** Total execution time for all statements */
   totalExecutionTime?: number;
-  /** Whether the grid should be read-only */
-  isReadOnly?: boolean;
   /** Height available for the results display */
   height?: number;
   /** Additional className */
@@ -162,26 +160,33 @@ function createTableInfoFromResult(result: QueryResult): TableInfo {
 interface SingleResultProps {
   result: StatementResult;
   height: number;
-  isReadOnly: boolean;
 }
 
 /** Display a SELECT result using DataGrid */
 const SelectResultDisplay = memo(function SelectResultDisplay({
   result,
   height,
-  isReadOnly,
 }: SingleResultProps) {
   const queryResult = result.result;
-  if (!queryResult) {
+
+  // Memoize data conversion - must be called unconditionally (Rules of Hooks)
+  const data = useMemo(
+    () => (queryResult ? convertToDataRows(queryResult) : []),
+    [queryResult]
+  );
+  const tableInfo = useMemo(
+    () => (queryResult ? createTableInfoFromResult(queryResult) : null),
+    [queryResult]
+  );
+
+  // Handle no query result
+  if (!queryResult || !tableInfo) {
     return (
       <div className="flex items-center justify-center h-full text-navy-500">
         No data
       </div>
     );
   }
-
-  const data = useMemo(() => convertToDataRows(queryResult), [queryResult]);
-  const tableInfo = useMemo(() => createTableInfoFromResult(queryResult), [queryResult]);
 
   // For query results with no rows
   if (queryResult.rows.length === 0) {
@@ -213,7 +218,7 @@ const SelectResultDisplay = memo(function SelectResultDisplay({
     <DataGrid
       tableInfo={tableInfo}
       data={data}
-      isReadOnly={isReadOnly || true} // Query results are always read-only
+      isReadOnly={true} // Query results are always read-only
       height={height}
     />
   );
@@ -468,7 +473,6 @@ const TabBar = memo(function TabBar({
 export const SqlResultsDisplay = memo(function SqlResultsDisplay({
   results,
   totalExecutionTime,
-  isReadOnly = true,
   height = 300,
   className = '',
 }: SqlResultsDisplayProps) {
@@ -500,7 +504,6 @@ export const SqlResultsDisplay = memo(function SqlResultsDisplay({
             <SelectResultDisplay
               result={result}
               height={contentHeight}
-              isReadOnly={isReadOnly}
             />
           ) : result.type === 'insert' || result.type === 'update' || result.type === 'delete' ? (
             <AffectedRowsDisplay result={result} />
@@ -537,7 +540,6 @@ export const SqlResultsDisplay = memo(function SqlResultsDisplay({
           <SelectResultDisplay
             result={activeResult}
             height={contentHeight}
-            isReadOnly={isReadOnly}
           />
         ) : activeResult.type === 'insert' ||
           activeResult.type === 'update' ||

@@ -63,11 +63,21 @@ export const DeleteRowsDialog = memo(function DeleteRowsDialog({
   // Handle keyboard events
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && !isDeleting) {
         onClose();
       }
     },
-    [onClose]
+    [onClose, isDeleting]
+  );
+
+  // Handle backdrop click (only close if not deleting)
+  const handleBackdropClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.target === e.currentTarget && !isDeleting) {
+        onClose();
+      }
+    },
+    [onClose, isDeleting]
   );
 
   if (!isOpen) {
@@ -77,7 +87,7 @@ export const DeleteRowsDialog = memo(function DeleteRowsDialog({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      onClick={onClose}
+      onClick={handleBackdropClick}
       onKeyDown={handleKeyDown}
       role="dialog"
       aria-modal="true"

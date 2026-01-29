@@ -64,6 +64,8 @@ export interface OpenDatabaseButtonProps {
   disabled?: boolean;
   /** Test ID override (default: 'open-database-button') */
   testId?: string;
+  /** Test ID for the hidden file input (default: 'open-database-file-input') */
+  fileInputTestId?: string;
 }
 
 /**
@@ -93,6 +95,7 @@ export function OpenDatabaseButton({
   className = '',
   disabled = false,
   testId = 'open-database-button',
+  fileInputTestId = 'open-database-file-input',
 }: OpenDatabaseButtonProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -211,7 +214,7 @@ export function OpenDatabaseButton({
         accept={ACCEPTED_FILE_TYPES}
         onChange={handleInputChange}
         className="hidden"
-        data-testid="open-database-file-input"
+        data-testid={fileInputTestId}
       />
     </>
   );

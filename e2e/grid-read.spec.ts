@@ -49,13 +49,13 @@ async function clearAllStorage(page: Page): Promise<void> {
 /**
  * Create a test database with specified structure via SQL execution
  */
-async function createTestDatabase(
+async function _createTestDatabase(
   page: Page,
   dbName: string,
-  setupSql: string
+  _setupSql: string
 ): Promise<void> {
   // Create the database via the worker/store
-  await page.evaluate(async ({ dbName, setupSql }) => {
+  await page.evaluate(async ({ dbName, _setupSql }) => {
     // Create registry entry
     const registryDb = await new Promise<IDBDatabase>((resolve, reject) => {
       const req = indexedDB.open('sqlite-editor-registry', 1);
@@ -114,13 +114,13 @@ async function createTestDatabase(
     // Store in idb-sqlite - we need to create an actual SQLite database
     // For this E2E test, we'll initialize the database using sql.js
     // The app should handle this through its worker
-  }, { dbName, setupSql });
+  }, { dbName, _setupSql });
 }
 
 /**
  * Wait for the data grid to be visible and populated
  */
-async function waitForGridVisible(page: Page): Promise<void> {
+async function _waitForGridVisible(page: Page): Promise<void> {
   // Wait for the grid container to appear
   await page.waitForSelector('[data-row-index]', { timeout: 30000 });
 }
@@ -128,14 +128,14 @@ async function waitForGridVisible(page: Page): Promise<void> {
 /**
  * Get the visible row count in the grid
  */
-async function getVisibleRowCount(page: Page): Promise<number> {
+async function _getVisibleRowCount(page: Page): Promise<number> {
   return page.locator('[data-row-index]').count();
 }
 
 /**
  * Scroll the grid container by a given amount
  */
-async function scrollGridBy(page: Page, deltaY: number): Promise<void> {
+async function _scrollGridBy(page: Page, deltaY: number): Promise<void> {
   const gridContainer = page.locator('.overflow-auto').first();
   await gridContainer.evaluate((el, delta) => {
     el.scrollBy(0, delta);
@@ -147,7 +147,7 @@ async function scrollGridBy(page: Page, deltaY: number): Promise<void> {
 /**
  * Get the row indices currently visible in the DOM
  */
-async function getVisibleRowIndices(page: Page): Promise<number[]> {
+async function _getVisibleRowIndices(page: Page): Promise<number[]> {
   const rows = page.locator('[data-row-index]');
   const count = await rows.count();
   const indices: number[] = [];

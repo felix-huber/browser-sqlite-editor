@@ -4,14 +4,6 @@ set -euo pipefail
 # Oracle Browser Run
 # Low-level wrapper for running Oracle in browser mode.
 #
-# ⚠️⚠️⚠️ IMPORTANT: MODEL SELECTION ⚠️⚠️⚠️
-# This script MUST use ChatGPT 5.2 PRO!
-#
-# ✅ CORRECT: GPT-5.2 Pro
-# ✅ CORRECT: GPT-5.2 Pro with Extended Thinking (even better!)
-# ❌ WRONG:   o3 / o1 / o1-pro (reasoning models)
-# ❌ WRONG:   GPT-4 / GPT-4o (older models)
-#
 # Usage:
 #   ./scripts/oracle_browser_run.sh <prompt_file> <output_file> <input_file1> [input_file2...]
 #
@@ -27,12 +19,8 @@ shift 2 || true
 
 if [[ -z "$PROMPT_FILE" || -z "$OUTPUT_FILE" || "$#" -lt 1 ]]; then
   echo "Usage: ./scripts/oracle_browser_run.sh <prompt_file> <output_file> <input_files...>"
-  echo ""
-  echo "⚠️  IMPORTANT: Ensure ChatGPT is set to GPT-5.2 PRO (not o1/o3/GPT-4)"
   exit 1
 fi
-
-echo "⚠️  MODEL CHECK: Ensure ChatGPT is set to GPT-5.2 PRO (not o1/o3/GPT-4)"
 
 if [[ ! -f "$PROMPT_FILE" ]]; then
   echo "Error: Prompt file not found: $PROMPT_FILE"
@@ -94,7 +82,7 @@ if [[ $EXIT_CODE -ne 0 ]]; then
   echo "Run this command to copy the bundle to clipboard:"
   echo ""
   echo "  npx -y @steipete/oracle --render --copy-markdown \\"
-  echo "    --prompt \"\$(cat \\\"$PROMPT_FILE\\\")\" \\"
+  echo "    --prompt \"\$(cat $PROMPT_FILE)\" \\"
   for f in "$@"; do
     echo "    --file \"$f\" \\"
   done

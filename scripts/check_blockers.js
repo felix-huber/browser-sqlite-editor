@@ -18,21 +18,6 @@
 const fs = require('fs');
 const path = require('path');
 
-/**
- * Normalize severity values to handle case variations and synonyms.
- * Examples: "Blocker", "CRITICAL", "sev0", "P0" → "blocker"
- */
-function normSeverity(v) {
-  const s = String(v || '').trim().toLowerCase();
-  if (!s) return '';
-  if (['blocker', 'critical', 'sev0', 'p0', 'urgent'].includes(s)) return 'blocker';
-  if (['major', 'high', 'sev1', 'p1'].includes(s)) return 'major';
-  if (['medium', 'sev2', 'p2'].includes(s)) return 'major'; // medium counts as major
-  if (['minor', 'low', 'sev3', 'p3'].includes(s)) return 'minor';
-  if (['nit', 'trivial', 'cosmetic'].includes(s)) return 'nit';
-  return s;
-}
-
 function main() {
   const target = process.argv[2];
   
@@ -71,8 +56,8 @@ function main() {
       issues = loadIssues(target);
     }
     
-    const blockers = issues.filter(i => normSeverity(i.severity) === 'blocker').length;
-    const majors = issues.filter(i => normSeverity(i.severity) === 'major').length;
+    const blockers = issues.filter(i => i.severity === 'blocker').length;
+    const majors = issues.filter(i => i.severity === 'major').length;
     
     const canProceed = blockers === 0;
     const message = blockers === 0 

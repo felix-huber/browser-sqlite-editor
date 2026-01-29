@@ -92,6 +92,7 @@ export const CellContextMenu = memo(function CellContextMenu({
   onClose,
   cellValue,
   columnInfo,
+  rowIndex: _rowIndex, // Used by parent for callbacks
   isReadOnly,
   onCopy,
   onPaste,
@@ -99,14 +100,11 @@ export const CellContextMenu = memo(function CellContextMenu({
   onSaveBlob,
   onDeleteRow,
 }: CellContextMenuProps) {
-  // Check if column is generated
-  const isGenerated = columnInfo?.generated !== null;
+  // Check if column is generated (columnInfo.generated is non-null for generated columns)
+  const isGenerated = columnInfo !== null && columnInfo.generated !== null;
 
   // Check if column is BLOB type
   const isBlob = columnInfo?.type?.toUpperCase() === 'BLOB';
-
-  // Check if cell has a value (for Set NULL confirmation)
-  const hasValue = cellValue !== null;
 
   // Build menu items
   const items = useMemo((): ContextMenuItem[] => {
@@ -120,16 +118,18 @@ export const CellContextMenu = memo(function CellContextMenu({
       onClick: onCopy,
     });
 
-    // Paste - disabled if read-only or generated
+    // Paste - disabled if read-only, generated, or BLOB column
     menuItems.push({
       id: 'paste',
       label: 'Paste',
       icon: PasteIcon,
-      disabled: isReadOnly || isGenerated,
+      disabled: isReadOnly || isGenerated || isBlob,
       disabledTooltip: isReadOnly
         ? 'Database is read-only'
         : isGenerated
         ? 'Generated columns cannot be edited'
+        : isBlob
+        ? 'Cannot paste into BLOB columns'
         : undefined,
       onClick: onPaste,
       dividerAfter: true,
@@ -138,7 +138,7 @@ export const CellContextMenu = memo(function CellContextMenu({
     // Set NULL - disabled if read-only or generated
     menuItems.push({
       id: 'set-null',
-      label: hasValue ? 'Set NULL' : 'Set NULL',
+      label: 'Set NULL',
       icon: NullIcon,
       disabled: isReadOnly || isGenerated,
       disabledTooltip: isReadOnly
@@ -186,7 +186,6 @@ export const CellContextMenu = memo(function CellContextMenu({
     isReadOnly,
     isGenerated,
     isBlob,
-    hasValue,
     cellValue,
   ]);
 
@@ -217,7 +216,13 @@ export async function copyCellValue(value: CellValue): Promise<void> {
     textToCopy = '';
   } else if (value instanceof Uint8Array) {
     // Convert BLOB to base64
-    const binary = String.fromCharCode(...value);
+    // Use chunked approach to avoid stack overflow for large arrays
+    const CHUNK_SIZE = 8192;
+    let binary = '';
+    for (let i = 0; i < value.length; i += CHUNK_SIZE) {
+      const chunk = value.subarray(i, Math.min(i + CHUNK_SIZE, value.length));
+      binary += String.fromCharCode(...chunk);
+    }
     textToCopy = btoa(binary);
   } else {
     textToCopy = String(value);

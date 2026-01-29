@@ -14,6 +14,7 @@ import type {
   TableInfo,
   ForeignKeyInfo,
   DatabaseRegistry,
+  StorageMode,
 } from '../types';
 
 // =============================================================================
@@ -303,11 +304,16 @@ export class WorkerClient {
   /**
    * Open a database by name
    */
-  async openDb(name: string): Promise<{ isWriter: boolean }> {
-    const response = await this.request<{ type: 'lockStatus'; isWriter: boolean }>({
+  async openDb(
+    name: string,
+    options?: { readOnly?: boolean }
+  ): Promise<{ isWriter: boolean }> {
+    const request: WorkerRequest = {
       type: 'open',
       dbName: name,
-    });
+      ...(options?.readOnly !== undefined ? { readOnly: options.readOnly } : {}),
+    };
+    const response = await this.request<{ type: 'lockStatus'; isWriter: boolean }>(request);
     return { isWriter: response.isWriter };
   }
 
@@ -392,8 +398,20 @@ export class WorkerClient {
   /**
    * Import a file into the database
    */
-  async importFile(file: File, nameHint: string): Promise<void> {
-    await this.request<{ type: 'success' }>({ type: 'import', file, nameHint });
+  async importFile(
+    file: File,
+    nameHint: string
+  ): Promise<{ dbId: string; dbName: string; storageType: StorageMode; fileSize: number }> {
+    const response = await this.request<{
+      type: 'success';
+      data?: { dbId: string; dbName: string; storageType: StorageMode; fileSize: number };
+    }>({ type: 'import', file, nameHint });
+
+    if (!response.data) {
+      throw new WorkerError('Import completed without result data');
+    }
+
+    return response.data;
   }
 
   /**
@@ -404,6 +422,9 @@ export class WorkerClient {
       type: 'export',
       dbName,
     });
+    if (!response.data) {
+      throw new WorkerError('Export failed: no data returned', 'UNKNOWN');
+    }
     return response.data;
   }
 

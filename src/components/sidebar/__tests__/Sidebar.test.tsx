@@ -56,8 +56,8 @@ describe('Sidebar', () => {
       storageMode: null,
     };
     mockUseDatabases.mockImplementation(() => mockState.databases);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockUseDatabaseStore.mockImplementation((selector: (state: any) => unknown) => selector(mockState));
+
+    mockUseDatabaseStore.mockImplementation((selector: (state: typeof mockState) => unknown) => selector(mockState));
   });
 
   it('renders nothing when collapsed', () => {
@@ -156,8 +156,8 @@ describe('Sidebar', () => {
       storageMode: null,
     };
     mockUseDatabases.mockReturnValue(mockDatabases);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockUseDatabaseStore.mockImplementation((selector: (state: any) => unknown) => selector(mockState));
+     
+    mockUseDatabaseStore.mockImplementation((selector: (state: typeof mockState) => unknown) => selector(mockState));
 
     render(<Sidebar onSelectTable={onSelectTable} />);
 
@@ -183,8 +183,8 @@ describe('Sidebar', () => {
       storageMode: null,
     };
     mockUseDatabases.mockReturnValue(mockDatabases);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockUseDatabaseStore.mockImplementation((selector: (state: any) => unknown) => selector(mockState));
+     
+    mockUseDatabaseStore.mockImplementation((selector: (state: typeof mockState) => unknown) => selector(mockState));
 
     render(<Sidebar />);
 
@@ -419,8 +419,8 @@ describe('Sidebar', () => {
         storageMode: null,
       };
       mockUseDatabases.mockReturnValue(mockDatabases);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      mockUseDatabaseStore.mockImplementation((selector: (state: any) => unknown) => selector(mockState));
+       
+      mockUseDatabaseStore.mockImplementation((selector: (state: typeof mockState) => unknown) => selector(mockState));
 
       vi.useFakeTimers();
 
