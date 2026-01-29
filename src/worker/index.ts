@@ -417,12 +417,12 @@ async function handleMessage(event: WorkerMessageEvent): Promise<void> {
 
         const storageMode = registry.getStorageMode();
 
-        // Import with progress reporting
+        // Import with progress reporting (progress is broadcast, not a response)
         const importResult = await importDatabase(request.file, {
           nameHint: request.nameHint,
           storageMode,
           onProgress: (percent) => {
-            postResponse({ type: 'progress', percent, message: 'Importing database...' });
+            postBroadcast({ type: 'progress', percent, message: 'Importing database...' });
           },
         });
 
