@@ -283,7 +283,8 @@ describe('SqlEditorPanel', () => {
       expect(screen.getByTestId('error-display')).toBeInTheDocument()
     })
 
-    expect(screen.getByTestId('error-message')).toHaveTextContent('syntax error at line 1')
+    // Error message is now in the SqlErrorPanel with indexed test ids
+    expect(screen.getByTestId('error-message-0')).toHaveTextContent('syntax error at line 1')
   })
 
   it('displays execution time after query', async () => {

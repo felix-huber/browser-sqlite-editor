@@ -1,5 +1,7 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
+import type { CodeMirrorEditorHandle, ErrorLocation } from './CodeMirrorEditor'
+import { SqlErrorPanel, parseError } from './SqlErrorPanel'
 import type { QueryResult, SqlError, QueryHistoryItem } from '../../types'
 
 /**
@@ -120,7 +122,7 @@ export function SqlEditorPanel({
 }: SqlEditorPanelProps) {
   const [sql, setSql] = useState(initialValue)
   const [isExecuting, setIsExecuting] = useState(false)
-  const [error, setError] = useState<SqlError | null>(null)
+  const [errors, setErrors] = useState<SqlError[]>([])
   const [results, setResults] = useState<QueryResult | null>(null)
   const [executionTime, setExecutionTime] = useState<number | null>(null)
   const [showHistory, setShowHistory] = useState(false)
@@ -128,6 +130,27 @@ export function SqlEditorPanel({
 
   const historyRef = useRef<HTMLDivElement>(null)
   const editorContainerRef = useRef<HTMLDivElement>(null)
+  const editorRef = useRef<CodeMirrorEditorHandle>(null)
+
+  // Convert errors to error locations for CodeMirror highlighting
+  const errorLocations = useMemo<ErrorLocation[]>(() => {
+    const locations: ErrorLocation[] = []
+    for (const err of errors) {
+      const parsed = parseError(err)
+      if (parsed.line !== undefined) {
+        locations.push({
+          line: parsed.line,
+          column: parsed.column,
+        })
+      }
+    }
+    return locations
+  }, [errors])
+
+  // Jump to error location in editor
+  const handleJumpToLocation = useCallback((line: number, column?: number) => {
+    editorRef.current?.jumpToLocation(line, column)
+  }, [])
 
   // Close history dropdown when clicking outside
   useEffect(() => {
@@ -147,13 +170,13 @@ export function SqlEditorPanel({
     // Check read-only guard
     if (isReadOnly && !isReadOnlyStatement(queryText)) {
       setReadOnlyWarning('Cannot execute write operations in read-only mode. Only SELECT queries and read-only PRAGMAs are allowed.')
-      setError(null)
+      setErrors([])
       setResults(null)
       return
     }
 
     setIsExecuting(true)
-    setError(null)
+    setErrors([])
     setResults(null)
     setReadOnlyWarning(null)
     const startTime = performance.now()
@@ -163,6 +186,9 @@ export function SqlEditorPanel({
       const endTime = performance.now()
       setExecutionTime(endTime - startTime)
       setResults(result)
+      // Clear errors on successful execution
+      setErrors([])
+      editorRef.current?.clearErrors()
     } catch (err) {
       const endTime = performance.now()
       setExecutionTime(endTime - startTime)
@@ -172,13 +198,14 @@ export function SqlEditorPanel({
         const lineMatch = err.message.match(/line (\d+)/i)
         const columnMatch = err.message.match(/column (\d+)/i)
 
-        setError({
+        const error: SqlError = {
           message: err.message,
           line: lineMatch ? parseInt(lineMatch[1], 10) : undefined,
           column: columnMatch ? parseInt(columnMatch[1], 10) : undefined,
-        })
+        }
+        setErrors([error])
       } else {
-        setError({ message: String(err) })
+        setErrors([{ message: String(err) }])
       }
     } finally {
       setIsExecuting(false)
@@ -207,9 +234,10 @@ export function SqlEditorPanel({
     setSql(item.sql)
     setShowHistory(false)
     // Clear previous results when loading from history
-    setError(null)
+    setErrors([])
     setResults(null)
     setReadOnlyWarning(null)
+    editorRef.current?.clearErrors()
   }, [])
 
   const formatTime = (ms: number): string => {
@@ -361,10 +389,12 @@ export function SqlEditorPanel({
       {/* Editor area */}
       <div ref={editorContainerRef} className="flex-1 min-h-0 overflow-hidden">
         <CodeMirrorEditor
+          ref={editorRef}
           value={sql}
           onChange={setSql}
           className="h-full"
           placeholder="Enter SQL query..."
+          errorLocations={errorLocations}
         />
       </div>
 
@@ -423,37 +453,12 @@ export function SqlEditorPanel({
         )}
 
         {/* Error display */}
-        {error && (
-          <div
-            className="flex items-start gap-2 px-3 py-2 bg-red-50 border-b border-red-200"
-            role="alert"
-            data-testid="error-display"
-          >
-            <svg
-              className="w-5 h-5 text-red-600 shrink-0 mt-0.5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-            <div className="text-sm">
-              <span className="font-medium text-red-800">Error</span>
-              {error.line && (
-                <span className="text-red-600"> at line {error.line}</span>
-              )}
-              {error.column && (
-                <span className="text-red-600">, column {error.column}</span>
-              )}
-              <div className="text-red-700 mt-0.5" data-testid="error-message">
-                {error.message}
-              </div>
-            </div>
+        {errors.length > 0 && (
+          <div className="px-2 py-2 border-b border-red-200" data-testid="error-display">
+            <SqlErrorPanel
+              errors={errors}
+              onJumpToLocation={handleJumpToLocation}
+            />
           </div>
         )}
 
@@ -503,7 +508,7 @@ export function SqlEditorPanel({
         )}
 
         {/* Empty results message */}
-        {results && results.rows.length === 0 && !error && (
+        {results && results.rows.length === 0 && errors.length === 0 && (
           <div className="px-3 py-4 text-center text-sm text-navy-500" data-testid="empty-results">
             Query executed successfully. No rows returned.
           </div>

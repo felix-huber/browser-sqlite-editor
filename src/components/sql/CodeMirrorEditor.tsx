@@ -1,6 +1,6 @@
-import { useRef, useEffect, useCallback } from 'react'
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view'
-import { EditorState, Extension, Compartment } from '@codemirror/state'
+import { useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, Decoration, DecorationSet } from '@codemirror/view'
+import { EditorState, Extension, Compartment, StateField, StateEffect, RangeSetBuilder } from '@codemirror/state'
 import { sql, SQLite } from '@codemirror/lang-sql'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { syntaxHighlighting, defaultHighlightStyle, HighlightStyle } from '@codemirror/language'
@@ -64,6 +64,113 @@ const sqlHighlightStyle = HighlightStyle.define([
   { tag: tags.special(tags.string), color: '#fcd34d' }, // amber-300 for special strings
 ])
 
+// =============================================================================
+// Error Highlighting
+// =============================================================================
+
+/** Location of an error in the editor */
+export interface ErrorLocation {
+  /** Line number (1-based) */
+  line: number;
+  /** Column number (1-based, optional) */
+  column?: number;
+  /** Length of the error highlight (default: rest of line) */
+  length?: number;
+}
+
+/** Effect to set error locations */
+const setErrorLocations = StateEffect.define<ErrorLocation[]>();
+
+/** Effect to clear all error highlights */
+const clearErrorLocations = StateEffect.define<void>();
+
+/** Error underline decoration */
+const errorUnderlineMark = Decoration.mark({
+  class: 'cm-error-underline',
+  attributes: { 'data-testid': 'error-highlight' },
+});
+
+/** Error line highlight decoration */
+const errorLineHighlight = Decoration.line({
+  class: 'cm-error-line',
+  attributes: { 'data-testid': 'error-line-highlight' },
+});
+
+/** State field to track error decorations */
+const errorDecorations = StateField.define<DecorationSet>({
+  create() {
+    return Decoration.none;
+  },
+  update(decorations, tr) {
+    // Check for error location effects
+    for (const e of tr.effects) {
+      if (e.is(setErrorLocations)) {
+        const builder = new RangeSetBuilder<Decoration>();
+        const lineDecorations: { pos: number; decoration: Decoration }[] = [];
+
+        for (const loc of e.value) {
+          // Convert 1-based line to position
+          if (loc.line < 1 || loc.line > tr.state.doc.lines) continue;
+
+          const lineInfo = tr.state.doc.line(loc.line);
+          const lineStart = lineInfo.from;
+          const lineEnd = lineInfo.to;
+
+          // Add line highlight
+          lineDecorations.push({ pos: lineStart, decoration: errorLineHighlight });
+
+          // Calculate underline position
+          let underlineStart = lineStart;
+          let underlineEnd = lineEnd;
+
+          if (loc.column !== undefined && loc.column > 0) {
+            // Column is 1-based
+            underlineStart = Math.min(lineStart + loc.column - 1, lineEnd);
+            if (loc.length !== undefined && loc.length > 0) {
+              underlineEnd = Math.min(underlineStart + loc.length, lineEnd);
+            }
+          }
+
+          // Only add mark if there's content to underline
+          if (underlineStart < underlineEnd) {
+            builder.add(underlineStart, underlineEnd, errorUnderlineMark);
+          }
+        }
+
+        // Build the decoration set with both line and range decorations
+        let result = builder.finish();
+        for (const { pos, decoration } of lineDecorations) {
+          result = result.update({ add: [decoration.range(pos)] });
+        }
+
+        return result;
+      }
+      if (e.is(clearErrorLocations)) {
+        return Decoration.none;
+      }
+    }
+
+    // Map decorations through document changes
+    if (tr.docChanged) {
+      return decorations.map(tr.changes);
+    }
+
+    return decorations;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/** Theme extension for error highlighting */
+const errorHighlightTheme = EditorView.theme({
+  '.cm-error-line': {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)', // red-500 with alpha
+  },
+  '.cm-error-underline': {
+    textDecoration: 'underline wavy #ef4444', // red-500
+    textUnderlineOffset: '3px',
+  },
+});
+
 export interface CodeMirrorEditorProps {
   /** Current value of the editor */
   value: string
@@ -77,19 +184,33 @@ export interface CodeMirrorEditorProps {
   className?: string
   /** Placeholder text when empty */
   placeholder?: string
+  /** Error locations to highlight */
+  errorLocations?: ErrorLocation[]
+}
+
+/** Handle for imperative editor methods */
+export interface CodeMirrorEditorHandle {
+  /** Jump to a specific line and column, scrolling it into view */
+  jumpToLocation: (line: number, column?: number) => void
+  /** Focus the editor */
+  focus: () => void
+  /** Clear all error highlights */
+  clearErrors: () => void
 }
 
 /**
  * React wrapper for CodeMirror 6 with SQLite syntax highlighting
  */
-export function CodeMirrorEditor({
-  value,
-  onChange,
-  lineNumbers: showLineNumbers = true,
-  readOnly = false,
-  className = '',
-  placeholder,
-}: CodeMirrorEditorProps) {
+export const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEditorProps>(
+  function CodeMirrorEditor({
+    value,
+    onChange,
+    lineNumbers: showLineNumbers = true,
+    readOnly = false,
+    className = '',
+    placeholder,
+    errorLocations,
+  }, ref) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const readOnlyCompartment = useRef(new Compartment())
@@ -107,12 +228,48 @@ export function CodeMirrorEditor({
     })
   }, [])
 
+  // Expose imperative methods via ref
+  useImperativeHandle(ref, () => ({
+    jumpToLocation: (line: number, column?: number) => {
+      const view = viewRef.current
+      if (!view) return
+
+      // Validate line number
+      if (line < 1 || line > view.state.doc.lines) return
+
+      const lineInfo = view.state.doc.line(line)
+      const pos = column !== undefined && column > 0
+        ? Math.min(lineInfo.from + column - 1, lineInfo.to)
+        : lineInfo.from
+
+      // Set cursor position and scroll into view
+      view.dispatch({
+        selection: { anchor: pos },
+        scrollIntoView: true,
+      })
+      view.focus()
+    },
+    focus: () => {
+      viewRef.current?.focus()
+    },
+    clearErrors: () => {
+      const view = viewRef.current
+      if (!view) return
+
+      view.dispatch({
+        effects: clearErrorLocations.of(undefined),
+      })
+    },
+  }), [])
+
   // Initialize editor
   useEffect(() => {
     if (!containerRef.current) return
 
     const extensions: Extension[] = [
       editorTheme,
+      errorHighlightTheme,
+      errorDecorations,
       syntaxHighlighting(sqlHighlightStyle),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       sql({ dialect: SQLite }),
@@ -179,6 +336,22 @@ export function CodeMirrorEditor({
     })
   }, [readOnly])
 
+  // Sync error locations
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+
+    if (errorLocations && errorLocations.length > 0) {
+      view.dispatch({
+        effects: setErrorLocations.of(errorLocations),
+      })
+    } else {
+      view.dispatch({
+        effects: clearErrorLocations.of(undefined),
+      })
+    }
+  }, [errorLocations])
+
   return (
     <div
       ref={containerRef}
@@ -186,6 +359,6 @@ export function CodeMirrorEditor({
       data-testid="codemirror-editor"
     />
   )
-}
+})
 
 export default CodeMirrorEditor
