@@ -13,6 +13,12 @@ import {
   generateRebuildPlanWithColumnMapping,
   generateColumnMappedCopyDataSql,
   executeRebuildPlan,
+  verifyTableSchema,
+  verifyForeignKeyIntegrity,
+  verifyViewCompilability,
+  verifyTriggerValidity,
+  hasSelfReferencialForeignKeys,
+  runPostRebuildVerification,
   type SqliteMasterObject,
   type RebuildPlan,
   type TableDependents,
@@ -827,14 +833,29 @@ function createMockEngine(options: {
       if (sql.includes('SELECT COUNT(*)')) {
         return { rows: [[currentRowCount]] }
       }
-      if (sql.includes('PRAGMA foreign_keys')) {
+      if (sql.includes('PRAGMA foreign_keys') && !sql.includes('foreign_key_check') && !sql.includes('foreign_key_list')) {
         return { rows: [[fkEnabled ? 1 : 0]] }
       }
       if (sql.includes('PRAGMA foreign_key_check')) {
         return { rows: [] } // No violations
       }
+      if (sql.includes('PRAGMA foreign_key_list')) {
+        return { rows: [] } // No FKs by default
+      }
+      if (sql.includes('PRAGMA table_info')) {
+        // Return default columns: id, name, email
+        return { rows: [
+          [0, 'id', 'INTEGER', 1, null, 1],
+          [1, 'name', 'TEXT', 0, null, 0],
+          [2, 'email', 'TEXT', 0, null, 0],
+        ] }
+      }
       if (sql.includes('PRAGMA index_list')) {
         return { rows: [] }
+      }
+      if (sql.includes('sqlite_master') && sql.includes('trigger')) {
+        // Return a trigger exists by default for trigger verification
+        return { rows: [['CREATE TRIGGER ...']] }
       }
 
       return { rows: [] }
@@ -1252,6 +1273,624 @@ describe('executeRebuildPlan', () => {
 
       expect(result.success).toBe(true)
       // FK was already disabled, so don't need to re-enable
+    })
+  })
+})
+
+// =============================================================================
+// Verification Function Tests
+// =============================================================================
+
+describe('verifyTableSchema', () => {
+  it('returns no failures when columns match', async () => {
+    const engine = createMockEngine({
+      queryResults: new Map([
+        ['PRAGMA table_info', {
+          rows: [
+            [0, 'id', 'INTEGER', 1, null, 1],
+            [1, 'name', 'TEXT', 0, null, 0],
+            [2, 'email', 'TEXT', 0, null, 0],
+          ],
+        }],
+      ]),
+    })
+
+    const failures = await verifyTableSchema(
+      engine as unknown as DatabaseEngine,
+      'users',
+      ['id', 'name', 'email']
+    )
+
+    expect(failures).toHaveLength(0)
+  })
+
+  it('returns failure when expected column is missing', async () => {
+    const engine = createMockEngine({
+      queryResults: new Map([
+        ['PRAGMA table_info', {
+          rows: [
+            [0, 'id', 'INTEGER', 1, null, 1],
+            [1, 'name', 'TEXT', 0, null, 0],
+          ],
+        }],
+      ]),
+    })
+
+    const failures = await verifyTableSchema(
+      engine as unknown as DatabaseEngine,
+      'users',
+      ['id', 'name', 'email']
+    )
+
+    expect(failures).toHaveLength(1)
+    expect(failures[0].type).toBe('schema_mismatch')
+    expect(failures[0].message).toContain('email')
+    expect(failures[0].message).toContain('not found')
+  })
+
+  it('returns failure when unexpected column exists', async () => {
+    const engine = createMockEngine({
+      queryResults: new Map([
+        ['PRAGMA table_info', {
+          rows: [
+            [0, 'id', 'INTEGER', 1, null, 1],
+            [1, 'name', 'TEXT', 0, null, 0],
+            [2, 'extra_col', 'TEXT', 0, null, 0],
+          ],
+        }],
+      ]),
+    })
+
+    const failures = await verifyTableSchema(
+      engine as unknown as DatabaseEngine,
+      'users',
+      ['id', 'name']
+    )
+
+    expect(failures).toHaveLength(1)
+    expect(failures[0].type).toBe('schema_mismatch')
+    expect(failures[0].message).toContain('extra_col')
+    expect(failures[0].message).toContain('Unexpected')
+  })
+
+  it('handles case-insensitive column matching', async () => {
+    const engine = createMockEngine({
+      queryResults: new Map([
+        ['PRAGMA table_info', {
+          rows: [
+            [0, 'ID', 'INTEGER', 1, null, 1],
+            [1, 'Name', 'TEXT', 0, null, 0],
+          ],
+        }],
+      ]),
+    })
+
+    const failures = await verifyTableSchema(
+      engine as unknown as DatabaseEngine,
+      'users',
+      ['id', 'name']
+    )
+
+    expect(failures).toHaveLength(0)
+  })
+
+  it('skips column check when expectedColumns not provided', async () => {
+    const engine = createMockEngine({
+      queryResults: new Map([
+        ['PRAGMA table_info', {
+          rows: [
+            [0, 'id', 'INTEGER', 1, null, 1],
+          ],
+        }],
+      ]),
+    })
+
+    const failures = await verifyTableSchema(
+      engine as unknown as DatabaseEngine,
+      'users'
+    )
+
+    expect(failures).toHaveLength(0)
+  })
+
+  it('reports failure when table has no columns', async () => {
+    const engine = createMockEngine({
+      queryResults: new Map([
+        ['PRAGMA table_info', { rows: [] }],
+      ]),
+    })
+
+    const failures = await verifyTableSchema(
+      engine as unknown as DatabaseEngine,
+      'users'
+    )
+
+    expect(failures).toHaveLength(1)
+    expect(failures[0].message).toContain('no columns')
+  })
+})
+
+describe('verifyForeignKeyIntegrity', () => {
+  it('returns no failures when no FK violations', async () => {
+    const engine = createMockEngine({
+      queryResults: new Map([
+        ['foreign_key_check', { rows: [] }],
+      ]),
+    })
+
+    const failures = await verifyForeignKeyIntegrity(
+      engine as unknown as DatabaseEngine,
+      'orders'
+    )
+
+    expect(failures).toHaveLength(0)
+  })
+
+  it('returns failures for FK violations', async () => {
+    const engine = createMockEngine({
+      queryResults: new Map([
+        ['foreign_key_check', {
+          rows: [
+            ['orders', 1, 'users', 0],
+            ['orders', 5, 'users', 0],
+            ['orders', 3, 'products', 0],
+          ],
+        }],
+      ]),
+    })
+
+    const failures = await verifyForeignKeyIntegrity(
+      engine as unknown as DatabaseEngine,
+      'orders'
+    )
+
+    expect(failures).toHaveLength(2) // Grouped by parent table
+    expect(failures[0].type).toBe('fk_violation')
+    expect(failures.some(f => f.message.includes('users'))).toBe(true)
+    expect(failures.some(f => f.message.includes('products'))).toBe(true)
+  })
+})
+
+describe('verifyViewCompilability', () => {
+  it('returns null when view compiles successfully', async () => {
+    const engine = createMockEngine({})
+
+    const failure = await verifyViewCompilability(
+      engine as unknown as DatabaseEngine,
+      'v_user_names'
+    )
+
+    expect(failure).toBeNull()
+  })
+
+  it('returns failure when view is broken', async () => {
+    const engine = createMockEngine({
+      queryErrors: new Map([
+        ['v_broken_view', new Error('no such column: old_column')],
+      ]),
+    })
+
+    const failure = await verifyViewCompilability(
+      engine as unknown as DatabaseEngine,
+      'v_broken_view'
+    )
+
+    expect(failure).not.toBeNull()
+    expect(failure?.type).toBe('view_broken')
+    expect(failure?.objectName).toBe('v_broken_view')
+    expect(failure?.details).toContain('no such column')
+  })
+})
+
+describe('verifyTriggerValidity', () => {
+  it('returns null when trigger exists', async () => {
+    const engine = createMockEngine({
+      queryResults: new Map([
+        ['sqlite_master', {
+          rows: [['CREATE TRIGGER tr_test AFTER INSERT ON users BEGIN SELECT 1; END']],
+        }],
+      ]),
+    })
+
+    const failure = await verifyTriggerValidity(
+      engine as unknown as DatabaseEngine,
+      'tr_test',
+      'CREATE TRIGGER tr_test AFTER INSERT ON users BEGIN SELECT 1; END'
+    )
+
+    expect(failure).toBeNull()
+  })
+
+  it('returns failure when trigger does not exist', async () => {
+    const engine = createMockEngine({
+      queryResults: new Map([
+        ['sqlite_master', { rows: [] }],
+      ]),
+    })
+
+    const failure = await verifyTriggerValidity(
+      engine as unknown as DatabaseEngine,
+      'tr_missing',
+      'CREATE TRIGGER tr_missing ...'
+    )
+
+    expect(failure).not.toBeNull()
+    expect(failure?.type).toBe('trigger_broken')
+    expect(failure?.objectName).toBe('tr_missing')
+    expect(failure?.message).toContain('was not recreated')
+  })
+})
+
+describe('hasSelfReferencialForeignKeys', () => {
+  it('returns true for self-referential FK', () => {
+    const result = hasSelfReferencialForeignKeys('employees', [
+      {
+        id: 0,
+        childTable: 'employees',
+        childColumn: 'manager_id',
+        parentTable: 'employees',
+        parentColumn: 'id',
+        onDelete: 'SET NULL',
+        onUpdate: 'NO ACTION',
+        match: 'NONE',
+      },
+    ])
+
+    expect(result).toBe(true)
+  })
+
+  it('returns false when no self-referential FK', () => {
+    const result = hasSelfReferencialForeignKeys('orders', [
+      {
+        id: 0,
+        childTable: 'orders',
+        childColumn: 'user_id',
+        parentTable: 'users',
+        parentColumn: 'id',
+        onDelete: 'CASCADE',
+        onUpdate: 'NO ACTION',
+        match: 'NONE',
+      },
+    ])
+
+    expect(result).toBe(false)
+  })
+
+  it('returns false for empty FK list', () => {
+    const result = hasSelfReferencialForeignKeys('users', [])
+    expect(result).toBe(false)
+  })
+
+  it('handles case-insensitive table name matching', () => {
+    const result = hasSelfReferencialForeignKeys('EMPLOYEES', [
+      {
+        id: 0,
+        childTable: 'EMPLOYEES',
+        childColumn: 'manager_id',
+        parentTable: 'employees',
+        parentColumn: 'id',
+        onDelete: 'SET NULL',
+        onUpdate: 'NO ACTION',
+        match: 'NONE',
+      },
+    ])
+
+    expect(result).toBe(true)
+  })
+})
+
+describe('runPostRebuildVerification', () => {
+  it('runs all verifications by default', async () => {
+    const engine = createMockEngine({
+      queryResults: new Map([
+        ['PRAGMA table_info', {
+          rows: [[0, 'id', 'INTEGER', 1, null, 1]],
+        }],
+        ['foreign_key_check', { rows: [] }],
+        ['sqlite_master', { rows: [['CREATE TRIGGER ...']] }],
+      ]),
+    })
+
+    const plan: RebuildPlan = {
+      tableName: 'users',
+      operations: [],
+      dependents: {
+        createTableSql: 'CREATE TABLE users (id INTEGER PRIMARY KEY)',
+        indexes: [],
+        triggers: [{ name: 'tr_test', tableName: 'users', sql: 'CREATE TRIGGER tr_test...' }],
+        views: [{ name: 'v_test', sql: 'CREATE VIEW v_test AS SELECT * FROM users' }],
+        incomingForeignKeys: [],
+      },
+      affectsOtherTables: false,
+    }
+
+    const failures = await runPostRebuildVerification(
+      engine as unknown as DatabaseEngine,
+      plan
+    )
+
+    expect(failures).toHaveLength(0)
+  })
+
+  it('respects verification options to skip checks', async () => {
+    const engine = createMockEngine({
+      queryResults: new Map([
+        ['PRAGMA table_info', { rows: [] }], // Would fail schema check
+        ['foreign_key_check', {
+          rows: [['orders', 1, 'users', 0]], // Would fail FK check
+        }],
+      ]),
+    })
+
+    const plan: RebuildPlan = {
+      tableName: 'users',
+      operations: [],
+      dependents: {
+        createTableSql: 'CREATE TABLE users (id INTEGER PRIMARY KEY)',
+        indexes: [],
+        triggers: [],
+        views: [],
+        incomingForeignKeys: [],
+      },
+      affectsOtherTables: false,
+    }
+
+    const failures = await runPostRebuildVerification(
+      engine as unknown as DatabaseEngine,
+      plan,
+      {
+        verifySchema: false,
+        verifyForeignKeys: false,
+        verifyViews: false,
+        verifyTriggers: false,
+      }
+    )
+
+    expect(failures).toHaveLength(0)
+  })
+})
+
+// =============================================================================
+// Verification Integration Tests (executeRebuildPlan with verification)
+// =============================================================================
+
+describe('executeRebuildPlan with verification', () => {
+  describe('rebuild with valid dependent view', () => {
+    it('view still works after rebuild', async () => {
+      const engine = createMockEngine({
+        initialRowCount: 10,
+        queryResults: new Map([
+          ['PRAGMA table_info', {
+            rows: [
+              [0, 'id', 'INTEGER', 1, null, 1],
+              [1, 'name', 'TEXT', 0, null, 0],
+              [2, 'email', 'TEXT', 0, null, 0],
+            ],
+          }],
+          ['foreign_key_check', { rows: [] }],
+        ]),
+      })
+
+      const dependents: TableDependents = {
+        createTableSql: 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)',
+        indexes: [],
+        triggers: [],
+        views: [{ name: 'v_users', sql: 'CREATE VIEW v_users AS SELECT id, name FROM users' }],
+        incomingForeignKeys: [],
+      }
+
+      const plan = generateRebuildPlan(
+        'users',
+        'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)',
+        dependents
+      )
+
+      const result = await executeRebuildPlan(engine, plan, {
+        expectedColumns: ['id', 'name', 'email'],
+      })
+
+      expect(result.success).toBe(true)
+      expect(result.verificationFailures).toBeUndefined()
+    })
+  })
+
+  describe('rebuild breaks view (column removed)', () => {
+    it('transaction rolled back, error names view', async () => {
+      const viewQueryCount = { count: 0 }
+      const engine = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('SELECT COUNT(*)')) {
+            return { rows: [[10]] }
+          }
+          if (sql.includes('PRAGMA foreign_keys')) {
+            return { rows: [[1]] }
+          }
+          if (sql.includes('PRAGMA table_info')) {
+            return { rows: [[0, 'id', 'INTEGER', 1, null, 1]] }
+          }
+          if (sql.includes('foreign_key_check')) {
+            return { rows: [] }
+          }
+          if (sql.includes('v_broken_view')) {
+            viewQueryCount.count++
+            throw new Error('no such column: removed_column')
+          }
+          if (sql.includes('PRAGMA foreign_key_list')) {
+            return { rows: [] }
+          }
+          return { rows: [] }
+        }),
+        exec: vi.fn(async () => ({ rowsAffected: 0, lastInsertId: 0 })),
+      }
+
+      const dependents: TableDependents = {
+        createTableSql: 'CREATE TABLE users (id INTEGER PRIMARY KEY, removed_column TEXT)',
+        indexes: [],
+        triggers: [],
+        views: [{ name: 'v_broken_view', sql: 'CREATE VIEW v_broken_view AS SELECT removed_column FROM users' }],
+        incomingForeignKeys: [],
+      }
+
+      const plan = generateRebuildPlan(
+        'users',
+        'CREATE TABLE users (id INTEGER PRIMARY KEY)',
+        dependents
+      )
+
+      const result = await executeRebuildPlan(engine as unknown as DatabaseEngine, plan)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('v_broken_view')
+      expect(result.verificationFailures).toBeDefined()
+      expect(result.verificationFailures?.some(f => f.objectName === 'v_broken_view')).toBe(true)
+
+      // Verify ROLLBACK was called
+      expect(engine.exec).toHaveBeenCalledWith('ROLLBACK')
+    })
+  })
+
+  describe('rebuild breaks trigger (column renamed)', () => {
+    it('transaction rolled back, error names trigger', async () => {
+      const engine = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('SELECT COUNT(*)')) {
+            return { rows: [[5]] }
+          }
+          if (sql.includes('PRAGMA foreign_keys')) {
+            return { rows: [[1]] }
+          }
+          if (sql.includes('PRAGMA table_info')) {
+            return { rows: [[0, 'id', 'INTEGER', 1, null, 1]] }
+          }
+          if (sql.includes('foreign_key_check')) {
+            return { rows: [] }
+          }
+          if (sql.includes('sqlite_master') && sql.includes('trigger')) {
+            // Trigger doesn't exist (failed to recreate due to column rename)
+            return { rows: [] }
+          }
+          if (sql.includes('PRAGMA foreign_key_list')) {
+            return { rows: [] }
+          }
+          return { rows: [] }
+        }),
+        exec: vi.fn(async () => ({ rowsAffected: 0, lastInsertId: 0 })),
+      }
+
+      const dependents: TableDependents = {
+        createTableSql: 'CREATE TABLE users (id INTEGER PRIMARY KEY, old_name TEXT)',
+        indexes: [],
+        triggers: [{
+          name: 'tr_broken',
+          tableName: 'users',
+          sql: 'CREATE TRIGGER tr_broken AFTER INSERT ON users BEGIN SELECT old_name; END',
+        }],
+        views: [],
+        incomingForeignKeys: [],
+      }
+
+      const plan = generateRebuildPlan(
+        'users',
+        'CREATE TABLE users (id INTEGER PRIMARY KEY, new_name TEXT)',
+        dependents
+      )
+
+      const result = await executeRebuildPlan(engine as unknown as DatabaseEngine, plan)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('tr_broken')
+      expect(result.verificationFailures).toBeDefined()
+      expect(result.verificationFailures?.some(f => f.objectName === 'tr_broken')).toBe(true)
+    })
+  })
+
+  describe('rebuild with circular FK', () => {
+    it('handled without deadlock', async () => {
+      const engine = createMockEngine({
+        initialRowCount: 5,
+        queryResults: new Map([
+          ['PRAGMA table_info', {
+            rows: [
+              [0, 'id', 'INTEGER', 1, null, 1],
+              [1, 'manager_id', 'INTEGER', 0, null, 0],
+            ],
+          }],
+          ['foreign_key_check', { rows: [] }],
+          ['foreign_key_list', {
+            rows: [[0, 0, 'employees', 'manager_id', 'id', 'NO ACTION', 'SET NULL', 'NONE']],
+          }],
+        ]),
+      })
+
+      const dependents: TableDependents = {
+        createTableSql: 'CREATE TABLE employees (id INTEGER PRIMARY KEY, manager_id INTEGER REFERENCES employees(id))',
+        indexes: [],
+        triggers: [],
+        views: [],
+        incomingForeignKeys: [],
+      }
+
+      const plan = generateRebuildPlan(
+        'employees',
+        'CREATE TABLE employees (id INTEGER PRIMARY KEY, manager_id INTEGER REFERENCES employees(id), dept TEXT)',
+        dependents
+      )
+
+      const result = await executeRebuildPlan(engine, plan)
+
+      // Should complete without hanging/deadlock
+      expect(result.success).toBe(true)
+    })
+  })
+
+  describe('foreign key violation after rebuild', () => {
+    it('detected and reported', async () => {
+      const engine = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('SELECT COUNT(*)')) {
+            return { rows: [[10]] }
+          }
+          if (sql.includes('PRAGMA foreign_keys')) {
+            return { rows: [[1]] }
+          }
+          if (sql.includes('PRAGMA table_info')) {
+            return { rows: [[0, 'id', 'INTEGER', 1, null, 1]] }
+          }
+          if (sql.includes('PRAGMA foreign_key_check')) {
+            // Return FK violations
+            return { rows: [
+              ['orders', 1, 'users', 0],
+              ['orders', 2, 'users', 0],
+            ] }
+          }
+          if (sql.includes('PRAGMA foreign_key_list')) {
+            return { rows: [] }
+          }
+          return { rows: [] }
+        }),
+        exec: vi.fn(async () => ({ rowsAffected: 0, lastInsertId: 0 })),
+      }
+
+      const dependents: TableDependents = {
+        createTableSql: 'CREATE TABLE users (id INTEGER PRIMARY KEY)',
+        indexes: [],
+        triggers: [],
+        views: [],
+        incomingForeignKeys: [],
+      }
+
+      const plan = generateRebuildPlan(
+        'users',
+        'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)',
+        dependents
+      )
+
+      const result = await executeRebuildPlan(engine as unknown as DatabaseEngine, plan)
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('Foreign key violations')
+      expect(result.verificationFailures).toBeDefined()
+      expect(result.verificationFailures?.some(f => f.type === 'fk_violation')).toBe(true)
     })
   })
 })
