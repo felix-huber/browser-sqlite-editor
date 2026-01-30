@@ -40,4 +40,6 @@ test-results/
 progress.txt
 learnings.md
 
+# Local beads (regenerated)
+.beads/
 
