@@ -95,6 +95,19 @@ function createMockFile(data: Uint8Array, name = 'test.sqlite'): File {
   (mockFile as unknown as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer =
     async () => data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
 
+  // Add slice method (returns a Blob-like object containing portion of the data)
+  (mockFile as unknown as { slice: (start?: number, end?: number, contentType?: string) => Blob }).slice =
+    (start = 0, end = data.length, contentType?: string) => {
+      const sliceData = data.slice(start, end);
+      const blob = new Blob([sliceData], { type: contentType ?? 'application/x-sqlite3' });
+      // Ensure arrayBuffer is available (polyfill for jsdom)
+      if (typeof blob.arrayBuffer !== 'function') {
+        (blob as unknown as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer = async () =>
+          sliceData.buffer.slice(sliceData.byteOffset, sliceData.byteOffset + sliceData.byteLength);
+      }
+      return blob;
+    };
+
   // Add stream method (creates a ReadableStream)
   (mockFile as unknown as { stream: () => ReadableStream<Uint8Array> }).stream = () => {
     let offset = 0;

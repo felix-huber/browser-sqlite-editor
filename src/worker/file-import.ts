@@ -230,6 +230,8 @@ export function detectFileType(data: Uint8Array): string | null {
 
 /**
  * Stream a File in chunks and accumulate into Uint8Array with progress
+ * NOTE: This function buffers the entire file in memory. For large files,
+ * use streamFileToOpfs() which uses SyncAccessHandle for true streaming.
  *
  * @param file - File to stream
  * @param onProgress - Progress callback (0-100)
@@ -293,6 +295,227 @@ export async function streamFileChunks(
   }
 
   return new Uint8Array(buffer);
+}
+
+/**
+ * Read the first N bytes of a File for header validation
+ * Uses slice() to avoid reading the entire file into memory.
+ */
+export async function readFileHeader(file: File, bytes: number): Promise<Uint8Array> {
+  const slice = file.slice(0, bytes);
+  const buffer = await slice.arrayBuffer();
+  return new Uint8Array(buffer);
+}
+
+// =============================================================================
+// SyncAccessHandle Types (Worker context only)
+// =============================================================================
+
+/**
+ * FileSystemSyncAccessHandle interface for OPFS in Worker context
+ */
+interface FileSystemSyncAccessHandle {
+  close(): void;
+  flush(): void;
+  getSize(): number;
+  read(buffer: ArrayBuffer | ArrayBufferView, options?: { at?: number }): number;
+  truncate(newSize: number): void;
+  write(buffer: ArrayBuffer | ArrayBufferView, options?: { at?: number }): number;
+}
+
+/**
+ * Extended FileSystemFileHandle with sync access handle support
+ */
+interface FileSystemFileHandleWithSync extends FileSystemFileHandle {
+  createSyncAccessHandle(): Promise<FileSystemSyncAccessHandle>;
+}
+
+/**
+ * Result of streaming file to OPFS
+ */
+export interface StreamToOpfsResult {
+  success: true;
+  bytesWritten: number;
+  writeCount: number;
+}
+
+export interface StreamToOpfsError {
+  success: false;
+  error: string;
+  bytesWritten: number;
+}
+
+export type StreamToOpfsOutcome = StreamToOpfsResult | StreamToOpfsError;
+
+/**
+ * Stream a File directly to OPFS via SyncAccessHandle in 1MB chunks.
+ * This is the true streaming implementation per PRD - no full ArrayBuffer
+ * is ever allocated in JS heap. Peak heap usage is bounded by chunk size (~1MB).
+ *
+ * @param file - File to stream
+ * @param filename - Target filename in OPFS databases/ directory
+ * @param onProgress - Progress callback (percentage)
+ * @returns Result with bytes written and write count
+ */
+export async function streamFileToOpfs(
+  file: File,
+  filename: string,
+  onProgress?: ProgressCallback
+): Promise<StreamToOpfsOutcome> {
+  const totalSize = file.size;
+  let bytesWritten = 0;
+  let writeCount = 0;
+  let accessHandle: FileSystemSyncAccessHandle | null = null;
+  let fileHandle: FileSystemFileHandle | null = null;
+
+  try {
+    // Get the OPFS databases directory
+    const dir = await getOpfsDatabasesDir();
+    fileHandle = await dir.getFileHandle(filename, { create: true });
+
+    // Get sync access handle for direct write access
+    accessHandle = await (fileHandle as FileSystemFileHandleWithSync).createSyncAccessHandle();
+
+    // Truncate to ensure clean slate
+    accessHandle.truncate(0);
+
+    // Fixed-size write buffer - reused to avoid allocations
+    // We fill this buffer and write when full, avoiding memory accumulation
+    const writeBuffer = new Uint8Array(CHUNK_SIZE);
+    let bufferOffset = 0;
+
+    /**
+     * Flush the write buffer to OPFS
+     */
+    const flushBuffer = () => {
+      if (bufferOffset > 0) {
+        // Write only the filled portion
+        const dataToWrite = bufferOffset === CHUNK_SIZE
+          ? writeBuffer
+          : writeBuffer.subarray(0, bufferOffset);
+        accessHandle!.write(dataToWrite, { at: bytesWritten });
+        bytesWritten += bufferOffset;
+        writeCount++;
+        bufferOffset = 0;
+
+        // Report progress (0-80% for streaming phase)
+        if (onProgress && totalSize > 0) {
+          const percent = Math.round((bytesWritten / totalSize) * 80);
+          onProgress(percent);
+        }
+      }
+    };
+
+    // Process file stream
+    if (typeof file.stream === 'function') {
+      const stream = file.stream();
+      const reader = stream.getReader();
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+
+          if (done) {
+            break;
+          }
+
+          // Process incoming chunk - copy to write buffer and flush when full
+          let chunkOffset = 0;
+          while (chunkOffset < value.length) {
+            const spaceInBuffer = CHUNK_SIZE - bufferOffset;
+            const bytesToCopy = Math.min(spaceInBuffer, value.length - chunkOffset);
+
+            writeBuffer.set(value.subarray(chunkOffset, chunkOffset + bytesToCopy), bufferOffset);
+            bufferOffset += bytesToCopy;
+            chunkOffset += bytesToCopy;
+
+            // Flush when buffer is full
+            if (bufferOffset === CHUNK_SIZE) {
+              flushBuffer();
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    } else {
+      // Fallback: read entire file but still write in chunks
+      const buffer = await file.arrayBuffer();
+      const data = new Uint8Array(buffer);
+
+      // Write in CHUNK_SIZE chunks to maintain consistent behavior
+      for (let offset = 0; offset < data.length; offset += CHUNK_SIZE) {
+        const end = Math.min(offset + CHUNK_SIZE, data.length);
+        const chunk = data.subarray(offset, end);
+        accessHandle.write(chunk, { at: bytesWritten });
+        bytesWritten += chunk.length;
+        writeCount++;
+
+        // Report progress
+        if (onProgress && totalSize > 0) {
+          const percent = Math.round((bytesWritten / totalSize) * 80);
+          onProgress(percent);
+        }
+      }
+      // Skip the final flushBuffer since we wrote directly
+      bufferOffset = 0;
+    }
+
+    // Write any remaining data in the buffer
+    flushBuffer();
+
+    // Flush and close
+    accessHandle.flush();
+    accessHandle.close();
+    accessHandle = null;
+
+    if (onProgress) {
+      onProgress(80);
+    }
+
+    return {
+      success: true,
+      bytesWritten,
+      writeCount,
+    };
+  } catch (err) {
+    // Clean up on error
+    if (accessHandle) {
+      try {
+        accessHandle.close();
+      } catch {
+        // Ignore close errors during cleanup
+      }
+    }
+
+    // Clean up the partially written OPFS file
+    try {
+      const dir = await getOpfsDatabasesDir();
+      await dir.removeEntry(filename);
+    } catch {
+      // Ignore cleanup errors - file may not exist
+    }
+
+    const message = err instanceof Error ? err.message : String(err);
+
+    // Check for quota exceeded
+    if (
+      (err instanceof DOMException && err.name === 'QuotaExceededError') ||
+      message.toLowerCase().includes('quota')
+    ) {
+      return {
+        success: false,
+        error: 'Storage quota exceeded while writing file',
+        bytesWritten,
+      };
+    }
+
+    return {
+      success: false,
+      error: message,
+      bytesWritten,
+    };
+  }
 }
 
 // =============================================================================
@@ -611,9 +834,10 @@ export async function validateSqliteFile(
   if (!hasSqliteMagic(data)) {
     // Check if it might be encrypted
     if (isEncryptedSqlite(data)) {
+      // PRD-specified message
       return {
         valid: false,
-        error: 'File appears to be encrypted. Encrypted SQLite databases are not supported.',
+        error: 'File is encrypted — SQLCipher is not supported',
       };
     }
 
@@ -626,9 +850,10 @@ export async function validateSqliteFile(
       };
     }
 
+    // PRD-specified message
     return {
       valid: false,
-      error: 'File is not a valid SQLite database (missing SQLite header)',
+      error: 'Not a valid SQLite file',
     };
   }
 
@@ -723,15 +948,15 @@ export async function importDatabase(
       filename = uniqueName;
     }
 
-    // Step 3: Stream file in chunks (0-50% progress)
-    const data = await streamFileChunks(file, onProgress);
+    // Step 3: Validate SQLite file header BEFORE writing anything
+    // Read just the header (first 100 bytes) for validation - no full memory allocation
+    const headerSize = Math.min(file.size, MIN_SQLITE_SIZE);
+    const headerData = await readFileHeader(file, headerSize);
 
-    // Step 4: Validate SQLite file (50% progress)
-    if (onProgress) onProgress(50);
-
+    // Validate based on header
     const validation = adapter
-      ? await adapter.validateSqlite(data)
-      : await validateSqliteFile(data);
+      ? await adapter.validateSqlite(headerData)
+      : await validateSqliteFile(headerData);
 
     if (!validation.valid) {
       // Determine error code based on message
@@ -749,16 +974,57 @@ export async function importDatabase(
       };
     }
 
-    // Step 5: Write to storage (50-80% progress)
+    // Step 4: Write to storage using streaming for OPFS (0-80% progress)
+    let fileSize = file.size;
+
     try {
       if (adapter) {
+        // Test adapter: use existing buffered approach
+        const data = await streamFileChunks(file, onProgress);
         await adapter.writeFile(filename, data);
+        fileSize = data.length;
+        writtenFileName = filename;
       } else if (storageMode === 'opfs') {
-        await writeToOpfs(filename, data, onProgress);
+        // Track filename for cleanup before attempting write
+        writtenFileName = filename;
+
+        // OPFS: Use SyncAccessHandle streaming - no full memory buffering
+        // Per PRD: "writes each chunk to the OPFS file via SyncAccessHandle —
+        // no full ArrayBuffer is ever allocated in JS heap"
+        const streamResult = await streamFileToOpfs(file, filename, onProgress);
+
+        if (!streamResult.success) {
+          // Clean up partially written file
+          try {
+            await deleteFromOpfs(filename);
+          } catch {
+            // Ignore cleanup errors
+          }
+          writtenFileName = null;
+
+          // Check for quota exceeded
+          if (streamResult.error.toLowerCase().includes('quota')) {
+            return {
+              success: false,
+              code: 'QUOTA_EXCEEDED',
+              message: 'Storage quota exceeded while writing file. Please free up space and try again.',
+            };
+          }
+          return {
+            success: false,
+            code: 'UNKNOWN',
+            message: `Import failed: ${streamResult.error}`,
+          };
+        }
+
+        fileSize = streamResult.bytesWritten;
       } else {
+        // IDB: Use existing chunked approach (already writes in chunks)
+        const data = await streamFileChunks(file, onProgress);
         await writeToIdb(filename, data, onProgress);
+        fileSize = data.length;
+        writtenFileName = filename;
       }
-      writtenFileName = filename;
     } catch (err) {
       // Check for quota exceeded during write
       if (err instanceof DOMException && err.name === 'QuotaExceededError') {
@@ -771,14 +1037,14 @@ export async function importDatabase(
       throw err;
     }
 
-    // Step 6: Register in database registry (80-90% progress)
+    // Step 5: Register in database registry (80-90% progress)
     if (onProgress) onProgress(90);
 
     const dbId = adapter
       ? await adapter.registerDatabase(uniqueName, storageMode)
       : await registerInRegistry(uniqueName, storageMode);
 
-    // Step 7: Complete (100% progress)
+    // Step 6: Complete (100% progress)
     if (onProgress) onProgress(100);
 
     return {
@@ -786,7 +1052,7 @@ export async function importDatabase(
       dbId,
       dbName: uniqueName,
       storageType: storageMode,
-      fileSize: data.length,
+      fileSize,
     };
   } catch (err) {
     // Clean up on any error
@@ -865,4 +1131,6 @@ export const _testing = {
   listIdbDatabases,
   validateSqliteFile,
   openIdbDatabase,
+  readFileHeader,
+  streamFileToOpfs,
 };

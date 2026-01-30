@@ -1,16 +1,16 @@
 {
   "runId": "2026-01-30T22:53:41+01:00",
-  "updatedAt": "2026-01-30T23:19:12+01:00",
+  "updatedAt": "2026-01-30T23:36:02+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-lx0",
-    "subject": "P1-03: Registry self-heal",
+    "id": "bd-2de",
+    "subject": "P2-01: Stream SQLite import via SyncAccessHandle",
     "status": "completed",
     "phase": "review",
-    "attempt": 3
+    "attempt": 2
   },
   "tools": {
     "implementer": "claude",

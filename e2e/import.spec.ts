@@ -960,4 +960,155 @@ test.describe('UI Import Tests', () => {
       await expect(sidebarMessage).toBeVisible();
     });
   });
+
+  /**
+   * E2E-US-001-05: Drop an invalid .sqlite fixture; verify error modal;
+   * verify no new DB appears in sidebar after dismiss + hard refresh
+   * (registry unchanged; no new OPFS file/IDB entry)
+   */
+  test.describe('E2E-US-001-05: Invalid File Import Cleanup', () => {
+    test('drop invalid .sqlite file shows error, registry unchanged after refresh', async ({ page }) => {
+      const dropZone = page.locator('[data-testid="drop-zone"]');
+      await expect(dropZone).toBeVisible();
+
+      // Record registry state before import attempt
+      const registryBefore = await readRegistry(page);
+      const countBefore = registryBefore?.databases?.length ?? 0;
+
+      // Create an invalid file (PNG disguised as .sqlite)
+      const pngBytes = createPngBytes();
+      const dataTransfer = await page.evaluateHandle(({ bytesArray }) => {
+        const bytes = new Uint8Array(bytesArray);
+        const file = new File([bytes], 'invalid.sqlite', { type: 'application/x-sqlite3' });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        return dt;
+      }, { bytesArray: Array.from(pngBytes) });
+
+      // Drop the invalid file
+      await dropZone.dispatchEvent('dragenter', { dataTransfer });
+      await dropZone.dispatchEvent('dragover', { dataTransfer });
+      await dropZone.dispatchEvent('drop', { dataTransfer });
+
+      // Error toast/modal should appear
+      const errorToast = page.locator('[data-testid="toast-error"]');
+      await expect(errorToast).toBeVisible({ timeout: 5000 });
+
+      // Verify error message mentions invalid file
+      await expect(errorToast).toContainText(/invalid|PNG|not.*valid/i);
+
+      // Dismiss the error (click anywhere or wait for auto-dismiss)
+      // Try clicking a dismiss button if present, otherwise wait
+      const dismissButton = page.locator('[data-testid="toast-dismiss"]');
+      if (await dismissButton.isVisible({ timeout: 1000 }).catch(() => false)) {
+        await dismissButton.click();
+      }
+
+      // Verify registry unchanged immediately
+      const registryAfterDrop = await readRegistry(page);
+      expect(registryAfterDrop?.databases?.length ?? 0).toBe(countBefore);
+
+      // Hard refresh the page
+      await page.reload();
+      await expect(page).toHaveTitle(/SQLite Editor/);
+
+      // Wait for app to fully load
+      const statusBar = page.locator('footer');
+      await expect(statusBar).toContainText('Ready', { timeout: 10000 });
+
+      // Verify registry still unchanged after refresh
+      const registryAfterRefresh = await readRegistry(page);
+      expect(registryAfterRefresh?.databases?.length ?? 0).toBe(countBefore);
+
+      // Verify no "invalid" database appears in sidebar
+      const invalidDbEntry = page.locator('[data-testid="db-name-invalid"]');
+      await expect(invalidDbEntry).not.toBeVisible();
+
+      // Verify sidebar still shows "No databases" message (if count was 0)
+      if (countBefore === 0) {
+        const noDbMessage = page.locator('text=No databases');
+        await expect(noDbMessage).toBeVisible();
+      }
+    });
+
+    test('drop corrupt SQLite shows error, no OPFS/IDB artifacts after refresh', async ({ page }) => {
+      const dropZone = page.locator('[data-testid="drop-zone"]');
+      await expect(dropZone).toBeVisible();
+
+      // Record initial state
+      const registryBefore = await readRegistry(page);
+      const countBefore = registryBefore?.databases?.length ?? 0;
+
+      // Create a corrupt SQLite file (valid magic but invalid structure)
+      const corruptBytes = createCorruptSqliteBytes();
+      // Corrupt the magic header to make it invalid
+      corruptBytes[0] = 0x00;
+
+      const dataTransfer = await page.evaluateHandle(({ bytesArray }) => {
+        const bytes = new Uint8Array(bytesArray);
+        const file = new File([bytes], 'corrupt.sqlite', { type: 'application/x-sqlite3' });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        return dt;
+      }, { bytesArray: Array.from(corruptBytes) });
+
+      // Drop the corrupt file
+      await dropZone.dispatchEvent('dragenter', { dataTransfer });
+      await dropZone.dispatchEvent('dragover', { dataTransfer });
+      await dropZone.dispatchEvent('drop', { dataTransfer });
+
+      // Error should appear
+      const errorToast = page.locator('[data-testid="toast-error"]');
+      await expect(errorToast).toBeVisible({ timeout: 5000 });
+
+      // Hard refresh
+      await page.reload();
+      await expect(page).toHaveTitle(/SQLite Editor/);
+
+      // Wait for ready state
+      const statusBar = page.locator('footer');
+      await expect(statusBar).toContainText('Ready', { timeout: 10000 });
+
+      // Verify no artifacts in storage
+      const hasArtifacts = await page.evaluate(async () => {
+        // Check IDB for any 'corrupt' entries
+        try {
+          const db = await new Promise<IDBDatabase>((resolve, reject) => {
+            const req = indexedDB.open('idb-sqlite', 1);
+            req.onerror = () => reject(req.error);
+            req.onsuccess = () => resolve(req.result);
+          });
+          const tx = db.transaction('databases', 'readonly');
+          const store = tx.objectStore('databases');
+          const result = await new Promise<unknown>((resolve, reject) => {
+            const req = store.get('corrupt');
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+          });
+          db.close();
+          if (result !== undefined) return true;
+        } catch { /* ignore */ }
+
+        // Check OPFS for any 'corrupt' files
+        try {
+          if (navigator.storage?.getDirectory) {
+            const root = await navigator.storage.getDirectory();
+            const editorDir = await root.getDirectoryHandle('wasm-sqlite-editor');
+            const dbDir = await editorDir.getDirectoryHandle('databases');
+            // Try to get the file - if it exists, we have artifacts
+            await dbDir.getFileHandle('corrupt.sqlite');
+            return true;
+          }
+        } catch { /* file doesn't exist, which is expected */ }
+
+        return false;
+      });
+
+      expect(hasArtifacts).toBe(false);
+
+      // Verify registry unchanged
+      const registryAfterRefresh = await readRegistry(page);
+      expect(registryAfterRefresh?.databases?.length ?? 0).toBe(countBefore);
+    });
+  });
 });

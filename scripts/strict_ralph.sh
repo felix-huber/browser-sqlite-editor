@@ -844,8 +844,14 @@ run_task_loop() {
       return 1
     fi
 
-    log "Issues found. Re-running implementer with fixes."
-    update_loop_state "needs_fix" "review" "$attempt" "issues found"
+    local issue_count
+    issue_count=$(echo "$issues" | wc -l | tr -d ' ')
+    log "Issues found ($issue_count). Re-running implementer with fixes."
+    log "Review issues:"
+    echo "$issues" | head -10 | while read -r line; do
+      log "  $line"
+    done
+    update_loop_state "needs_fix" "review" "$attempt" "$issue_count issues found"
     phase="fix"
   done
 
