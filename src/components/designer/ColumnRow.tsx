@@ -94,6 +94,10 @@ export interface ColumnRowProps {
   isDragging?: boolean;
   /** Whether this row is a drop target */
   isDropTarget?: boolean;
+  /** External validation error for the name field */
+  externalNameError?: string | null;
+  /** Notify parent of user interaction */
+  onInteract?: () => void;
 }
 
 export interface ColumnNameValidation {
@@ -172,9 +176,12 @@ export const ColumnRow = memo(function ColumnRow({
   dragHandleProps,
   isDragging = false,
   isDropTarget = false,
+  externalNameError = null,
+  onInteract,
 }: ColumnRowProps) {
   const nameInputRef = useRef<HTMLInputElement>(null);
   const [nameError, setNameError] = useState<string | null>(null);
+  const displayNameError = externalNameError ?? nameError;
 
   // Determine if column is generated (should be read-only)
   const isGenerated = column.generated === 'stored' || column.generated === 'virtual';
@@ -190,23 +197,25 @@ export const ColumnRow = memo(function ColumnRow({
   // Handle name change
   const handleNameChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
+      onInteract?.();
       onChange(column.id, { name: e.target.value });
       // Clear error on change (will validate on blur)
       if (nameError) {
         setNameError(null);
       }
     },
-    [column.id, onChange, nameError]
+    [column.id, onChange, nameError, onInteract]
   );
 
   // Validate name on blur
   const handleNameBlur = useCallback(() => {
+    onInteract?.();
     // The parent (TableDesigner) passes existingColumnNames excluding this column's name,
     // so we can safely check for duplicates without false positives from self-matching.
     // For existing columns, originalName is used to allow keeping the same name.
     const result = validateColumnName(column.name, existingColumnNames, column.originalName);
     setNameError(result.valid ? null : result.error ?? null);
-  }, [column.name, column.originalName, existingColumnNames]);
+  }, [column.name, column.originalName, existingColumnNames, onInteract]);
 
   // Handle type change
   const handleTypeChange = useCallback(
@@ -322,17 +331,17 @@ export const ColumnRow = memo(function ColumnRow({
           placeholder="Column name"
           className={`w-full px-2 py-1 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${
             isInputDisabled ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'
-          } ${nameError ? 'border-red-500' : 'border-gray-300'}`}
+          } ${displayNameError ? 'border-red-500' : 'border-gray-300'}`}
           data-testid={`column-name-${column.id}`}
-          aria-invalid={nameError ? 'true' : 'false'}
+          aria-invalid={displayNameError ? 'true' : 'false'}
         />
-        {nameError && (
+        {displayNameError && (
           <p
             className="absolute left-0 top-full mt-0.5 text-xs text-red-600 whitespace-nowrap"
             data-testid={`column-name-error-${column.id}`}
             role="alert"
           >
-            {nameError}
+            {displayNameError}
           </p>
         )}
       </div>

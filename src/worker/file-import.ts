@@ -11,6 +11,7 @@
  */
 
 import type { StorageMode, WorkerErrorCode } from '../types';
+import { IDB_VFS_NAME } from '../lib/opfs-vfs';
 import { checkStorageAvailable } from './quota-errors';
 
 // =============================================================================
@@ -375,35 +376,119 @@ async function listOpfsFiles(): Promise<string[]> {
 }
 
 // =============================================================================
-// IDB Operations
+// IDB Operations (IDB VFS)
 // =============================================================================
 
-/** IndexedDB database name for SQLite storage */
-const IDB_DATABASE_NAME = 'idb-sqlite';
-const IDB_STORE_NAME = 'databases';
-const IDB_VERSION = 1;
+const IDB_VFS_DB = IDB_VFS_NAME;
+const IDB_VFS_VERSION = 6;
+const IDB_VFS_METADATA_STORE = 'metadata';
+const IDB_VFS_BLOCKS_STORE = 'blocks';
+
+function toIdbVfsPath(name: string): string {
+  return new URL(name, 'file://').pathname;
+}
+
+function fromIdbVfsPath(path: string): string | null {
+  const trimmed = path.startsWith('/') ? path.slice(1) : path;
+  if (!trimmed) return null;
+  try {
+    return decodeURIComponent(trimmed);
+  } catch {
+    return trimmed;
+  }
+}
+
+function isAuxiliaryDbFile(name: string): boolean {
+  return name.endsWith('-journal') || name.endsWith('-wal') || name.endsWith('-shm');
+}
 
 /**
- * Open the IndexedDB database
+ * Open the IndexedDB database used by the IDB VFS
  */
 function openIdbDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(IDB_DATABASE_NAME, IDB_VERSION);
+    const request = indexedDB.open(IDB_VFS_DB, IDB_VFS_VERSION);
 
     request.onerror = () => reject(request.error);
     request.onsuccess = () => resolve(request.result);
 
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(IDB_STORE_NAME)) {
-        db.createObjectStore(IDB_STORE_NAME, { keyPath: 'name' });
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(IDB_VFS_BLOCKS_STORE)) {
+        db.createObjectStore(IDB_VFS_BLOCKS_STORE, { keyPath: ['path', 'offset', 'version'] });
+      } else {
+        const tx = request.transaction;
+        const blocks = tx?.objectStore(IDB_VFS_BLOCKS_STORE);
+        if (blocks && blocks.indexNames.contains('version')) {
+          blocks.deleteIndex('version');
+        }
+      }
+      if (!db.objectStoreNames.contains(IDB_VFS_METADATA_STORE)) {
+        db.createObjectStore(IDB_VFS_METADATA_STORE, { keyPath: 'name' });
       }
     };
   });
 }
 
+async function listIdbVfsDatabases(): Promise<string[]> {
+  try {
+    const db = await openIdbDatabase();
+    try {
+      const tx = db.transaction(IDB_VFS_METADATA_STORE, 'readonly');
+      const store = tx.objectStore(IDB_VFS_METADATA_STORE);
+      const keys = await new Promise<string[]>((resolve, reject) => {
+        const request = store.getAllKeys();
+        request.onsuccess = () => resolve(request.result as string[]);
+        request.onerror = () => reject(request.error);
+      });
+      const names = new Set<string>();
+      for (const key of keys) {
+        const decoded = fromIdbVfsPath(String(key));
+        if (!decoded) continue;
+        if (decoded.startsWith('.')) continue;
+        if (isAuxiliaryDbFile(decoded)) continue;
+        names.add(decoded);
+      }
+      return [...names];
+    } finally {
+      db.close();
+    }
+  } catch {
+    return [];
+  }
+}
+
+async function listLegacyIdbDatabases(): Promise<string[]> {
+  try {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('idb-sqlite', 1);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
+      request.onupgradeneeded = (event) => {
+        const database = (event.target as IDBOpenDBRequest).result;
+        if (!database.objectStoreNames.contains('databases')) {
+          database.createObjectStore('databases', { keyPath: 'name' });
+        }
+      };
+    });
+    try {
+      const tx = db.transaction('databases', 'readonly');
+      const store = tx.objectStore('databases');
+      return await new Promise<string[]>((resolve, reject) => {
+        const request = store.getAllKeys();
+        request.onsuccess = () => resolve(request.result as string[]);
+        request.onerror = () => reject(request.error);
+      });
+    } finally {
+      db.close();
+    }
+  } catch {
+    return [];
+  }
+}
+
 /**
- * Write data to IDB with progress
+ * Write data to IDB VFS with progress
  */
 async function writeToIdb(
   name: string,
@@ -413,27 +498,38 @@ async function writeToIdb(
   const db = await openIdbDatabase();
 
   try {
-    const blob = new Blob([data as BlobPart], { type: 'application/x-sqlite3' });
-    const tx = db.transaction(IDB_STORE_NAME, 'readwrite');
-    const store = tx.objectStore(IDB_STORE_NAME);
+    const path = toIdbVfsPath(name);
+    const totalSize = data.length;
 
     await new Promise<void>((resolve, reject) => {
-      const request = store.put({
-        name,
-        blob,
-        updatedAt: new Date().toISOString(),
+      const tx = db.transaction([IDB_VFS_METADATA_STORE, IDB_VFS_BLOCKS_STORE], 'readwrite');
+      const metadata = tx.objectStore(IDB_VFS_METADATA_STORE);
+      const blocks = tx.objectStore(IDB_VFS_BLOCKS_STORE);
+
+      const range = IDBKeyRange.bound([path, -Infinity], [path, Infinity]);
+      blocks.delete(range);
+
+      metadata.put({
+        name: path,
+        fileSize: totalSize,
+        version: 0,
       });
-      request.onsuccess = () => {
-        // Report progress (50-80% for write)
-        if (onProgress) {
-          onProgress(80);
-        }
-        resolve();
-      };
-      request.onerror = () => reject(request.error);
-    });
 
-    await new Promise<void>((resolve, reject) => {
+      for (let offset = 0; offset < totalSize; offset += CHUNK_SIZE) {
+        const chunkEnd = Math.min(offset + CHUNK_SIZE, totalSize);
+        const chunk = data.slice(offset, chunkEnd);
+        blocks.put({
+          path,
+          offset: -offset,
+          version: 0,
+          data: chunk,
+        });
+        if (onProgress && totalSize > 0) {
+          const percent = 50 + Math.round((chunkEnd / totalSize) * 30);
+          onProgress(percent);
+        }
+      }
+
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error);
@@ -444,19 +540,23 @@ async function writeToIdb(
 }
 
 /**
- * Delete from IDB
+ * Delete from IDB VFS
  */
 async function deleteFromIdb(name: string): Promise<void> {
   const db = await openIdbDatabase();
 
   try {
-    const tx = db.transaction(IDB_STORE_NAME, 'readwrite');
-    const store = tx.objectStore(IDB_STORE_NAME);
-
+    const path = toIdbVfsPath(name);
     await new Promise<void>((resolve, reject) => {
-      const request = store.delete(name);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
+      const tx = db.transaction([IDB_VFS_METADATA_STORE, IDB_VFS_BLOCKS_STORE], 'readwrite');
+      const metadata = tx.objectStore(IDB_VFS_METADATA_STORE);
+      const blocks = tx.objectStore(IDB_VFS_BLOCKS_STORE);
+      const range = IDBKeyRange.bound([path, -Infinity], [path, Infinity]);
+      blocks.delete(range);
+      metadata.delete(path);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
     });
   } catch {
     // Ignore if doesn't exist
@@ -466,23 +566,17 @@ async function deleteFromIdb(name: string): Promise<void> {
 }
 
 /**
- * List database names in IDB
+ * List database names in IDB (VFS + legacy snapshots)
  */
 async function listIdbDatabases(): Promise<string[]> {
-  const db = await openIdbDatabase();
-
-  try {
-    const tx = db.transaction(IDB_STORE_NAME, 'readonly');
-    const store = tx.objectStore(IDB_STORE_NAME);
-
-    return new Promise<string[]>((resolve, reject) => {
-      const request = store.getAllKeys();
-      request.onsuccess = () => resolve(request.result as string[]);
-      request.onerror = () => reject(request.error);
-    });
-  } finally {
-    db.close();
-  }
+  const [vfsNames, legacyNames] = await Promise.all([
+    listIdbVfsDatabases(),
+    listLegacyIdbDatabases(),
+  ]);
+  const names = new Set<string>();
+  for (const name of vfsNames) names.add(name);
+  for (const name of legacyNames) names.add(name);
+  return [...names];
 }
 
 // =============================================================================

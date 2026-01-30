@@ -7,11 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { TableDesigner } from './TableDesigner';
-import {
-  DDLDiffPreview,
-  analyzeChanges,
-  type ChangeAnalysis,
-} from './DDLDiffPreview';
+import { DDLDiffPreview, analyzeChanges } from './DDLDiffPreview';
 import { useTables, refreshSchema } from '../../store';
 import { getWorkerClient } from '../../lib/worker-client';
 import {
@@ -109,6 +105,7 @@ export function TableDesignerView({
   const [draftColumns, setDraftColumns] = useState<DesignerColumnDraft[]>([]);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [isApplying, setIsApplying] = useState(false);
+  const [resetToken, setResetToken] = useState(0);
 
   const isEditing = Boolean(tableName);
 
@@ -143,11 +140,6 @@ export function TableDesignerView({
     };
   }, [client, tableName]);
 
-  const analysis: ChangeAnalysis | null = useMemo(() => {
-    if (!existingTable) return null;
-    return analyzeChanges(existingTable, draftColumns, draftTableName || existingTable.name);
-  }, [existingTable, draftColumns, draftTableName]);
-
   const handleDraftChange = useCallback((name: string, columns: DesignerColumnDraft[]) => {
     setDraftTableName(name);
     setDraftColumns(columns);
@@ -175,6 +167,8 @@ export function TableDesignerView({
         }, isReadOnly);
 
         await refreshSchema();
+        setResetToken((prev) => prev + 1);
+        onDirtyChange?.(false);
         onOpenTable?.(name);
       } catch (err) {
         setApplyError(err instanceof Error ? err.message : 'Failed to create table');
@@ -185,12 +179,17 @@ export function TableDesignerView({
     [client, isReadOnly, onOpenTable]
   );
 
-  const handleApplyChanges = useCallback(async () => {
+  const handleApplyChanges = useCallback(async (
+    overrides?: { tableName?: string; columns?: DesignerColumnDraft[] }
+  ) => {
     if (!existingTable) return;
-    if (!analysis) return;
-    if (analysis.generatedColumnModifications.length > 0) {
+    const nextTableName = overrides?.tableName ?? (draftTableName || existingTable.name);
+    const nextColumns = overrides?.columns ?? draftColumns;
+    const nextAnalysis = analyzeChanges(existingTable, nextColumns, nextTableName);
+    if (!nextAnalysis) return;
+    if (nextAnalysis.generatedColumnModifications.length > 0) {
       setApplyError(
-        `Cannot modify generated columns: ${analysis.generatedColumnModifications.join(', ')}`
+        `Cannot modify generated columns: ${nextAnalysis.generatedColumnModifications.join(', ')}`
       );
       return;
     }
@@ -199,27 +198,29 @@ export function TableDesignerView({
     setIsApplying(true);
 
     const currentName = existingTable.name;
-    const nextName = draftTableName || existingTable.name;
+    const nextName = nextTableName || existingTable.name;
     const tableRenamed = currentName.toLowerCase() !== nextName.toLowerCase();
 
     try {
       const onlyRename =
         tableRenamed &&
-        analysis.columnsRemoved.length === 0 &&
-        analysis.columnsRenamed.length === 0 &&
-        analysis.typeChanges.length === 0 &&
-        analysis.constraintChanges.length === 0 &&
-        analysis.columnsToAdd.length === 0;
+        nextAnalysis.columnsRemoved.length === 0 &&
+        nextAnalysis.columnsRenamed.length === 0 &&
+        nextAnalysis.typeChanges.length === 0 &&
+        nextAnalysis.constraintChanges.length === 0 &&
+        nextAnalysis.columnsToAdd.length === 0;
 
       if (onlyRename) {
         await client.alterTable(currentName, { type: 'renameTable', newName: nextName }, isReadOnly);
         await refreshSchema();
+        setResetToken((prev) => prev + 1);
+        onDirtyChange?.(false);
         onOpenTable?.(nextName);
         return;
       }
 
-      if (analysis.changeType === 'add_columns' && !tableRenamed) {
-        for (const col of analysis.columnsToAdd) {
+      if (nextAnalysis.changeType === 'add_columns' && !tableRenamed) {
+        for (const col of nextAnalysis.columnsToAdd) {
           await client.alterTable(
             currentName,
             {
@@ -239,17 +240,19 @@ export function TableDesignerView({
           );
         }
         await refreshSchema();
+        setResetToken((prev) => prev + 1);
+        onDirtyChange?.(false);
         onOpenTable?.(currentName);
         return;
       }
 
       const renameMap = new Map<string, string>(
-        analysis.columnsRenamed.map((c) => [c.oldName, c.newName])
+        nextAnalysis.columnsRenamed.map((c) => [c.oldName, c.newName])
       );
-      const removed = new Set(analysis.columnsRemoved.map((c) => c.toLowerCase()));
+      const removed = new Set(nextAnalysis.columnsRemoved.map((c) => c.toLowerCase()));
 
       const { columns: columnDefs, primaryKey } = buildColumnDefinitions(
-        draftColumns,
+        nextColumns,
         existingTable.createSql
       );
 
@@ -273,7 +276,7 @@ export function TableDesignerView({
           table: currentName,
           newCreateSql: createSql,
           newColumns: columnDefs.map((c) => c.name),
-          columnRenames: analysis.columnsRenamed,
+          columnRenames: nextAnalysis.columnsRenamed,
         },
         isReadOnly
       );
@@ -283,6 +286,8 @@ export function TableDesignerView({
       }
 
       await refreshSchema();
+      setResetToken((prev) => prev + 1);
+      onDirtyChange?.(false);
       onOpenTable?.(nextName);
     } catch (err) {
       setApplyError(err instanceof Error ? err.message : 'Failed to apply changes');
@@ -290,7 +295,6 @@ export function TableDesignerView({
       setIsApplying(false);
     }
   }, [
-    analysis,
     client,
     draftColumns,
     draftTableName,
@@ -314,11 +318,12 @@ export function TableDesignerView({
             isReadOnly={isReadOnly}
             existingTable={existingTable}
             existingTableNames={tables}
+            resetToken={resetToken}
             onSubmit={(name, columns) => {
               if (isEditing) {
                 setDraftTableName(name);
                 setDraftColumns(columns);
-                void handleApplyChanges();
+                void handleApplyChanges({ tableName: name, columns });
               } else {
                 void handleCreate(name, columns);
               }

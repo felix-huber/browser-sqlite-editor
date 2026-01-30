@@ -149,7 +149,7 @@ describe('NewDatabaseDialog', () => {
   const defaultProps: NewDatabaseDialogProps = {
     isOpen: true,
     onClose: vi.fn(),
-    onCreate: vi.fn(),
+    onCreate: vi.fn().mockResolvedValue(true),
     existingNames: [],
     isReadOnly: false,
   };
@@ -248,7 +248,7 @@ describe('NewDatabaseDialog', () => {
 
   describe('Create action', () => {
     it('calls onCreate with trimmed name when Create is clicked', async () => {
-      const onCreate = vi.fn();
+      const onCreate = vi.fn().mockResolvedValue(true);
       render(<NewDatabaseDialog {...defaultProps} onCreate={onCreate} />);
 
       const input = screen.getByTestId('database-name-input');
@@ -260,12 +260,15 @@ describe('NewDatabaseDialog', () => {
 
       fireEvent.click(screen.getByTestId('create-button'));
 
-      expect(onCreate).toHaveBeenCalledWith('mydb');
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalledWith('mydb');
+      });
     });
 
     it('calls onClose after create', async () => {
       const onClose = vi.fn();
-      render(<NewDatabaseDialog {...defaultProps} onClose={onClose} />);
+      const onCreate = vi.fn().mockResolvedValue(true);
+      render(<NewDatabaseDialog {...defaultProps} onClose={onClose} onCreate={onCreate} />);
 
       const input = screen.getByTestId('database-name-input');
       fireEvent.change(input, { target: { value: 'mydb' } });
@@ -276,11 +279,13 @@ describe('NewDatabaseDialog', () => {
 
       fireEvent.click(screen.getByTestId('create-button'));
 
-      expect(onClose).toHaveBeenCalled();
+      await waitFor(() => {
+        expect(onClose).toHaveBeenCalled();
+      });
     });
 
     it('does not call onCreate when button is disabled', () => {
-      const onCreate = vi.fn();
+      const onCreate = vi.fn().mockResolvedValue(true);
       render(<NewDatabaseDialog {...defaultProps} onCreate={onCreate} />);
 
       // Try to click disabled button
@@ -303,7 +308,7 @@ describe('NewDatabaseDialog', () => {
 
   describe('Keyboard navigation', () => {
     it('submits on Enter when valid', async () => {
-      const onCreate = vi.fn();
+      const onCreate = vi.fn().mockResolvedValue(true);
       render(<NewDatabaseDialog {...defaultProps} onCreate={onCreate} />);
 
       const input = screen.getByTestId('database-name-input');
@@ -315,11 +320,13 @@ describe('NewDatabaseDialog', () => {
 
       fireEvent.keyDown(input, { key: 'Enter' });
 
-      expect(onCreate).toHaveBeenCalledWith('mydb');
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalledWith('mydb');
+      });
     });
 
     it('does not submit on Enter when invalid', async () => {
-      const onCreate = vi.fn();
+      const onCreate = vi.fn().mockResolvedValue(true);
       render(<NewDatabaseDialog {...defaultProps} onCreate={onCreate} />);
 
       const input = screen.getByTestId('database-name-input');

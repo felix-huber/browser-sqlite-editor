@@ -55,6 +55,8 @@ export interface DBTreeProps {
   onSelectIndex?: (indexName: string) => void;
   /** Callback for database context menu actions */
   onDbContextAction?: (action: DBContextAction, dbName: string) => void;
+  /** Callback to open a database when selected */
+  onOpenDatabase?: (dbName: string) => Promise<boolean> | boolean | void;
   /** Callback for schema item context menu actions */
   onSchemaContextAction?: (
     action: SchemaContextAction,
@@ -76,6 +78,7 @@ export function DBTree({
   onSelectView,
   onSelectIndex,
   onDbContextAction,
+  onOpenDatabase,
   onSchemaContextAction,
   initialSchema,
 }: DBTreeProps) {
@@ -108,6 +111,20 @@ export function DBTree({
     }
   }, [isExpanded, storeSchema, isActive, initialSchema]);
 
+  const handleRowActivate = useCallback(async () => {
+    if (!isActive) {
+      const result = await onOpenDatabase?.(database.name);
+      if (result === false) {
+        return;
+      }
+    }
+    onToggleExpand();
+  }, [isActive, onOpenDatabase, database.name, onToggleExpand]);
+
+  const handleRowClick = useCallback(() => {
+    void handleRowActivate();
+  }, [handleRowActivate]);
+
   // Handle keyboard navigation
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -115,7 +132,7 @@ export function DBTree({
         case 'Enter':
         case ' ':
           e.preventDefault();
-          onToggleExpand();
+          void handleRowActivate();
           break;
         case 'ArrowRight':
           // Expand if collapsed
@@ -153,7 +170,7 @@ export function DBTree({
           break;
       }
     },
-    [onToggleExpand, isExpanded]
+    [handleRowActivate, onToggleExpand, isExpanded]
   );
 
   // Handle item click
@@ -235,7 +252,7 @@ export function DBTree({
             ? 'bg-navy-100 text-navy-900 font-medium'
             : 'hover:bg-navy-50 text-navy-700'
         }`}
-        onClick={onToggleExpand}
+        onClick={handleRowClick}
         onKeyDown={handleKeyDown}
         onContextMenu={dbContextMenu.onContextMenu}
         tabIndex={0}

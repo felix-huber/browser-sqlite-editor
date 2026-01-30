@@ -67,7 +67,18 @@ test.describe('SQL editor (real UI)', () => {
     const secondPage = await context.newPage();
     await secondPage.goto('/');
     await openDatabaseFromWelcome(secondPage, DB_NAME);
-    await secondPage.getByRole('button', { name: 'SQL' }).click();
+    await secondPage.getByTestId('tab-sql').click();
+    const editor = secondPage.getByTestId('sql-input');
+    if (await editor.count()) {
+      await editor.fill("UPDATE users SET age = 50 WHERE name = 'Ada'", { force: true });
+    } else {
+      const cm = secondPage.getByTestId('codemirror-editor');
+      await expect(cm).toBeVisible();
+      await cm.click();
+      await secondPage.keyboard.press('Control+A');
+      await secondPage.keyboard.type("UPDATE users SET age = 50 WHERE name = 'Ada'");
+    }
+    await secondPage.getByTestId('run-button').click();
     await expect(secondPage.getByTestId('readonly-warning')).toBeVisible();
   });
 });

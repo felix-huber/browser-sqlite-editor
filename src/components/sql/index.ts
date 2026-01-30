@@ -1,4 +1,3 @@
-export { CodeMirrorEditor } from './CodeMirrorEditor'
 export type { CodeMirrorEditorProps, CodeMirrorEditorHandle, ErrorLocation } from './CodeMirrorEditor'
 export {
   sqlAutocomplete,

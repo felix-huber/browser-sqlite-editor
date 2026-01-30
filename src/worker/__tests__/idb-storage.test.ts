@@ -145,8 +145,10 @@ function createFakeIndexedDB(options: FakeIndexedDbOptions): IDBFactory {
       request.result = db;
 
       setTimeout(() => {
-        request.onupgradeneeded?.(new Event('upgradeneeded'));
-        request.onsuccess?.(new Event('success'));
+        const upgradeEvent = { target: request } as unknown as Event;
+        const successEvent = { target: request } as unknown as Event;
+        request.onupgradeneeded?.(upgradeEvent);
+        request.onsuccess?.(successEvent);
       }, 0);
 
       return request;

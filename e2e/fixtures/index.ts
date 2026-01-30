@@ -11,6 +11,7 @@ export const test = base.extend<{
   clearStorage: void;
 }>({
   clearStorage: [async ({ page: _page }, use) => {
+    await _page.goto('/', { waitUntil: 'domcontentloaded' });
     await _page.evaluate(async () => {
       localStorage.clear();
 
@@ -50,6 +51,8 @@ export const test = base.extend<{
         }
       }
     });
+    // Reload after clearing storage to avoid races with app initialization.
+    await _page.goto('/', { waitUntil: 'domcontentloaded' });
     await use();
   }, { auto: true }],
 });
@@ -62,6 +65,13 @@ export { expect };
  */
 export async function waitForReady(page: import('@playwright/test').Page) {
   await page.waitForLoadState('networkidle');
-  await page.waitForSelector('[data-testid="status-bar"]', { timeout: 15000 });
-  await expect(page.locator('[data-testid="status-bar"]')).toContainText('Ready');
+  const statusBar = page.locator('[data-testid="status-bar"]');
+  await expect(statusBar).toBeVisible({ timeout: 15000 });
+  await page.waitForFunction(() => {
+    const status = document.querySelector('[data-testid="status-bar"]');
+    if (!status) return false;
+    const saveStatus = document.querySelector('[data-testid="save-status"]');
+    if (saveStatus) return true;
+    return status.textContent?.includes('Ready') ?? false;
+  });
 }

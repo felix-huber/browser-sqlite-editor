@@ -15,6 +15,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { ForeignKeyAction } from '../../types/index'
+import TableNodeComponent, { type TableNodeData as TableNodeDataType } from './TableNode'
 import {
   FKValidationDialog,
   validateForeignKey,
@@ -28,26 +29,13 @@ import { FKEditDialog } from './FKEditDialog'
 import { FKDeleteDialog } from './FKDeleteDialog'
 import { foreignKeyEdgeTypes, type ForeignKeyEdgeData } from './ForeignKeyEdge'
 
-/** Node data for a database table */
-export interface TableNodeData extends Record<string, unknown> {
-  label: string
-  columns?: Array<{
-    name: string
-    type: string
-    isPrimaryKey?: boolean
-    isForeignKey?: boolean
-    isUnique?: boolean
-    isNotNull?: boolean
-  }>
-}
-
 /** Edge data for a relationship between tables */
 export interface RelationshipEdgeData extends Record<string, unknown> {
   label?: string
   relationshipType?: 'one-to-one' | 'one-to-many' | 'many-to-many'
 }
 
-export type TableNode = Node<TableNodeData>
+export type TableNode = Node<TableNodeDataType, 'tableNode'>
 export type RelationshipEdge = Edge<RelationshipEdgeData>
 
 /**
@@ -629,6 +617,7 @@ export function ERDCanvas({
       <ReactFlow
         nodes={nodes}
         edges={edgesWithCallbacks}
+        nodeTypes={{ tableNode: TableNodeComponent }}
         edgeTypes={foreignKeyEdgeTypes}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}

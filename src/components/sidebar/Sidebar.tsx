@@ -30,6 +30,8 @@ const areSetsEqual = (left: Set<string>, right: Set<string>): boolean => {
 export interface SidebarProps {
   /** Whether the sidebar is collapsed */
   collapsed?: boolean;
+  /** Callback when a database is selected */
+  onOpenDatabase?: (dbName: string) => Promise<boolean> | boolean | void;
   /** Callback when a table is selected */
   onSelectTable?: (dbName: string, tableName: string) => void;
   /** Callback when a view is selected */
@@ -40,6 +42,7 @@ export interface SidebarProps {
 
 export function Sidebar({
   collapsed = false,
+  onOpenDatabase,
   onSelectTable,
   onSelectView,
   onSelectIndex,
@@ -256,6 +259,7 @@ export function Sidebar({
                 isActive={db.name === activeDbId}
                 searchFilter={searchFilter}
                 onToggleExpand={() => handleToggleExpand(db.name)}
+                onOpenDatabase={onOpenDatabase}
                 onSelectTable={(tableName) =>
                   handleSelectTable(db.name, tableName)
                 }

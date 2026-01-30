@@ -96,6 +96,14 @@ export async function checkOPFSAvailability(): Promise<OPFSAvailability> {
     };
   }
 
+  // OPFS sync access handles require cross-origin isolation
+  if (typeof crossOriginIsolated !== 'boolean' || !crossOriginIsolated) {
+    return {
+      available: false,
+      reason: 'crossOriginIsolated is not true',
+    };
+  }
+
   // Check for getDirectory method
   if (typeof navigator.storage.getDirectory !== 'function') {
     return {
@@ -262,7 +270,12 @@ export async function initializeVFS(
 
       // Register IDB VFS as non-default fallback (enables opening IDB-backed DBs)
       try {
-        const idbVfs = new IDBBatchAtomicVFS(IDB_VFS_NAME);
+        // @ts-expect-error - runtime constructor accepts module param (types are stale)
+        const idbVfs = new IDBBatchAtomicVFS(IDB_VFS_NAME, module);
+        const ready = (idbVfs as unknown as { isReady?: () => Promise<void> }).isReady;
+        if (typeof ready === 'function') {
+          await ready.call(idbVfs);
+        }
         sqlite.vfs_register(
           idbVfs as unknown as Parameters<typeof sqlite.vfs_register>[0],
           false
@@ -291,7 +304,7 @@ export async function initializeVFS(
   }
 
   // Fall back to IndexedDB VFS
-  return initializeIDBFallback(sqlite);
+  return initializeIDBFallback(sqlite, module);
 }
 
 /**
@@ -300,10 +313,16 @@ export async function initializeVFS(
  * @param sqlite The SQLite API from wa-sqlite
  * @returns VFS init result
  */
-function initializeIDBFallback(
+async function initializeIDBFallback(
   sqlite: ReturnType<typeof SQLite.Factory>,
-): VFSInitResult {
-  const vfs = new IDBBatchAtomicVFS(IDB_VFS_NAME);
+  module: unknown,
+): Promise<VFSInitResult> {
+  // @ts-expect-error - runtime constructor accepts module param (types are stale)
+  const vfs = new IDBBatchAtomicVFS(IDB_VFS_NAME, module);
+  const ready = (vfs as unknown as { isReady?: () => Promise<void> }).isReady;
+  if (typeof ready === 'function') {
+    await ready.call(vfs);
+  }
 
   // Register as default VFS
   sqlite.vfs_register(vfs as unknown as Parameters<typeof sqlite.vfs_register>[0], true);

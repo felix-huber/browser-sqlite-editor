@@ -17,7 +17,7 @@
  */
 
 import type { StorageMode } from '../types';
-import { checkOPFSAvailability } from '../lib/opfs-vfs';
+import { checkOPFSAvailability, IDB_VFS_NAME } from '../lib/opfs-vfs';
 
 // =============================================================================
 // Constants
@@ -37,6 +37,16 @@ const IDB_REGISTRY_STORE = 'registry';
 
 /** IndexedDB version */
 const IDB_VERSION = 1;
+
+/** IndexedDB database name for IDB VFS storage */
+const IDB_VFS_DB = IDB_VFS_NAME;
+
+/** IndexedDB schema version for IDB VFS */
+const IDB_VFS_VERSION = 6;
+
+/** IDB VFS store names */
+const IDB_VFS_METADATA_STORE = 'metadata';
+const IDB_VFS_BLOCKS_STORE = 'blocks';
 
 // =============================================================================
 // Types
@@ -522,10 +532,82 @@ async function writeIdbRegistry(data: RegistryData): Promise<void> {
   }
 }
 
+function toIdbVfsPath(name: string): string {
+  return new URL(name, 'file://').pathname;
+}
+
+function fromIdbVfsPath(path: string): string | null {
+  const trimmed = path.startsWith('/') ? path.slice(1) : path;
+  if (!trimmed) return null;
+  try {
+    return decodeURIComponent(trimmed);
+  } catch {
+    return trimmed;
+  }
+}
+
+function isAuxiliaryDbFile(name: string): boolean {
+  return name.endsWith('-journal') || name.endsWith('-wal') || name.endsWith('-shm');
+}
+
+async function openIdbVfsDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(IDB_VFS_DB, IDB_VFS_VERSION);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(IDB_VFS_BLOCKS_STORE)) {
+        db.createObjectStore(IDB_VFS_BLOCKS_STORE, { keyPath: ['path', 'offset', 'version'] });
+      } else {
+        const tx = request.transaction;
+        const blocks = tx?.objectStore(IDB_VFS_BLOCKS_STORE);
+        if (blocks && blocks.indexNames.contains('version')) {
+          blocks.deleteIndex('version');
+        }
+      }
+      if (!db.objectStoreNames.contains(IDB_VFS_METADATA_STORE)) {
+        db.createObjectStore(IDB_VFS_METADATA_STORE, { keyPath: 'name' });
+      }
+    };
+  });
+}
+
 /**
- * List all database keys in the IDB databases store
+ * List database entries from IDB VFS metadata store
  */
-async function listIdbDatabases(): Promise<string[]> {
+async function listIdbVfsDatabases(): Promise<string[]> {
+  try {
+    const db = await openIdbVfsDatabase();
+    try {
+      const tx = db.transaction(IDB_VFS_METADATA_STORE, 'readonly');
+      const store = tx.objectStore(IDB_VFS_METADATA_STORE);
+      const keys = await new Promise<string[]>((resolve, reject) => {
+        const request = store.getAllKeys();
+        request.onsuccess = () => resolve(request.result as string[]);
+        request.onerror = () => reject(request.error);
+      });
+      const names = new Set<string>();
+      for (const key of keys) {
+        const decoded = fromIdbVfsPath(String(key));
+        if (!decoded) continue;
+        if (decoded.startsWith('.')) continue;
+        if (isAuxiliaryDbFile(decoded)) continue;
+        names.add(decoded);
+      }
+      return [...names];
+    } finally {
+      db.close();
+    }
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * List all database keys in the legacy IDB databases store
+ */
+async function listLegacyIdbDatabases(): Promise<string[]> {
   try {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open('idb-sqlite', 1);
@@ -559,10 +641,43 @@ async function listIdbDatabases(): Promise<string[]> {
 }
 
 /**
+ * List all database keys in IDB (VFS + legacy snapshots)
+ */
+async function listIdbDatabases(): Promise<string[]> {
+  const [vfsNames, legacyNames] = await Promise.all([
+    listIdbVfsDatabases(),
+    listLegacyIdbDatabases(),
+  ]);
+  const names = new Set<string>();
+  for (const name of vfsNames) names.add(name);
+  for (const name of legacyNames) names.add(name);
+  return [...names];
+}
+
+/**
  * Check if a database exists in IDB
  */
 async function idbDatabaseExists(name: string): Promise<boolean> {
-  const databases = await listIdbDatabases();
+  const path = toIdbVfsPath(name);
+  try {
+    const db = await openIdbVfsDatabase();
+    try {
+      const tx = db.transaction(IDB_VFS_METADATA_STORE, 'readonly');
+      const store = tx.objectStore(IDB_VFS_METADATA_STORE);
+      const exists = await new Promise<boolean>((resolve, reject) => {
+        const request = store.getKey(path);
+        request.onsuccess = () => resolve(request.result !== undefined);
+        request.onerror = () => reject(request.error);
+      });
+      if (exists) return true;
+    } finally {
+      db.close();
+    }
+  } catch {
+    // Ignore and fall back to legacy check
+  }
+
+  const databases = await listLegacyIdbDatabases();
   return databases.includes(name);
 }
 
@@ -575,6 +690,74 @@ async function idbDatabaseExists(name: string): Promise<boolean> {
  * 3. Delete the old entry
  */
 async function renameIdbDatabase(oldName: string, newName: string): Promise<void> {
+  const oldPath = toIdbVfsPath(oldName);
+  const newPath = toIdbVfsPath(newName);
+
+  try {
+    const db = await openIdbVfsDatabase();
+    try {
+      const tx = db.transaction([IDB_VFS_METADATA_STORE, IDB_VFS_BLOCKS_STORE], 'readwrite');
+      const metadata = tx.objectStore(IDB_VFS_METADATA_STORE);
+      const blocks = tx.objectStore(IDB_VFS_BLOCKS_STORE);
+
+      const oldEntry = await new Promise<{ name: string; fileSize: number; version: number; pendingVersion?: number } | undefined>(
+        (resolve, reject) => {
+          const request = metadata.get(oldPath);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        }
+      );
+
+      if (!oldEntry) {
+        throw new Error(`Database "${oldName}" not found`);
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        const request = metadata.put({ ...oldEntry, name: newPath });
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        const request = metadata.delete(oldPath);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        const range = IDBKeyRange.bound([oldPath, -Infinity], [oldPath, Infinity]);
+        const request = blocks.openCursor(range);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) {
+            resolve();
+            return;
+          }
+          const value = cursor.value as { path: string; offset: number; version: number; data: Uint8Array };
+          const putRequest = blocks.put({ ...value, path: newPath });
+          putRequest.onerror = () => reject(putRequest.error);
+          putRequest.onsuccess = () => {
+            const deleteRequest = cursor.delete();
+            deleteRequest.onerror = () => reject(deleteRequest.error);
+            deleteRequest.onsuccess = () => cursor.continue();
+          };
+        };
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      });
+      return;
+    } finally {
+      db.close();
+    }
+  } catch {
+    // Fall back to legacy snapshot rename
+  }
+
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open('idb-sqlite', 1);
     request.onerror = () => reject(request.error);
@@ -591,7 +774,6 @@ async function renameIdbDatabase(oldName: string, newName: string): Promise<void
     const tx = db.transaction('databases', 'readwrite');
     const store = tx.objectStore('databases');
 
-    // Get the old entry
     const oldEntry = await new Promise<{ name: string; blob: Blob; updatedAt: string } | undefined>(
       (resolve, reject) => {
         const request = store.get(oldName);
@@ -604,7 +786,6 @@ async function renameIdbDatabase(oldName: string, newName: string): Promise<void
       throw new Error(`Database "${oldName}" not found`);
     }
 
-    // Create new entry with new name
     await new Promise<void>((resolve, reject) => {
       const request = store.put({
         name: newName,
@@ -615,14 +796,12 @@ async function renameIdbDatabase(oldName: string, newName: string): Promise<void
       request.onerror = () => reject(request.error);
     });
 
-    // Delete old entry
     await new Promise<void>((resolve, reject) => {
       const request = store.delete(oldName);
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
     });
 
-    // Wait for transaction to complete
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
@@ -637,6 +816,41 @@ async function renameIdbDatabase(oldName: string, newName: string): Promise<void
  * Delete a database from IDB
  */
 async function deleteIdbDatabase(name: string): Promise<void> {
+  const path = toIdbVfsPath(name);
+
+  try {
+    const db = await openIdbVfsDatabase();
+    try {
+      const tx = db.transaction([IDB_VFS_METADATA_STORE, IDB_VFS_BLOCKS_STORE], 'readwrite');
+      const metadata = tx.objectStore(IDB_VFS_METADATA_STORE);
+      const blocks = tx.objectStore(IDB_VFS_BLOCKS_STORE);
+
+      await new Promise<void>((resolve, reject) => {
+        const range = IDBKeyRange.bound([path, -Infinity], [path, Infinity]);
+        const request = blocks.delete(range);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        const request = metadata.delete(path);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      });
+      return;
+    } finally {
+      db.close();
+    }
+  } catch {
+    // Fall back to legacy snapshot delete
+  }
+
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open('idb-sqlite', 1);
     request.onerror = () => reject(request.error);
@@ -659,7 +873,6 @@ async function deleteIdbDatabase(name: string): Promise<void> {
       request.onerror = () => reject(request.error);
     });
 
-    // Wait for transaction to complete
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);

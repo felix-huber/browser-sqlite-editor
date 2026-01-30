@@ -183,8 +183,13 @@ export class DatabaseEngine {
   private async _doInitialize(): Promise<void> {
     try {
       // Load the WASM module
+      const baseUrl =
+        typeof globalThis.location !== 'undefined' && globalThis.location.origin
+          ? globalThis.location.origin
+          : import.meta.url;
+      const resolvedWasmUrl = new URL(wasmUrl, baseUrl).toString();
       const module = await SQLiteESMFactory({
-        locateFile: () => wasmUrl,
+        locateFile: () => resolvedWasmUrl,
       });
 
       // Build the SQLite API

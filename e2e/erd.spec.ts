@@ -38,7 +38,7 @@ CREATE TABLE tasks (
 async function setupErdDb(page: Page) {
   await createAndOpenDatabase(page, DB_NAME);
   await runSql(page, BASE_SQL);
-  await page.getByRole('button', { name: 'ERD' }).click();
+  await page.getByTestId('tab-erd').click();
   await expect(page.getByTestId('erd-view')).toBeVisible();
   await expect(page.getByTestId('erd-canvas')).toBeVisible();
 }
@@ -125,7 +125,7 @@ test.describe('ERD', () => {
     const reader = await page.context().newPage();
     await reader.goto('/');
     await openDatabaseFromWelcome(reader, DB_NAME);
-    await reader.getByRole('button', { name: 'ERD' }).click();
+    await reader.getByTestId('tab-erd').click();
     await expect(reader.getByTestId('erd-view')).toBeVisible();
     await connectTables(reader, 'tasks', 'project_id', 'projects', 'id');
     await expect(reader.getByTestId('erd-toast-error')).toBeVisible();

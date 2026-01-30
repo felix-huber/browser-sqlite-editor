@@ -79,6 +79,13 @@ export interface DeleteRowsResult {
   deletedCount?: number;
 }
 
+export interface GridEditActions {
+  commit: () => Promise<boolean>;
+  cancel: () => void;
+  hasEdit: boolean;
+  isDirty: boolean;
+}
+
 export interface DataGridProps {
   /** Table schema information */
   tableInfo: TableInfo | null;
@@ -106,6 +113,8 @@ export interface DataGridProps {
   onCellEdit?: (rowIndex: number, columnName: string, newValue: CellValue) => Promise<boolean>;
   /** Called when edit mode changes (for tracking unsaved edits) */
   onEditStateChange?: (isEditing: boolean) => void;
+  /** Provide edit actions so the parent can commit/discard pending edits */
+  onEditActionsChange?: (actions: GridEditActions | null) => void;
   /**
    * Called when add row is requested.
    * If values is undefined, attempt DEFAULT VALUES insert.
@@ -217,7 +226,13 @@ const CellRenderer = memo(function CellRenderer({ value }: CellProps) {
 
   // Empty string: render empty cell (not NULL)
   if (stringValue === '') {
-    return <span data-testid="cell-empty"></span>;
+    return (
+      <span
+        className="inline-block w-2 h-4"
+        aria-hidden="true"
+        data-testid="cell-empty"
+      ></span>
+    );
   }
 
   // Truncate long values
@@ -321,14 +336,20 @@ const EditableCell = memo(function EditableCell({
   // Handle blur (click outside)
   const handleBlur = useCallback(
     (e: React.FocusEvent) => {
-      // Check if focus is moving to another element within the grid
-      const relatedTarget = e.relatedTarget as HTMLElement;
-      if (relatedTarget?.closest('[data-row-index]')) {
-        // Focus is moving to another cell, commit
+      const relatedTarget = e.relatedTarget as HTMLElement | null;
+      const stayingInGrid = relatedTarget?.closest('[data-testid="data-grid"]');
+      if (stayingInGrid) {
         onCommit();
-      } else if (!relatedTarget?.closest('.edit-input-container')) {
-        // Focus is moving outside, commit
-        onCommit();
+        return;
+      }
+
+      if (!relatedTarget) {
+        setTimeout(() => {
+          const active = document.activeElement as HTMLElement | null;
+          if (active?.closest('[data-testid="data-grid"]')) {
+            onCommit();
+          }
+        }, 0);
       }
     },
     [onCommit]
@@ -809,7 +830,7 @@ interface GridRowProps {
   onCancelEdit: () => void;
   onMoveToNextCell: (rowIndex: number, columnName: string) => void;
   focusedCell?: { row: number; col: number } | null;
-  onCellClick?: (rowIndex: number, colIndex: number) => void;
+  onCellClick?: (rowIndex: number, colIndex: number, event: React.MouseEvent<HTMLDivElement>) => void;
 }
 
 const GridRow = memo(function GridRow({
@@ -853,7 +874,6 @@ const GridRow = memo(function GridRow({
           type="checkbox"
           checked={isSelected}
           onChange={(e) => onToggleSelect(e.nativeEvent as unknown as React.MouseEvent)}
-          onClick={(e) => onToggleSelect(e)}
           disabled={isReadOnly}
           className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
           data-testid={`row-checkbox-${row.index}`}
@@ -879,7 +899,7 @@ const GridRow = memo(function GridRow({
             } ${isFocused ? 'outline outline-2 outline-blue-500 outline-offset-[-2px]' : ''}`}
             style={{ width, height: ROW_HEIGHT, lineHeight: `${ROW_HEIGHT}px` }}
             onDoubleClick={(e) => onCellDoubleClick(row.index, columnName, e)}
-            onClick={() => onCellClick?.(row.index, colIndex)}
+            onClick={(e) => onCellClick?.(row.index, colIndex, e)}
             onContextMenu={(e) => onCellContextMenu(row.index, columnName, cellValue, e)}
             data-testid={`cell-${row.index}-${columnName}`}
             role="gridcell"
@@ -924,6 +944,7 @@ export const DataGrid = memo(function DataGrid({
   onFilterChange,
   onCellEdit,
   onEditStateChange,
+  onEditActionsChange,
   onAddRow,
   onRowAdded,
   onDeleteRows,
@@ -1007,6 +1028,20 @@ export const DataGrid = memo(function DataGrid({
     cancelEdit,
     isColumnEditable,
   } = useDataGrid(dataGridOptions);
+
+  useEffect(() => {
+    if (!onEditActionsChange) return;
+    if (editState) {
+      onEditActionsChange({
+        commit: commitEdit,
+        cancel: cancelEdit,
+        hasEdit: true,
+        isDirty: editState.isDirty,
+      });
+      return;
+    }
+    onEditActionsChange(null);
+  }, [onEditActionsChange, editState, commitEdit, cancelEdit]);
 
   // Set up virtualizer
   const { containerRef, virtualItems, totalHeight } = useGridVirtualizer({
@@ -1207,8 +1242,9 @@ export const DataGrid = memo(function DataGrid({
   );
 
   // Handle cell click (for focus management)
-  const handleCellClick = useCallback((rowIndex: number, colIndex: number) => {
+  const handleCellClick = useCallback((rowIndex: number, colIndex: number, event: React.MouseEvent<HTMLDivElement>) => {
     setFocusedCell({ row: rowIndex, col: colIndex });
+    event.currentTarget.focus();
   }, []);
 
   // Handle move to next cell (for Tab key)
@@ -1549,7 +1585,13 @@ export const DataGrid = memo(function DataGrid({
     const handleKeyDown = (e: KeyboardEvent) => {
       // Skip if we're in an edit input
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+      if (target.tagName === 'INPUT') {
+        const input = target as HTMLInputElement;
+        if (input.type !== 'checkbox' && input.type !== 'radio') {
+          return;
+        }
+      }
+      if (target.tagName === 'TEXTAREA' || target.isContentEditable) {
         return;
       }
 

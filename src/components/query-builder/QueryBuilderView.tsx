@@ -22,7 +22,7 @@ import {
   type AvailableColumn,
 } from './';
 import { getWorkerClient } from '../../lib/worker-client';
-import { useTables } from '../../store';
+import { openDb, useActiveDb, useTables } from '../../store';
 import { quoteIdentifier } from '../../lib/ddl';
 import type { TableInfo } from '../../types';
 
@@ -41,6 +41,7 @@ export function QueryBuilderView({
   onDirtyChange,
 }: QueryBuilderViewProps) {
   const client = useMemo(() => getWorkerClient(), []);
+  const activeDb = useActiveDb();
   const tables = useTables();
   const [tableColumns, setTableColumns] = useState<Record<string, TableBoxColumnData[]>>({});
   const [tableInfoMap, setTableInfoMap] = useState<Record<string, TableInfo>>({});
@@ -52,7 +53,7 @@ export function QueryBuilderView({
   const [whereConditions, setWhereConditions] = useState<WhereCondition[]>([]);
   const [whereLogic, setWhereLogic] = useState<'AND' | 'OR'>('AND');
   const [sortConditions, setSortConditions] = useState<SortCondition[]>([]);
-  const [limit, setLimit] = useState<number | null>(100);
+  const [limit, setLimit] = useState<number | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const hasInitializedRef = useRef(false);
 
@@ -71,13 +72,13 @@ export function QueryBuilderView({
   useEffect(() => {
     let cancelled = false;
 
-    if (tables.length === 0) {
+    if (!activeDb || tables.length === 0) {
       setTableColumns({});
       setTableInfoMap({});
       return;
     }
 
-    const load = async () => {
+    const load = async (attempt = 0) => {
       setLoading(true);
       setError(null);
       try {
@@ -103,7 +104,23 @@ export function QueryBuilderView({
         setTableInfoMap(infoMap);
       } catch (err) {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Failed to load schema');
+        const message = err instanceof Error ? err.message : 'Failed to load schema';
+        if (message.includes('No database open') && attempt < 1) {
+          try {
+            await openDb(activeDb.name);
+            if (cancelled) return;
+            await load(attempt + 1);
+            return;
+          } catch (openErr) {
+            const openMessage =
+              openErr instanceof Error ? openErr.message : 'Failed to open database';
+            setError(openMessage);
+            setTableColumns({});
+            setTableInfoMap({});
+            return;
+          }
+        }
+        setError(message);
         setTableColumns({});
         setTableInfoMap({});
       } finally {
@@ -117,7 +134,7 @@ export function QueryBuilderView({
     return () => {
       cancelled = true;
     };
-  }, [client, tables]);
+  }, [activeDb, client, tables]);
 
   const availableColumns = useMemo<AvailableColumn[]>(() => {
     const cols: AvailableColumn[] = [];
@@ -249,6 +266,15 @@ export function QueryBuilderView({
     [client, markClean]
   );
 
+  const handleOpenInEditor = useCallback(
+    (sql: string) => {
+      markClean();
+      onDirtyChange?.(false);
+      onOpenSql?.(sql);
+    },
+    [markClean, onDirtyChange, onOpenSql]
+  );
+
   return (
     <div className="flex flex-col h-full" data-testid="query-builder-view">
       {error && (
@@ -302,7 +328,7 @@ export function QueryBuilderView({
           sql={previewSql}
           params={previewParams}
           onExecute={handleExecute}
-          onOpenInEditor={onOpenSql}
+          onOpenInEditor={handleOpenInEditor}
           onCancel={() => client.cancel()}
           isReadOnly={isReadOnly}
           isGenerating={loading}

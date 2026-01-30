@@ -39,7 +39,7 @@ INSERT INTO orders (user_id, total, created_at) VALUES
 async function setupQueryDb(page: Page) {
   await createAndOpenDatabase(page, DB_NAME);
   await runSql(page, BASE_SQL);
-  await page.getByRole('button', { name: 'Query Builder' }).click();
+  await page.getByTestId('tab-query-builder').click();
   await expect(page.getByTestId('query-builder-view')).toBeVisible();
 }
 
@@ -60,7 +60,32 @@ async function connectJoin(page: Page) {
   await ordersBox.hover();
   const source = usersBox.locator('[data-handleid="id-source"]');
   const target = ordersBox.locator('[data-handleid="user_id-target"]');
-  await source.dragTo(target, { force: true });
+  await expect(source).toBeVisible();
+  await expect(target).toBeVisible();
+  await source.click({ force: true });
+  await target.click({ force: true });
+  await page.waitForTimeout(200);
+  if (await page.getByTestId('join-count').isVisible()) {
+    return;
+  }
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  if (!sourceBox || !targetBox) {
+    throw new Error('Join handles not visible for drag');
+  }
+  await page.mouse.move(
+    sourceBox.x + sourceBox.width / 2,
+    sourceBox.y + sourceBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    targetBox.x + targetBox.width / 2,
+    targetBox.y + targetBox.height / 2,
+    { steps: 24 }
+  );
+  await page.waitForTimeout(100);
+  await page.mouse.up();
+  await page.waitForTimeout(200);
 }
 
 // =============================================================================

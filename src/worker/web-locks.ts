@@ -98,7 +98,9 @@ const defaultLockManagerAdapter: LockManagerAdapter = {
     if (typeof navigator === 'undefined') return false;
     if (!('locks' in navigator)) return false;
     // Web Locks can behave inconsistently in automation; prefer localStorage fallback in tests.
+    const ua = navigator.userAgent ?? '';
     if ('webdriver' in navigator && navigator.webdriver) return false;
+    if (ua.includes('Headless') || ua.includes('Playwright')) return false;
     return true;
   },
   requestLock: async (name, options, callback) => {

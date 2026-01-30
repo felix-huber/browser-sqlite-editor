@@ -38,6 +38,8 @@ export interface TableViewProps {
   isReadOnly?: boolean;
   /** Callback when edit mode changes (for unsaved prompt) */
   onEditStateChange?: (isEditing: boolean) => void;
+  /** Provide grid edit actions to allow save/discard from prompts */
+  onEditActionsChange?: (actions: import('../grid/DataGrid').GridEditActions | null) => void;
   /** Callback to open SQL editor */
   onOpenSql?: (sql: string) => void;
 }
@@ -91,6 +93,7 @@ export function TableView({
   viewName,
   isReadOnly = false,
   onEditStateChange,
+  onEditActionsChange,
   onOpenSql,
 }: TableViewProps) {
   const client = useMemo(() => getWorkerClient(), []);
@@ -103,6 +106,7 @@ export function TableView({
   const [hasForeignKeys, setHasForeignKeys] = useState(false);
   const [pageSize] = useState(DEFAULT_PAGE_SIZE);
   const [offset, setOffset] = useState(0);
+  const [dataOffset, setDataOffset] = useState(0);
   const [totalRows, setTotalRows] = useState<number | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportColumns, setExportColumns] = useState<string[]>([]);
@@ -116,6 +120,12 @@ export function TableView({
   const loadTokenRef = useRef(0);
 
   const objectName = viewName ?? tableName;
+
+  useEffect(() => {
+    return () => {
+      onEditActionsChange?.(null);
+    };
+  }, [onEditActionsChange]);
 
   // Track container height for DataGrid virtualization
   useEffect(() => {
@@ -233,6 +243,7 @@ export function TableView({
       });
 
       setDataState({ rows, rowKeys });
+      setDataOffset(offset);
     } catch (err) {
       if (token !== loadTokenRef.current) return;
       const message = err instanceof Error ? err.message : 'Failed to load data';
@@ -251,6 +262,7 @@ export function TableView({
 
   useEffect(() => {
     setOffset(0);
+    setDataOffset(0);
   }, [objectName]);
 
   useEffect(() => {
@@ -334,6 +346,11 @@ export function TableView({
 
       try {
         if (!values) {
+          const hasGeneratedColumns = tableInfo.columns.some((col) => col.generated !== null);
+          if (hasGeneratedColumns) {
+            return { success: false, needsForm: true };
+          }
+
           try {
             await client.exec(`INSERT INTO ${quoteIdentifier(tableInfo.name)} DEFAULT VALUES`);
             await fetchData();
@@ -354,7 +371,9 @@ export function TableView({
 
         const columns = Object.keys(values);
         if (columns.length === 0) {
-          return { success: false, error: 'No values provided' };
+          await client.exec(`INSERT INTO ${quoteIdentifier(tableInfo.name)} DEFAULT VALUES`);
+          await fetchData();
+          return { success: true };
         }
 
         const placeholders = columns.map(() => '?').join(', ');
@@ -413,10 +432,10 @@ export function TableView({
   const visibleColumns = useMemo(() => getDisplayColumns(tableInfo), [tableInfo]);
 
   const rowCountLabel = totalRows !== null ? `${totalRows} rows` : `${dataState.rows.length} rows`;
-  const canGoPrev = offset > 0;
-  const canGoNext = totalRows !== null ? offset + pageSize < totalRows : dataState.rows.length === pageSize;
-  const pageStart = totalRows !== null ? Math.min(offset + 1, totalRows) : offset + 1;
-  const pageEnd = totalRows !== null ? Math.min(offset + dataState.rows.length, totalRows) : offset + dataState.rows.length;
+  const canGoPrev = dataOffset > 0;
+  const canGoNext = totalRows !== null ? dataOffset + pageSize < totalRows : dataState.rows.length === pageSize;
+  const pageStart = totalRows !== null ? Math.min(dataOffset + 1, totalRows) : dataOffset + 1;
+  const pageEnd = totalRows !== null ? Math.min(dataOffset + dataState.rows.length, totalRows) : dataOffset + dataState.rows.length;
 
   return (
     <div className="flex flex-col h-full" data-testid="table-view">
@@ -499,27 +518,35 @@ export function TableView({
       )}
 
       <div ref={containerRef} className="flex-1 overflow-hidden">
-        {loading ? (
+        {loading && dataState.rows.length === 0 ? (
           <GridSkeleton rowCount={8} columnCount={Math.max(visibleColumns.length, 4)} height={gridHeight} />
         ) : (
-          <DataGrid
-            tableInfo={tableInfo}
-            data={dataState.rows}
-            height={gridHeight}
-            isReadOnly={effectiveReadOnly}
-            sortState={sortState}
-            onSortChange={setSortState}
-            filterState={filterState}
-            onFilterChange={(next) => {
-              setFilterState(next);
-              setOffset(0);
-            }}
-            onCellEdit={handleCellEdit}
-            onEditStateChange={onEditStateChange}
-            onAddRow={effectiveReadOnly ? undefined : handleAddRow}
-            onDeleteRows={effectiveReadOnly ? undefined : handleDeleteRows}
-            hasForeignKeys={hasForeignKeys}
-          />
+          <div className="relative" style={{ height: gridHeight }}>
+            <DataGrid
+              tableInfo={tableInfo}
+              data={dataState.rows}
+              height={gridHeight}
+              isReadOnly={effectiveReadOnly}
+              sortState={sortState}
+              onSortChange={setSortState}
+              filterState={filterState}
+              onFilterChange={(next) => {
+                setFilterState(next);
+                setOffset(0);
+              }}
+              onCellEdit={handleCellEdit}
+              onEditStateChange={onEditStateChange}
+              onEditActionsChange={onEditActionsChange}
+              onAddRow={tableInfo ? handleAddRow : undefined}
+              onDeleteRows={tableInfo ? handleDeleteRows : undefined}
+              hasForeignKeys={hasForeignKeys}
+            />
+            {loading && (
+              <div className="absolute inset-0 bg-white/60 flex items-center justify-center text-sm text-gray-600">
+                Loading…
+              </div>
+            )}
+          </div>
         )}
       </div>
 

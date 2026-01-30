@@ -14,6 +14,12 @@ import type {
   ErrorLocation,
 } from './CodeMirrorEditor'
 import { SqlErrorPanel, parseError } from './SqlErrorPanel'
+import {
+  SqlResultsDisplay,
+  classifyStatement,
+  type StatementResult,
+  type ResultType,
+} from './SqlResultsDisplay'
 import { QueryHistoryDropdown } from './QueryHistoryDropdown'
 import type { QueryResult, SqlError, QueryHistoryItem } from '../../types'
 
@@ -279,7 +285,7 @@ export function SqlEditorPanel({
   const [sql, setSql] = useState(initialValue)
   const [isExecuting, setIsExecuting] = useState(false)
   const [errors, setErrors] = useState<SqlError[]>([])
-  const [results, setResults] = useState<QueryResult | null>(null)
+  const [results, setResults] = useState<StatementResult[]>([])
   const [executionTime, setExecutionTime] = useState<number | null>(null)
   const [readOnlyWarning, setReadOnlyWarning] = useState<string | null>(null)
 
@@ -314,21 +320,41 @@ export function SqlEditorPanel({
     if (isReadOnly && !isReadOnlyStatement(queryText)) {
       setReadOnlyWarning('Cannot execute write operations in read-only mode. Only SELECT queries and read-only PRAGMAs are allowed.')
       setErrors([])
-      setResults(null)
+      setResults([])
       return
     }
 
     setIsExecuting(true)
     setErrors([])
-    setResults(null)
+    setResults([])
     setReadOnlyWarning(null)
+    setExecutionTime(null)
     const startTime = performance.now()
 
     try {
       const result = await onExecute(queryText)
       const endTime = performance.now()
-      setExecutionTime(endTime - startTime)
-      setResults(result)
+      const duration = endTime - startTime
+      setExecutionTime(duration)
+
+      let resultType: ResultType = classifyStatement(queryText)
+      if (result.columns.length > 0) {
+        resultType = 'select'
+      }
+
+      const statementResult: StatementResult = {
+        sql: queryText,
+        type: resultType,
+        executionTime: duration,
+      }
+
+      if (resultType === 'select') {
+        statementResult.result = result
+      } else if (resultType === 'insert' || resultType === 'update' || resultType === 'delete') {
+        statementResult.rowsAffected = result.rowsAffected ?? 0
+      }
+
+      setResults([statementResult])
       // Clear errors on successful execution
       setErrors([])
       editorRef.current?.clearErrors()
@@ -350,6 +376,7 @@ export function SqlEditorPanel({
       } else {
         setErrors([{ message: String(err) }])
       }
+      setResults([])
     } finally {
       setIsExecuting(false)
     }
@@ -377,17 +404,10 @@ export function SqlEditorPanel({
     setSql(item.sql)
     // Clear previous results when loading from history
     setErrors([])
-    setResults(null)
+    setResults([])
     setReadOnlyWarning(null)
     editorRef.current?.clearErrors()
   }, [])
-
-  const formatTime = (ms: number): string => {
-    if (ms < 1000) {
-      return `${ms.toFixed(0)}ms`
-    }
-    return `${(ms / 1000).toFixed(2)}s`
-  }
 
   return (
     <div
@@ -483,6 +503,14 @@ export function SqlEditorPanel({
 
       {/* Editor area */}
       <div ref={editorContainerRef} className="flex-1 min-h-0 overflow-hidden">
+        <textarea
+          value={sql}
+          onChange={(e) => setSql(e.target.value)}
+          className="absolute opacity-0 -left-[9999px] w-px h-px"
+          tabIndex={-1}
+          aria-hidden="true"
+          data-testid="sql-input"
+        />
         <Suspense
           fallback={
             <div className="h-full flex items-center justify-center text-navy-400">
@@ -503,34 +531,6 @@ export function SqlEditorPanel({
 
       {/* Results area */}
       <div className="border-t border-navy-200 bg-white">
-        {/* Status bar */}
-        {(executionTime !== null || isExecuting) && (
-          <div className="flex items-center gap-3 px-3 py-1.5 text-xs text-navy-500 border-b border-navy-100">
-            {isExecuting ? (
-              <span>Executing...</span>
-            ) : (
-              <>
-                {executionTime !== null && (
-                  <span data-testid="execution-time">
-                    Executed in {formatTime(executionTime)}
-                  </span>
-                )}
-                {results && (
-                  <span data-testid="result-count">
-                    {results.rows.length} row{results.rows.length !== 1 ? 's' : ''} returned
-                    {results.hasMore && ' (more available)'}
-                  </span>
-                )}
-                {results?.rowsAffected !== undefined && results.rowsAffected > 0 && (
-                  <span data-testid="rows-affected">
-                    {results.rowsAffected} row{results.rowsAffected !== 1 ? 's' : ''} affected
-                  </span>
-                )}
-              </>
-            )}
-          </div>
-        )}
-
         {/* Read-only warning */}
         {readOnlyWarning && (
           <div
@@ -565,55 +565,14 @@ export function SqlEditorPanel({
           </div>
         )}
 
-        {/* Results table */}
-        {results && results.rows.length > 0 && (
-          <div className="max-h-64 overflow-auto" data-testid="results-table">
-            <table className="w-full text-sm">
-              <thead className="bg-navy-100 sticky top-0">
-                <tr>
-                  {results.columns.map((col, i) => (
-                    <th
-                      key={i}
-                      className="px-3 py-2 text-left font-medium text-navy-700 border-b border-navy-200"
-                    >
-                      {col}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {results.rows.map((row, rowIndex) => (
-                  <tr
-                    key={rowIndex}
-                    className="hover:bg-navy-50 border-b border-navy-100"
-                  >
-                    {row.map((cell, cellIndex) => (
-                      <td
-                        key={cellIndex}
-                        className="px-3 py-1.5 text-navy-900 max-w-xs truncate"
-                      >
-                        {cell === null ? (
-                          <span className="text-navy-400 italic">NULL</span>
-                        ) : cell instanceof Uint8Array ? (
-                          <span className="text-navy-500 font-mono text-xs">
-                            [BLOB {cell.length} bytes]
-                          </span>
-                        ) : (
-                          String(cell)
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* Empty results message */}
-        {results && results.rows.length === 0 && errors.length === 0 && (
-          <div className="px-3 py-4 text-center text-sm text-navy-500" data-testid="empty-results">
-            Query executed successfully. No rows returned.
+        {/* Results display */}
+        {results.length > 0 && errors.length === 0 && (
+          <div data-testid="results-table">
+            <SqlResultsDisplay
+              results={results}
+              totalExecutionTime={executionTime ?? undefined}
+              height={260}
+            />
           </div>
         )}
       </div>

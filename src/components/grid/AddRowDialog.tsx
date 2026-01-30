@@ -7,7 +7,7 @@
  * - NOT a generated column (generated columns are excluded)
  */
 
-import { memo, useState, useCallback, useEffect, useRef } from 'react';
+import { memo, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { ColumnInfo } from '../../types';
 import { getColumnTypeCategory } from './useDataGrid';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
@@ -96,18 +96,26 @@ export const AddRowDialog = memo(function AddRowDialog({
 
   // Check if there are generated columns
   const hasGeneratedColumns = allColumns.some((col) => col.generated !== null);
+  const editableColumns = useMemo(
+    () => allColumns.filter((col) => col.generated === null),
+    [allColumns]
+  );
+  const requiredColumnNames = useMemo(
+    () => new Set(requiredColumns.map((col) => col.name)),
+    [requiredColumns]
+  );
 
   // Reset form when dialog opens
   useEffect(() => {
     if (isOpen) {
       const initialValues: Record<string, string> = {};
-      requiredColumns.forEach((col) => {
+      editableColumns.forEach((col) => {
         initialValues[col.name] = '';
       });
       setFormValues(initialValues);
       setTouched({});
     }
-  }, [isOpen, requiredColumns]);
+  }, [isOpen, editableColumns]);
 
   // Focus first input when dialog opens
   useEffect(() => {
@@ -139,7 +147,7 @@ export const AddRowDialog = memo(function AddRowDialog({
   const handleSetNull = useCallback((columnName: string) => {
     setFormValues((prev) => ({
       ...prev,
-      [columnName]: 'NULL',
+      [columnName]: 'null',
     }));
     setTouched((prev) => ({
       ...prev,
@@ -185,13 +193,20 @@ export const AddRowDialog = memo(function AddRowDialog({
 
       // Parse values
       const parsedValues: Record<string, unknown> = {};
-      requiredColumns.forEach((col) => {
-        parsedValues[col.name] = parseValue(formValues[col.name] ?? '', col.type);
+      editableColumns.forEach((col) => {
+        const rawValue = formValues[col.name] ?? '';
+        const isRequired = requiredColumnNames.has(col.name);
+
+        if (!isRequired && rawValue === '') {
+          return;
+        }
+
+        parsedValues[col.name] = parseValue(rawValue, col.type);
       });
 
       onSubmit(parsedValues);
     },
-    [formValues, isValid, onSubmit, requiredColumns]
+    [editableColumns, formValues, isValid, onSubmit, requiredColumns, requiredColumnNames]
   );
 
   // Handle keyboard events
@@ -239,7 +254,7 @@ export const AddRowDialog = memo(function AddRowDialog({
             Add New Row
           </h2>
           <p className="text-sm text-gray-500 mt-1">
-            Please provide values for required fields
+            Required fields are marked with an asterisk. Optional fields can be left blank.
           </p>
         </div>
 
@@ -256,11 +271,12 @@ export const AddRowDialog = memo(function AddRowDialog({
               </div>
             )}
 
-            {/* Required fields */}
-            {requiredColumns.map((col, index) => {
+            {/* Editable fields */}
+            {editableColumns.map((col, index) => {
               const inputType = getInputType(col.type);
               const error = touched[col.name] ? validationErrors[col.name] : undefined;
               const isNullable = !col.notnull;
+              const isRequired = requiredColumnNames.has(col.name);
 
               return (
                 <div key={col.name} className="space-y-1">
@@ -269,7 +285,7 @@ export const AddRowDialog = memo(function AddRowDialog({
                     className="block text-sm font-medium text-gray-700"
                   >
                     {col.name}
-                    {col.notnull && <span className="text-red-500 ml-1">*</span>}
+                    {isRequired && <span className="text-red-500 ml-1">*</span>}
                     <span className="ml-2 text-xs text-gray-400 font-normal">
                       {col.type}
                     </span>
@@ -363,7 +379,7 @@ export const AddRowDialog = memo(function AddRowDialog({
             <button
               type="submit"
               className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={isSubmitting || !isValid}
+              disabled={isSubmitting}
               data-testid="add-row-submit"
             >
               {isSubmitting ? 'Inserting...' : 'Insert'}

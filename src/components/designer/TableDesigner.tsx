@@ -55,6 +55,8 @@ export interface TableDesignerProps {
   onDirtyChange?: (isDirty: boolean) => void;
   /** Called when table name or columns change (for preview/parent state) */
   onDraftChange?: (tableName: string, columns: DesignerColumnDraft[]) => void;
+  /** Increment to reset dirty tracking after a successful save */
+  resetToken?: number;
 }
 
 export interface TableNameValidation {
@@ -191,7 +193,7 @@ function validateForm(
   columns.forEach((col) => {
     const lower = col.name.toLowerCase().trim();
     if (lower && namesSeen.has(lower)) {
-      errors[`column-${col.id}`] = 'Duplicate column name';
+      errors[`column-${col.id}`] = 'A column with this name already exists';
     }
     namesSeen.add(lower);
   });
@@ -214,12 +216,18 @@ export function TableDesigner({
   onCancel,
   onDirtyChange,
   onDraftChange,
+  resetToken,
 }: TableDesignerProps) {
   // Form state
   const [tableName, setTableName] = useState('');
-  const [columns, setColumns] = useState<DesignerColumnDraft[]>([]);
+  const tableNameInputRef = useRef<HTMLInputElement | null>(null);
+  const [columns, setColumns] = useState<DesignerColumnDraft[]>(() => [createEmptyColumn()]);
+  const initializedTableRef = useRef<string | null>(null);
+  const tableNameEditedRef = useRef(false);
+  const columnsEditedRef = useRef(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [newColumnId, setNewColumnId] = useState<string | null>(null);
+  const initialColumnsRef = useRef(columns);
 
   // Validation state
   const [tableNameError, setTableNameError] = useState<string | null>(null);
@@ -231,6 +239,8 @@ export function TableDesigner({
   // Track dirty state
   const [isDirty, setIsDirty] = useState(false);
   const initialStateRef = useRef<{ tableName: string; columns: DesignerColumnDraft[] } | null>(null);
+  const didInitRef = useRef(false);
+  const lastResetTokenRef = useRef<number | undefined>(resetToken);
 
   // Derived state
   const isEditing = existingTable !== null;
@@ -239,19 +249,50 @@ export function TableDesigner({
   // Initialize form from existing table or create empty
   useEffect(() => {
     if (existingTable) {
+      const tableNameValue = existingTable.name;
+      const isFirstLoad = initializedTableRef.current === null;
+      const isSameTable = initializedTableRef.current === tableNameValue;
+      if (!isSameTable) {
+        initializedTableRef.current = tableNameValue;
+        if (!isFirstLoad) {
+          tableNameEditedRef.current = false;
+          columnsEditedRef.current = false;
+        }
+      }
+
       const cols = tableInfoToColumns(existingTable);
-      setTableName(existingTable.name);
-      setColumns(cols);
-      initialStateRef.current = { tableName: existingTable.name, columns: cols };
-    } else {
-      // Create mode: start with one empty column
+      if (!tableNameEditedRef.current) {
+        setTableName(tableNameValue);
+      }
+      if (!columnsEditedRef.current) {
+        setColumns(cols);
+      }
+      initialStateRef.current = { tableName: tableNameValue, columns: cols };
+      if (!tableNameEditedRef.current && !columnsEditedRef.current) {
+        setIsDirty(false);
+        setHasInteracted(false);
+      }
+      didInitRef.current = true;
+      return;
+    }
+
+    if (didInitRef.current) {
       const emptyCol = createEmptyColumn();
+      initializedTableRef.current = null;
+      tableNameEditedRef.current = false;
+      columnsEditedRef.current = false;
       setTableName('');
       setColumns([emptyCol]);
       initialStateRef.current = { tableName: '', columns: [emptyCol] };
+      setIsDirty(false);
+      setHasInteracted(false);
+      return;
     }
+
+    initialStateRef.current = { tableName: '', columns: initialColumnsRef.current };
     setIsDirty(false);
     setHasInteracted(false);
+    didInitRef.current = true;
   }, [existingTable]);
 
   // Track dirty state
@@ -279,6 +320,18 @@ export function TableDesigner({
     setIsDirty(dirty);
     onDirtyChange?.(dirty);
   }, [tableName, columns, onDirtyChange]);
+
+  useEffect(() => {
+    if (resetToken === undefined) return;
+    if (lastResetTokenRef.current === resetToken) return;
+    lastResetTokenRef.current = resetToken;
+    tableNameEditedRef.current = false;
+    columnsEditedRef.current = false;
+    initialStateRef.current = { tableName, columns };
+    setIsDirty(false);
+    setHasInteracted(false);
+    onDirtyChange?.(false);
+  }, [resetToken, tableName, columns, onDirtyChange]);
 
   // Notify parent of draft changes for live preview
   useEffect(() => {
@@ -309,12 +362,19 @@ export function TableDesigner({
 
   // Handlers
   const handleTableNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    tableNameEditedRef.current = true;
     setTableName(e.target.value);
     if (!hasInteracted) setHasInteracted(true);
   }, [hasInteracted]);
 
+  const handleTableNameFocus = useCallback((e: React.FocusEvent<HTMLInputElement>) => {
+    if (!isEditing) return;
+    e.currentTarget.select();
+  }, [isEditing]);
+
   const handleColumnChange = useCallback(
     (id: string, updates: Partial<DesignerColumnDraft>) => {
+      columnsEditedRef.current = true;
       setColumns((prev) =>
         prev.map((col) => (col.id === id ? { ...col, ...updates } : col))
       );
@@ -322,7 +382,12 @@ export function TableDesigner({
     []
   );
 
+  const handleColumnInteract = useCallback(() => {
+    if (!hasInteracted) setHasInteracted(true);
+  }, [hasInteracted]);
+
   const handleAddColumn = useCallback(() => {
+    columnsEditedRef.current = true;
     const newCol = createEmptyColumn();
     setColumns((prev) => [...prev, newCol]);
     setNewColumnId(newCol.id);
@@ -331,6 +396,7 @@ export function TableDesigner({
   }, []);
 
   const handleDeleteColumn = useCallback((id: string) => {
+    columnsEditedRef.current = true;
     setColumns((prev) => prev.filter((col) => col.id !== id));
     setDeleteConfirmId(null);
   }, []);
@@ -361,6 +427,7 @@ export function TableDesigner({
         e.preventDefault();
         const draggedId = e.dataTransfer.getData('text/plain');
         if (draggedId && draggedId !== columnId) {
+          columnsEditedRef.current = true;
           setColumns((prev) => {
             const draggedIndex = prev.findIndex((c) => c.id === draggedId);
             const dropIndex = prev.findIndex((c) => c.id === columnId);
@@ -389,7 +456,8 @@ export function TableDesigner({
     (e: React.FormEvent) => {
       e.preventDefault();
       if (!formValidation.valid || isReadOnly) return;
-      onSubmit?.(tableName.trim(), columns);
+      const rawName = tableNameInputRef.current?.value ?? tableName;
+      onSubmit?.(rawName.trim(), columns);
     },
     [formValidation.valid, isReadOnly, onSubmit, tableName, columns]
   );
@@ -433,6 +501,8 @@ export function TableDesigner({
           type="text"
           value={tableName}
           onChange={handleTableNameChange}
+          onFocus={handleTableNameFocus}
+          ref={tableNameInputRef}
           disabled={isReadOnly}
           placeholder="Enter table name"
           className={`w-full max-w-md px-3 py-2 border rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
@@ -497,6 +567,10 @@ export function TableDesigner({
               isNew={newColumnId === column.id}
               index={index + 1}
               existingColumnNames={getOtherColumnNames(column.id)}
+              externalNameError={
+                hasInteracted ? formValidation.errors[`column-${column.id}`] ?? null : null
+              }
+              onInteract={handleColumnInteract}
               dragHandleProps={!isReadOnly ? createDragHandlers(column.id) : undefined}
               isDragging={dragState.draggedId === column.id}
               isDropTarget={dragState.dropTargetId === column.id}

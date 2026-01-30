@@ -132,6 +132,10 @@ export function useUnsavedPrompt(
     ...DEFAULT_DIRTY_STATE,
     ...initialDirtyState,
   }));
+  const dirtyStateRef = useRef<DirtyState>({
+    ...DEFAULT_DIRTY_STATE,
+    ...initialDirtyState,
+  });
 
   // Prompt state
   const [isPromptOpen, setIsPromptOpen] = useState(false);
@@ -144,10 +148,16 @@ export function useUnsavedPrompt(
   const isDirty = Object.values(dirtyState).some((dirty) => dirty);
   const canSave = onSave !== undefined;
 
+  useEffect(() => {
+    dirtyStateRef.current = dirtyState;
+  }, [dirtyState]);
+
   /**
    * Set dirty state for a specific surface
    */
   const setDirty = useCallback((surface: DirtySurface, dirty: boolean) => {
+    const next = { ...dirtyStateRef.current, [surface]: dirty };
+    dirtyStateRef.current = next;
     setDirtyState((prev) => {
       if (prev[surface] === dirty) return prev;
       return { ...prev, [surface]: dirty };
@@ -158,6 +168,7 @@ export function useUnsavedPrompt(
    * Mark all surfaces as clean
    */
   const markClean = useCallback(() => {
+    dirtyStateRef.current = DEFAULT_DIRTY_STATE;
     setDirtyState(DEFAULT_DIRTY_STATE);
   }, []);
 
@@ -176,12 +187,14 @@ export function useUnsavedPrompt(
   const checkUnsaved = useCallback(
     (_targetAction: string): Promise<CheckUnsavedResult> => {
       // If not dirty, resolve immediately
-      if (!isDirty) {
+      const currentDirtyState = dirtyStateRef.current;
+      const hasDirty = Object.values(currentDirtyState).some((dirty) => dirty);
+      if (!hasDirty) {
         return Promise.resolve({ action: 'discard', success: true });
       }
 
       // Show prompt and wait for action
-      const context = getDirtyContextFromState(dirtyState);
+      const context = getDirtyContextFromState(currentDirtyState);
       setPromptContext(context);
       setIsPromptOpen(true);
 
@@ -189,7 +202,7 @@ export function useUnsavedPrompt(
         resolverRef.current = resolve;
       });
     },
-    [isDirty, dirtyState]
+    []
   );
 
   /**

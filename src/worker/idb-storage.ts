@@ -194,9 +194,13 @@ async function withRetry<T>(
     try {
       return await operation();
     } catch (err) {
-      lastError = err instanceof Error && 'code' in err
-        ? err as PersistenceError
-        : normalizeIDBError(err, operationName);
+      if (err instanceof DOMException) {
+        lastError = normalizeIDBError(err, operationName);
+      } else if (err && typeof err === 'object' && 'code' in err) {
+        lastError = err as PersistenceError;
+      } else {
+        lastError = normalizeIDBError(err, operationName);
+      }
 
       // Don't retry quota exceeded errors - they won't succeed
       if (lastError.code === 'QUOTA_EXCEEDED') {
@@ -211,7 +215,7 @@ async function withRetry<T>(
   }
 
   // All retries exhausted
-  throw lastError;
+  throw lastError ?? normalizeIDBError(new Error('Unknown IDB error'), operationName);
 }
 
 // =============================================================================
@@ -274,11 +278,13 @@ export class IDBStorage {
       this.flush().catch((err) => {
         // Surface error via callback
         if (this.onError) {
-          this.onError(
-            err instanceof Error && 'code' in err
-              ? err as PersistenceError
-              : normalizeIDBError(err, 'flush'),
-          );
+          if (err instanceof DOMException) {
+            this.onError(normalizeIDBError(err, 'flush'));
+          } else if (err && typeof err === 'object' && 'code' in err) {
+            this.onError(err as PersistenceError);
+          } else {
+            this.onError(normalizeIDBError(err, 'flush'));
+          }
         }
       });
     }, DEBOUNCE_DELAY_MS);
@@ -371,9 +377,14 @@ export class IDBStorage {
 
       return { success: true };
     } catch (err) {
-      const error = err instanceof Error && 'code' in err
-        ? err as PersistenceError
-        : normalizeIDBError(err, 'flush');
+      let error: PersistenceError;
+      if (err instanceof DOMException) {
+        error = normalizeIDBError(err, 'flush');
+      } else if (err && typeof err === 'object' && 'code' in err) {
+        error = err as PersistenceError;
+      } else {
+        error = normalizeIDBError(err, 'flush');
+      }
 
       // Set global storage full flag for quota errors
       if (isStorageError(err)) {

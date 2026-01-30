@@ -379,35 +379,35 @@ test.describe('Grid Editing Tests', () => {
     test('unsaved prompt dialog exists', async ({ page }) => {
       const input = await openCellEditor(page, 0, 'name');
       await input.fill('Alicia');
-      await page.getByRole('button', { name: 'SQL' }).click();
+      await page.getByTestId('tab-sql').click();
       await expect(page.getByTestId('unsaved-prompt-dialog')).toBeVisible();
     });
 
     test('unsaved prompt has Save & Continue button', async ({ page }) => {
       const input = await openCellEditor(page, 0, 'name');
       await input.fill('Alicia');
-      await page.getByRole('button', { name: 'SQL' }).click();
+      await page.getByTestId('tab-sql').click();
       await expect(page.getByTestId('unsaved-prompt-save')).toBeVisible();
     });
 
     test('unsaved prompt has Discard button', async ({ page }) => {
       const input = await openCellEditor(page, 0, 'name');
       await input.fill('Alicia');
-      await page.getByRole('button', { name: 'SQL' }).click();
+      await page.getByTestId('tab-sql').click();
       await expect(page.getByTestId('unsaved-prompt-discard')).toBeVisible();
     });
 
     test('unsaved prompt has Cancel button', async ({ page }) => {
       const input = await openCellEditor(page, 0, 'name');
       await input.fill('Alicia');
-      await page.getByRole('button', { name: 'SQL' }).click();
+      await page.getByTestId('tab-sql').click();
       await expect(page.getByTestId('unsaved-prompt-cancel')).toBeVisible();
     });
 
     test('Escape key cancels unsaved prompt', async ({ page }) => {
       const input = await openCellEditor(page, 0, 'name');
       await input.fill('Alicia');
-      await page.getByRole('button', { name: 'SQL' }).click();
+      await page.getByTestId('tab-sql').click();
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('unsaved-prompt-dialog')).toBeHidden();
     });
@@ -415,8 +415,8 @@ test.describe('Grid Editing Tests', () => {
     test('backdrop click cancels unsaved prompt', async ({ page }) => {
       const input = await openCellEditor(page, 0, 'name');
       await input.fill('Alicia');
-      await page.getByRole('button', { name: 'SQL' }).click();
-      await page.getByTestId('unsaved-prompt-backdrop').click();
+      await page.getByTestId('tab-sql').click();
+      await page.getByTestId('unsaved-prompt-backdrop').click({ position: { x: 8, y: 8 } });
       await expect(page.getByTestId('unsaved-prompt-dialog')).toBeHidden();
     });
   });
@@ -506,7 +506,7 @@ test.describe('Grid Editing Tests', () => {
 
     test('onEditStateChange is called when entering edit mode', async ({ page }) => {
       await openCellEditor(page, 0, 'name');
-      await page.getByRole('button', { name: 'SQL' }).click();
+      await page.getByTestId('tab-sql').click();
       await expect(page.getByTestId('unsaved-prompt-dialog')).toBeVisible();
     });
 

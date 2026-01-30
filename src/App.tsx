@@ -15,14 +15,14 @@ import { StorageFullBanner } from './components/common/StorageFullBanner';
 import { PersistenceErrorBanner } from './components/common/PersistenceErrorBanner';
 import { QuotaExceededModal } from './components/common/QuotaExceededModal';
 import { PersistenceErrorModal } from './components/common/PersistenceErrorModal';
-import { UnsavedPrompt } from './components/common/UnsavedPrompt';
+import { UnsavedPrompt, type UnsavedPromptAction } from './components/common/UnsavedPrompt';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { NewDatabaseDialog } from './components/common/NewDatabaseDialog';
 import { ConfirmDialog } from './components/common/ConfirmDialog';
 import { Welcome } from './components/welcome/Welcome';
 import { Sidebar } from './components/sidebar';
-import { SqlEditorPanel } from './components/sql';
 import { TableView } from './components/table';
+import type { GridEditActions } from './components/grid/DataGrid';
 import TableDesignerView from './components/designer/TableDesignerView';
 import { ImportDialog } from './components/import/ImportDialog';
 import { StatusBar } from './components/layout/StatusBar';
@@ -44,12 +44,13 @@ import {
 } from './store';
 import { getWorkerClient, WorkerClient } from './lib/worker-client';
 import { useGlobalShortcutHandlers } from './hooks/useKeyboardShortcuts';
-import { useUnsavedPrompt } from './hooks/useUnsavedPrompt';
+import { useUnsavedPrompt, type DirtyState } from './hooks/useUnsavedPrompt';
 import { loadHistory, addToHistory } from './lib/history';
 import type { QueryResult, QueryHistoryItem, DatabaseRegistry } from './types';
 
 const ERDView = lazy(() => import('./components/erd/ERDView'));
 const QueryBuilderView = lazy(() => import('./components/query-builder/QueryBuilderView'));
+const SqlEditorPanel = lazy(() => import('./components/sql/SqlEditorPanel'));
 
 /** View types for the main content area */
 type ViewType = 'welcome' | 'table' | 'sql' | 'erd' | 'designer' | 'query-builder';
@@ -90,6 +91,21 @@ function App() {
   const [showPersistenceModal, setShowPersistenceModal] = useState(false);
   const [quotaModalShownForDb, setQuotaModalShownForDb] = useState<string | null>(null);
   const [persistenceModalShown, setPersistenceModalShown] = useState(false);
+  const gridEditActionsRef = useRef<GridEditActions | null>(null);
+  const dirtyStateRef = useRef<DirtyState>({
+    grid: false,
+    designer: false,
+    sql: false,
+    queryBuilder: false,
+    erd: false,
+  });
+  const handleSaveDirtyState = useCallback(async () => {
+    const state = dirtyStateRef.current;
+    if (state.grid && gridEditActionsRef.current?.hasEdit) {
+      return gridEditActionsRef.current.commit();
+    }
+    return false;
+  }, []);
   const {
     setDirty,
     checkUnsaved,
@@ -97,7 +113,25 @@ function App() {
     isPromptOpen,
     promptContext,
     canSave,
-  } = useUnsavedPrompt({ enableBeforeUnload: true });
+    dirtyState,
+  } = useUnsavedPrompt({ enableBeforeUnload: true, onSave: handleSaveDirtyState });
+
+  useEffect(() => {
+    dirtyStateRef.current = dirtyState;
+  }, [dirtyState]);
+
+  const handleUnsavedAction = useCallback(
+    (action: UnsavedPromptAction) => {
+      if (action === 'discard') {
+        const state = dirtyStateRef.current;
+        if (state.grid && gridEditActionsRef.current?.hasEdit) {
+          gridEditActionsRef.current.cancel();
+        }
+      }
+      handlePromptAction(action);
+    },
+    [handlePromptAction]
+  );
 
   const confirmNavigation = useCallback(
     async (action: string) => {
@@ -261,28 +295,32 @@ function App() {
   }, [storageStatus, persistenceModalShown]);
 
   // Handle creating a new database
-  const handleCreateDb = useCallback(async (name: string) => {
+  const handleCreateDb = useCallback(async (name: string): Promise<boolean> => {
     const ok = await confirmNavigation('create database');
-    if (!ok) return;
+    if (!ok) return false;
     try {
       await createDb(name);
       setNewDbDialogOpen(false);
+      return true;
     } catch (err) {
       console.error('Failed to create database:', err);
+      throw err;
     }
   }, [confirmNavigation]);
 
   // Handle opening a database (from recent list)
   const handleSelectDatabase = useCallback(async (dbName: string) => {
     if (dbName === activeDbId) {
-      return;
+      return true;
     }
     const ok = await confirmNavigation('switch database');
-    if (!ok) return;
+    if (!ok) return false;
     try {
       await openDb(dbName);
+      return true;
     } catch (err) {
       console.error('Failed to open database:', err);
+      return false;
     }
   }, [activeDbId, confirmNavigation]);
 
@@ -671,6 +709,10 @@ function App() {
     [setDirty]
   );
 
+  const handleGridEditActionsChange = useCallback((actions: GridEditActions | null) => {
+    gridEditActionsRef.current = actions;
+  }, []);
+
   const handleDesignerDirtyChange = useCallback(
     (dirty: boolean) => {
       setDirty('designer', dirty);
@@ -736,6 +778,7 @@ function App() {
             viewName={activeView.viewName}
             isReadOnly={isReadOnly}
             onEditStateChange={handleGridEditStateChange}
+            onEditActionsChange={handleGridEditActionsChange}
             onOpenSql={openSqlWithQuery}
           />
         );
@@ -767,14 +810,16 @@ function App() {
         );
       case 'sql':
         return (
-          <SqlEditorPanel
-            key={sqlEditorKey}
-            onExecute={handleExecuteQuery}
-            onCancel={handleCancelQuery}
-            history={history}
-            isReadOnly={isReadOnly}
-            initialValue={sqlInitialValue}
-          />
+          <Suspense fallback={lazyFallback}>
+            <SqlEditorPanel
+              key={sqlEditorKey}
+              onExecute={handleExecuteQuery}
+              onCancel={handleCancelQuery}
+              history={history}
+              isReadOnly={isReadOnly}
+              initialValue={sqlInitialValue}
+            />
+          </Suspense>
         );
       case 'welcome':
       default:
@@ -868,6 +913,7 @@ function App() {
                     ? 'bg-white text-navy-900 shadow-sm'
                     : 'text-navy-600 hover:text-navy-900'
                 }`}
+                data-testid="tab-sql"
               >
                 SQL
               </button>
@@ -878,6 +924,7 @@ function App() {
                     ? 'bg-white text-navy-900 shadow-sm'
                     : 'text-navy-600 hover:text-navy-900'
                 }`}
+                data-testid="tab-table"
               >
                 Table
               </button>
@@ -888,6 +935,7 @@ function App() {
                     ? 'bg-white text-navy-900 shadow-sm'
                     : 'text-navy-600 hover:text-navy-900'
                 }`}
+                data-testid="tab-designer"
               >
                 Designer
               </button>
@@ -898,6 +946,7 @@ function App() {
                     ? 'bg-white text-navy-900 shadow-sm'
                     : 'text-navy-600 hover:text-navy-900'
                 }`}
+                data-testid="tab-query-builder"
               >
                 Query Builder
               </button>
@@ -908,6 +957,7 @@ function App() {
                     ? 'bg-white text-navy-900 shadow-sm'
                     : 'text-navy-600 hover:text-navy-900'
                 }`}
+                data-testid="tab-erd"
               >
                 ERD
               </button>
@@ -957,6 +1007,7 @@ function App() {
           {/* Sidebar */}
           <Sidebar
             collapsed={sidebarCollapsed}
+            onOpenDatabase={handleSelectDatabase}
             onSelectTable={handleSelectTable}
             onSelectView={handleSelectView}
           />
@@ -976,7 +1027,7 @@ function App() {
         isOpen={isPromptOpen}
         context={promptContext}
         canSave={canSave}
-        onAction={handlePromptAction}
+        onAction={handleUnsavedAction}
       />
 
       <NewDatabaseDialog

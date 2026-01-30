@@ -41,6 +41,10 @@ import {
   handleDropColumn,
 } from './schema-modification';
 
+const IDB_VFS_VERSION = 6;
+const IDB_VFS_METADATA_STORE = 'metadata';
+const IDB_VFS_BLOCKS_STORE = 'blocks';
+
 /**
  * Tagged request with correlation ID from main thread
  */
@@ -166,6 +170,92 @@ async function resolveDbPath(
   return { path: dbName };
 }
 
+function toIdbVfsPath(name: string): string {
+  return new URL(name, 'file://').pathname;
+}
+
+async function openIdbVfsDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(IDB_VFS_NAME, IDB_VFS_VERSION);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(IDB_VFS_BLOCKS_STORE)) {
+        db.createObjectStore(IDB_VFS_BLOCKS_STORE, { keyPath: ['path', 'offset', 'version'] });
+      } else {
+        const tx = request.transaction;
+        const blocks = tx?.objectStore(IDB_VFS_BLOCKS_STORE);
+        if (blocks && blocks.indexNames.contains('version')) {
+          blocks.deleteIndex('version');
+        }
+      }
+      if (!db.objectStoreNames.contains(IDB_VFS_METADATA_STORE)) {
+        db.createObjectStore(IDB_VFS_METADATA_STORE, { keyPath: 'name' });
+      }
+    };
+  });
+}
+
+async function readIdbVfsDatabase(dbName: string): Promise<Uint8Array | null> {
+  const db = await openIdbVfsDatabase();
+  try {
+    const path = toIdbVfsPath(dbName);
+    const tx = db.transaction([IDB_VFS_METADATA_STORE, IDB_VFS_BLOCKS_STORE], 'readonly');
+    const metadata = tx.objectStore(IDB_VFS_METADATA_STORE);
+    const blocks = tx.objectStore(IDB_VFS_BLOCKS_STORE);
+
+    const meta = await new Promise<{ name: string; fileSize: number; version: number } | undefined>(
+      (resolve, reject) => {
+        const request = metadata.get(path);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      }
+    );
+
+    if (!meta) {
+      return null;
+    }
+
+    const fileSize = Math.max(0, meta.fileSize ?? 0);
+    const output = new Uint8Array(fileSize);
+
+    const range = IDBKeyRange.bound([path, -Infinity], [path, Infinity]);
+    const entries = await new Promise<{ path: string; offset: number; version: number; data: Uint8Array }[]>(
+      (resolve, reject) => {
+        const results: { path: string; offset: number; version: number; data: Uint8Array }[] = [];
+        const request = blocks.openCursor(range);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) {
+            resolve(results);
+            return;
+          }
+          results.push(cursor.value as { path: string; offset: number; version: number; data: Uint8Array });
+          cursor.continue();
+        };
+      }
+    );
+
+    for (const block of entries) {
+      if (block.version !== meta.version) {
+        continue;
+      }
+      const start = Math.max(0, -block.offset);
+      if (start >= fileSize) {
+        continue;
+      }
+      const sliceLength = Math.min(block.data.byteLength, fileSize - start);
+      output.set(block.data.subarray(0, sliceLength), start);
+    }
+
+    return output;
+  } finally {
+    db.close();
+  }
+}
+
 /**
  * Export a database as a Blob based on storage mode
  */
@@ -231,7 +321,12 @@ async function exportDatabaseBlob(dbName: string): Promise<Blob> {
     }
   }
 
-  // IDB mode: rely on snapshot storage
+  // IDB mode: read from IDB VFS, fall back to legacy snapshot storage
+  const idbBytes = await readIdbVfsDatabase(entry.name);
+  if (idbBytes) {
+    return new Blob([idbBytes.buffer.slice(0)], { type: 'application/x-sqlite3' });
+  }
+
   const storage = getIDBStorage();
   try {
     await storage.flush();

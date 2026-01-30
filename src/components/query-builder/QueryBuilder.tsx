@@ -204,9 +204,15 @@ export function QueryBuilder({
 
       // Calculate drop position relative to canvas
       const reactFlowBounds = event.currentTarget.getBoundingClientRect()
-      const position = {
+      const basePosition = {
         x: event.clientX - reactFlowBounds.left - 100, // Center the node
         y: event.clientY - reactFlowBounds.top - 50,
+      }
+      const offsetX = (nodes.length % 3) * 260
+      const offsetY = Math.floor(nodes.length / 3) * 200
+      const position = {
+        x: basePosition.x + offsetX,
+        y: basePosition.y + offsetY,
       }
 
       // Generate table alias (t1, t2, etc.)
@@ -493,6 +499,7 @@ export function QueryBuilder({
             onEdgesChange={onEdgesChange}
             onConnect={handleConnect}
             isValidConnection={isValidConnection}
+            connectOnClick
             fitView
             fitViewOptions={{ padding: 0.2 }}
             minZoom={0.5}

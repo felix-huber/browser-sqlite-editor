@@ -32,7 +32,7 @@ export interface NewDatabaseDialogProps {
   /** Callback when dialog should close */
   onClose: () => void;
   /** Callback when database should be created */
-  onCreate: (name: string) => void;
+  onCreate: (name: string) => boolean | Promise<boolean>;
   /** List of existing database names (for uniqueness check) */
   existingNames?: string[];
   /** Whether in read-only mode */
@@ -107,6 +107,8 @@ export function NewDatabaseDialog({
   const [name, setName] = useState('');
   const [validationResult, setValidationResult] = useState<ValidationResult>({ valid: false });
   const [hasTyped, setHasTyped] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
@@ -123,6 +125,8 @@ export function NewDatabaseDialog({
       setName('');
       setValidationResult({ valid: false });
       setHasTyped(false);
+      setIsSubmitting(false);
+      setSubmitError(null);
       // Focus input after dialog opens
       setTimeout(() => {
         inputRef.current?.focus();
@@ -154,28 +158,43 @@ export function NewDatabaseDialog({
     if (!hasTyped) {
       setHasTyped(true);
     }
-  }, [hasTyped]);
+    if (submitError) {
+      setSubmitError(null);
+    }
+  }, [hasTyped, submitError]);
 
   // Handle create action
   const handleCreate = useCallback(() => {
     const trimmed = name.trim();
     const result = validateDatabaseName(trimmed, existingNames);
     if (result.valid) {
-      onCreate(trimmed);
-      onClose();
+      setIsSubmitting(true);
+      setSubmitError(null);
+      Promise.resolve(onCreate(trimmed))
+        .then((success) => {
+          if (success) {
+            onClose();
+          }
+        })
+        .catch((err) => {
+          setSubmitError(err instanceof Error ? err.message : 'Failed to create database');
+        })
+        .finally(() => {
+          setIsSubmitting(false);
+        });
     }
   }, [name, existingNames, onCreate, onClose]);
 
   // Handle Enter key
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && validationResult.valid) {
+    if (e.key === 'Enter' && validationResult.valid && !isSubmitting) {
       e.preventDefault();
       handleCreate();
     } else if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
     }
-  }, [validationResult.valid, handleCreate, onClose]);
+  }, [validationResult.valid, isSubmitting, handleCreate, onClose]);
 
   // Handle backdrop click
   const handleBackdropClick = useCallback((e: React.MouseEvent) => {
@@ -190,7 +209,7 @@ export function NewDatabaseDialog({
   }
 
   const showError = hasTyped && !validationResult.valid && validationResult.error;
-  const isCreateDisabled = !validationResult.valid;
+  const isCreateDisabled = !validationResult.valid || isSubmitting;
 
   return (
     <div
@@ -222,23 +241,24 @@ export function NewDatabaseDialog({
           >
             Database Name
           </label>
-          <input
-            ref={inputRef}
-            id="database-name-input"
-            type="text"
-            value={name}
-            onChange={handleNameChange}
-            onKeyDown={handleKeyDown}
-            placeholder="Enter database name"
-            className={`w-full px-3 py-2 border rounded-lg text-navy-900 placeholder-navy-400 focus:outline-none focus:ring-2 focus:ring-navy-600 focus:border-transparent transition-colors ${
-              showError
-                ? 'border-red-500 focus:ring-red-500'
-                : 'border-navy-300 hover:border-navy-400'
-            }`}
-            data-testid="database-name-input"
-            aria-invalid={showError ? 'true' : 'false'}
-            aria-describedby={showError ? 'name-error' : undefined}
-          />
+        <input
+          ref={inputRef}
+          id="database-name-input"
+          type="text"
+          value={name}
+          onChange={handleNameChange}
+          onKeyDown={handleKeyDown}
+          placeholder="Enter database name"
+          disabled={isSubmitting}
+          className={`w-full px-3 py-2 border rounded-lg text-navy-900 placeholder-navy-400 focus:outline-none focus:ring-2 focus:ring-navy-600 focus:border-transparent transition-colors ${
+            showError
+              ? 'border-red-500 focus:ring-red-500'
+              : 'border-navy-300 hover:border-navy-400'
+          } ${isSubmitting ? 'bg-navy-50 text-navy-500' : ''}`}
+          data-testid="database-name-input"
+          aria-invalid={showError ? 'true' : 'false'}
+          aria-describedby={showError ? 'name-error' : undefined}
+        />
           {/* Error Message */}
           {showError && (
             <p
@@ -250,6 +270,15 @@ export function NewDatabaseDialog({
               {validationResult.error}
             </p>
           )}
+          {submitError && (
+            <p
+              className="mt-1 text-sm text-red-600"
+              data-testid="create-error"
+              role="alert"
+            >
+              {submitError}
+            </p>
+          )}
         </div>
 
         {/* Actions */}
@@ -257,6 +286,7 @@ export function NewDatabaseDialog({
           <button
             type="button"
             onClick={onClose}
+            disabled={isSubmitting}
             className="px-4 py-2 text-navy-700 font-medium rounded-lg border border-navy-300 hover:bg-navy-50 focus:outline-none focus:ring-2 focus:ring-navy-600 focus:ring-offset-2 transition-colors"
             data-testid="cancel-button"
           >
@@ -273,7 +303,7 @@ export function NewDatabaseDialog({
             }`}
             data-testid="create-button"
           >
-            Create
+            {isSubmitting ? 'Creating...' : 'Create'}
           </button>
         </div>
       </div>
