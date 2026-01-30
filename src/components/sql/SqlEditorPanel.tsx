@@ -1,9 +1,30 @@
-import { useState, useCallback, useRef, useMemo } from 'react'
-import { CodeMirrorEditor } from './CodeMirrorEditor'
-import type { CodeMirrorEditorHandle, ErrorLocation } from './CodeMirrorEditor'
+import {
+  useState,
+  useCallback,
+  useRef,
+  useMemo,
+  Suspense,
+  lazy,
+  type ForwardRefExoticComponent,
+  type RefAttributes,
+} from 'react'
+import type {
+  CodeMirrorEditorHandle,
+  CodeMirrorEditorProps,
+  ErrorLocation,
+} from './CodeMirrorEditor'
 import { SqlErrorPanel, parseError } from './SqlErrorPanel'
 import { QueryHistoryDropdown } from './QueryHistoryDropdown'
 import type { QueryResult, SqlError, QueryHistoryItem } from '../../types'
+
+const LazyCodeMirrorEditor = lazy(
+  () =>
+    import('./CodeMirrorEditor') as Promise<{
+      default: ForwardRefExoticComponent<
+        CodeMirrorEditorProps & RefAttributes<CodeMirrorEditorHandle>
+      >
+    }>
+)
 
 /**
  * Check if a SQL statement is read-only.
@@ -462,14 +483,22 @@ export function SqlEditorPanel({
 
       {/* Editor area */}
       <div ref={editorContainerRef} className="flex-1 min-h-0 overflow-hidden">
-        <CodeMirrorEditor
-          ref={editorRef}
-          value={sql}
-          onChange={setSql}
-          className="h-full"
-          placeholder="Enter SQL query..."
-          errorLocations={errorLocations}
-        />
+        <Suspense
+          fallback={
+            <div className="h-full flex items-center justify-center text-navy-400">
+              Loading editor…
+            </div>
+          }
+        >
+          <LazyCodeMirrorEditor
+            ref={editorRef}
+            value={sql}
+            onChange={setSql}
+            className="h-full"
+            placeholder="Enter SQL query..."
+            errorLocations={errorLocations}
+          />
+        </Suspense>
       </div>
 
       {/* Results area */}

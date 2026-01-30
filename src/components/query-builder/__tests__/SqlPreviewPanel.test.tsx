@@ -4,20 +4,6 @@ import userEvent from '@testing-library/user-event'
 import { SqlPreviewPanel } from '../SqlPreviewPanel'
 import type { QueryResult } from '../../../types'
 
-// Mock CodeMirror since it has complex DOM requirements
-vi.mock('../../sql/CodeMirrorEditor', () => ({
-  CodeMirrorEditor: ({ value, readOnly, className }: { value: string; readOnly?: boolean; className?: string }) => (
-    <div
-      data-testid="codemirror-editor"
-      data-value={value}
-      data-readonly={readOnly}
-      className={className}
-    >
-      {value}
-    </div>
-  ),
-}))
-
 // Mock SqlResultsDisplay
 vi.mock('../../sql/SqlResultsDisplay', () => ({
   SqlResultsDisplay: ({ results, totalExecutionTime }: { results: unknown[]; totalExecutionTime?: number }) => (
@@ -70,14 +56,13 @@ describe('SqlPreviewPanel', () => {
     ).toBeInTheDocument()
   })
 
-  it('displays SQL in CodeMirror editor', () => {
+  it('displays SQL preview text', () => {
     const sql = 'SELECT * FROM users'
     render(<SqlPreviewPanel sql={sql} />)
 
-    const editor = screen.getByTestId('codemirror-editor')
-    expect(editor).toBeInTheDocument()
-    expect(editor).toHaveAttribute('data-value', sql)
-    expect(editor).toHaveAttribute('data-readonly', 'true')
+    const preview = screen.getByTestId('sql-preview-text')
+    expect(preview).toBeInTheDocument()
+    expect(preview).toHaveTextContent(sql)
   })
 
   it('shows generating indicator when isGenerating is true', () => {

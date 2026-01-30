@@ -9,6 +9,10 @@ import type {
   WorkerRequest,
   WorkerResponse,
   WorkerErrorCode,
+  TableDefinitionInput,
+  AlterTableActionInput,
+  ColumnRenameInput,
+  SchemaModificationErrorInfo,
   QueryResult,
   SchemaInfo,
   TableInfo,
@@ -78,6 +82,7 @@ interface PendingRequest<T> {
   resolve: (value: T) => void;
   reject: (error: Error) => void;
   timeoutId: ReturnType<typeof setTimeout>;
+  requestType: WorkerRequest['type'];
 }
 
 // =============================================================================
@@ -144,6 +149,10 @@ export class WorkerClient {
       this.handleMessage(event.data);
     };
 
+    this.worker.onmessageerror = () => {
+      this.handleMessageError();
+    };
+
     this.worker.onerror = (event: ErrorEvent) => {
       this.handleError(event);
     };
@@ -183,12 +192,40 @@ export class WorkerClient {
    * Handle worker errors
    */
   private handleError(event: ErrorEvent): void {
+    if (this.isTerminated) return;
+
+    this.isTerminated = true;
     // Reject all pending requests
     const error = new WorkerCrashError(event.message || 'Worker error');
     for (const [id, pending] of this.pendingRequests) {
       clearTimeout(pending.timeoutId);
       this.pendingRequests.delete(id);
       pending.reject(error);
+    }
+
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
+  }
+
+  /**
+   * Handle worker message serialization errors
+   */
+  private handleMessageError(): void {
+    if (this.isTerminated) return;
+
+    this.isTerminated = true;
+    const error = new WorkerCrashError('Worker message error');
+    for (const [id, pending] of this.pendingRequests) {
+      clearTimeout(pending.timeoutId);
+      this.pendingRequests.delete(id);
+      pending.reject(error);
+    }
+
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
     }
   }
 
@@ -209,13 +246,19 @@ export class WorkerClient {
     return new Promise<T>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.pendingRequests.delete(id);
-        reject(new WorkerTimeoutError());
+        try {
+          this.worker?.postMessage({ id: 0, request: { type: 'cancel' } });
+        } catch {
+          // Best-effort cancel
+        }
+        reject(new WorkerTimeoutError(`Worker request timed out: ${req.type}`));
       }, timeoutMs);
 
       this.pendingRequests.set(id, {
         resolve: resolve as (value: unknown) => void,
         reject,
         timeoutId,
+        requestType: req.type,
       });
 
       const taggedRequest: TaggedRequest = { id, request: req };
@@ -258,6 +301,23 @@ export class WorkerClient {
       params,
     });
     return { rowsAffected: (response.data as { rowsAffected?: number } | undefined)?.rowsAffected };
+  }
+
+  /**
+   * Helper for schema modification requests that return schemaModificationResult
+   */
+  private async requestSchemaModification(req: WorkerRequest): Promise<void> {
+    const response = await this.request<{
+      type: 'schemaModificationResult';
+      success: boolean;
+      error?: SchemaModificationErrorInfo;
+    }>(req);
+
+    if (!response.success) {
+      const message = response.error?.message ?? 'Schema modification failed';
+      const code = response.error?.code ?? 'UNKNOWN';
+      throw new WorkerError(message, code);
+    }
   }
 
   /**
@@ -426,6 +486,60 @@ export class WorkerClient {
       throw new WorkerError('Export failed: no data returned', 'UNKNOWN');
     }
     return response.data;
+  }
+
+  /**
+   * Create a table
+   */
+  async createTable(def: TableDefinitionInput, isReadOnly = false): Promise<void> {
+    await this.requestSchemaModification({ type: 'createTable', def, isReadOnly });
+  }
+
+  /**
+   * Alter an existing table
+   */
+  async alterTable(
+    table: string,
+    action: AlterTableActionInput,
+    isReadOnly = false
+  ): Promise<void> {
+    await this.requestSchemaModification({ type: 'alterTable', table, action, isReadOnly });
+  }
+
+  /**
+   * Drop a table
+   */
+  async dropTable(table: string, isReadOnly = false): Promise<void> {
+    await this.requestSchemaModification({ type: 'dropTable', table, isReadOnly });
+  }
+
+  /**
+   * Drop a column
+   */
+  async dropColumn(table: string, column: string, isReadOnly = false): Promise<void> {
+    await this.requestSchemaModification({ type: 'dropColumn', table, column, isReadOnly });
+  }
+
+  /**
+   * Rebuild a table with a new schema
+   */
+  async rebuildTable(
+    payload: {
+      table: string;
+      newCreateSql: string;
+      newColumns: string[];
+      columnRenames?: ColumnRenameInput[];
+    },
+    isReadOnly = false
+  ): Promise<void> {
+    await this.requestSchemaModification({
+      type: 'rebuildTable',
+      table: payload.table,
+      newCreateSql: payload.newCreateSql,
+      newColumns: payload.newColumns,
+      columnRenames: payload.columnRenames,
+      isReadOnly,
+    });
   }
 
   /**

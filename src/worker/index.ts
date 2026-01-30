@@ -8,6 +8,13 @@
 import type { WorkerRequest, WorkerResponse, WorkerErrorCode } from '../types';
 import { getEngine } from '../lib/db-engine';
 import { getSchemaInfo, getTableInfo, getAllForeignKeys } from '../lib/schema';
+import { checkOPFSAvailability, databaseExistsInOPFS } from '../lib/opfs-vfs';
+import {
+  executeRebuildPlan,
+  extractTableDependents,
+  generateRebuildPlanWithColumnMapping,
+  type SqliteMasterObject,
+} from '../lib/rebuild';
 import { registerQuery, requestCancellation } from './query-cancel';
 import {
   isStorageError,
@@ -130,14 +137,26 @@ function createQueryExecutor() {
  * Resolve database path based on storage mode
  */
 async function resolveDbPath(
-  dbName: string
+  dbName: string,
+  options: { allowCreate?: boolean } = {}
 ): Promise<{ path: string; vfsName?: string }> {
   const registry = getRegistry();
   if (!registry.isInitialized()) {
     await registry.init();
   }
   const entry = registry.getDatabaseByName(dbName);
-  const storageMode = entry?.storageType ?? registry.getStorageMode();
+  let storageMode = entry?.storageType ?? registry.getStorageMode();
+  if (storageMode === 'opfs') {
+    const availability = await checkOPFSAvailability();
+    if (!availability.available) {
+      storageMode = 'idb';
+    } else if (!options.allowCreate) {
+      const exists = await databaseExistsInOPFS(toFilename(dbName));
+      if (!exists) {
+        storageMode = 'idb';
+      }
+    }
+  }
   if (storageMode === 'opfs') {
     return { path: getOPFSPath(toFilename(dbName)), vfsName: OPFS_VFS_NAME };
   }
@@ -334,7 +353,9 @@ async function handleMessage(event: WorkerMessageEvent): Promise<void> {
           await engine.initialize();
         }
         const { path, vfsName } = await resolveDbPath(request.dbName);
-        await engine.open(path, vfsName, { readOnly: request.readOnly ?? false });
+        const readOnly = request.readOnly ?? false;
+        const createIfMissing = vfsName === OPFS_VFS_NAME && !readOnly;
+        await engine.open(path, vfsName, { readOnly, createIfMissing });
         postResponse({ type: 'lockStatus', isWriter: !(request.readOnly ?? false) }, id);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -369,7 +390,7 @@ async function handleMessage(event: WorkerMessageEvent): Promise<void> {
           await engine.initialize();
         }
         // Open creates the database if it doesn't exist
-        const { path, vfsName } = await resolveDbPath(request.name);
+        const { path, vfsName } = await resolveDbPath(request.name, { allowCreate: true });
         await engine.open(path, vfsName, { createIfMissing: true });
         // Add to registry
         const registry = getRegistry();
@@ -815,6 +836,107 @@ async function handleMessage(event: WorkerMessageEvent): Promise<void> {
           error: {
             code: 'UNKNOWN',
             message: `Drop column failed: ${message}`,
+          },
+        }, id);
+      }
+      break;
+
+    case 'rebuildTable':
+      try {
+        if (request.isReadOnly) {
+          postResponse({
+            type: 'schemaModificationResult',
+            success: false,
+            error: {
+              code: 'READ_ONLY',
+              message: 'Cannot rebuild table in read-only mode',
+            },
+          }, id);
+          break;
+        }
+
+        const engine = getEngine();
+        if (!engine.isReady()) {
+          throw new Error('No database open. Please open a database first.');
+        }
+
+        const queryExecutor = createQueryExecutor();
+        const tableInfo = await getTableInfo(queryExecutor, request.table);
+
+        const masterResult = await engine.query(
+          `SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master`
+        );
+
+        const masterRows: SqliteMasterObject[] = masterResult.rows.map((row) => ({
+          type: row[0] as SqliteMasterObject['type'],
+          name: row[1] as string,
+          tblName: row[2] as string,
+          rootpage: typeof row[3] === 'number' ? row[3] as number : 0,
+          sql: (row[4] as string | null) ?? null,
+        }));
+
+        const allForeignKeys = await getAllForeignKeys(queryExecutor);
+        const foreignKeyMap = new Map<string, typeof allForeignKeys[number][]>();
+        for (const fk of allForeignKeys) {
+          const list = foreignKeyMap.get(fk.childTable) ?? [];
+          list.push(fk);
+          foreignKeyMap.set(fk.childTable, list);
+        }
+
+        const dependents = extractTableDependents(request.table, masterRows, foreignKeyMap);
+        const oldColumns = tableInfo.columns.map((col) => col.name);
+        const newColumns = request.newColumns.length > 0 ? request.newColumns : oldColumns;
+        const renameMap =
+          request.columnRenames && request.columnRenames.length > 0
+            ? new Map(request.columnRenames.map((c) => [c.oldName, c.newName]))
+            : undefined;
+
+        const plan = generateRebuildPlanWithColumnMapping(
+          request.table,
+          request.newCreateSql,
+          dependents,
+          oldColumns,
+          newColumns,
+          renameMap
+        );
+
+        const result = await executeRebuildPlan(engine, plan, {
+          expectedColumns: newColumns,
+        });
+
+        if (!result.success) {
+          const message = result.error ?? 'Table rebuild failed';
+          const lowerMessage = message.toLowerCase();
+          const code: WorkerErrorCode =
+            lowerMessage.includes('foreign key') || lowerMessage.includes('constraint')
+              ? 'CONSTRAINT_VIOLATION'
+              : lowerMessage.includes('not found')
+                ? 'NOT_FOUND'
+                : 'UNKNOWN';
+
+          postResponse({
+            type: 'schemaModificationResult',
+            success: false,
+            error: {
+              code,
+              message,
+              details: result.verificationFailures
+                ? result.verificationFailures.map((failure) => failure.message).join('; ')
+                : undefined,
+            },
+          }, id);
+          break;
+        }
+
+        postResponse({ type: 'schemaModificationResult', success: true }, id);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        postResponse({
+          type: 'schemaModificationResult',
+          success: false,
+          error: {
+            code: 'UNKNOWN',
+            message: `Rebuild table failed: ${message}`,
           },
         }, id);
       }

@@ -18,6 +18,7 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { ColumnRow, SQLITE_RESERVED_WORDS } from './ColumnRow';
+import { extractGeneratedExpressionFromCreateSql } from '../../lib/generated-columns';
 import type { DesignerColumnDraft, TableInfo } from '../../types';
 
 // Re-export SQLITE_RESERVED_WORDS for backwards compatibility
@@ -52,6 +53,8 @@ export interface TableDesignerProps {
   onCancel?: () => void;
   /** Called when dirty state changes */
   onDirtyChange?: (isDirty: boolean) => void;
+  /** Called when table name or columns change (for preview/parent state) */
+  onDraftChange?: (tableName: string, columns: DesignerColumnDraft[]) => void;
 }
 
 export interface TableNameValidation {
@@ -95,7 +98,10 @@ function tableInfoToColumns(tableInfo: TableInfo): DesignerColumnDraft[] {
     isExisting: true,
     originalName: col.name,
     generated: col.generated,
-    generatedExpression: null, // Would need to parse CREATE TABLE statement to get this
+    generatedExpression:
+      col.generated && tableInfo.createSql
+        ? extractGeneratedExpressionFromCreateSql(tableInfo.createSql, col.name)
+        : null,
   }));
 }
 
@@ -207,6 +213,7 @@ export function TableDesigner({
   onSubmit,
   onCancel,
   onDirtyChange,
+  onDraftChange,
 }: TableDesignerProps) {
   // Form state
   const [tableName, setTableName] = useState('');
@@ -272,6 +279,11 @@ export function TableDesigner({
     setIsDirty(dirty);
     onDirtyChange?.(dirty);
   }, [tableName, columns, onDirtyChange]);
+
+  // Notify parent of draft changes for live preview
+  useEffect(() => {
+    onDraftChange?.(tableName, columns);
+  }, [tableName, columns, onDraftChange]);
 
   // Debounced table name validation
   useEffect(() => {

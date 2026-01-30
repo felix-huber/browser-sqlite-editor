@@ -52,7 +52,15 @@ export type WorkerRequest =
       isReadOnly: boolean;
     }
   | { type: 'dropTable'; table: string; isReadOnly: boolean }
-  | { type: 'dropColumn'; table: string; column: string; isReadOnly: boolean };
+  | { type: 'dropColumn'; table: string; column: string; isReadOnly: boolean }
+  | {
+      type: 'rebuildTable';
+      table: string;
+      newCreateSql: string;
+      newColumns: string[];
+      columnRenames?: ColumnRenameInput[];
+      isReadOnly: boolean;
+    };
 
 /**
  * Table definition input for createTable worker request
@@ -79,6 +87,14 @@ export interface ColumnDefinitionInput {
   unique?: boolean;
   generatedAs?: string;
   generatedType?: 'stored' | 'virtual';
+}
+
+/**
+ * Column rename input for rebuild operations
+ */
+export interface ColumnRenameInput {
+  oldName: string;
+  newName: string;
 }
 
 /**

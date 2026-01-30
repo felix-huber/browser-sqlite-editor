@@ -398,24 +398,40 @@ export class IDBStorage {
    * @returns The stored blob, or null if not found
    */
   async load(name: string): Promise<Blob | null> {
-    return withRetry(async () => {
-      const db = await openDatabase();
+    try {
+      const blob = await withRetry(async () => {
+        const db = await openDatabase();
 
-      try {
-        const tx = db.transaction(IDB_STORE_NAME, 'readonly');
-        const store = tx.objectStore(IDB_STORE_NAME);
+        try {
+          const tx = db.transaction(IDB_STORE_NAME, 'readonly');
+          const store = tx.objectStore(IDB_STORE_NAME);
 
-        const result = await new Promise<StoredDatabase | undefined>((resolve, reject) => {
-          const request = store.get(name);
-          request.onsuccess = () => resolve(request.result as StoredDatabase | undefined);
-          request.onerror = () => reject(request.error);
-        });
+          const result = await new Promise<StoredDatabase | undefined>((resolve, reject) => {
+            const request = store.get(name);
+            request.onsuccess = () => resolve(request.result as StoredDatabase | undefined);
+            request.onerror = () => reject(request.error);
+          });
 
-        return result?.blob ?? null;
-      } finally {
-        db.close();
+          return result?.blob ?? null;
+        } finally {
+          db.close();
+        }
+      }, 'load');
+
+      if (!blob) return null;
+      if (!(blob instanceof Blob)) {
+        return null;
       }
-    }, 'load');
+      return blob;
+    } catch (err) {
+      if (err && typeof err === 'object' && 'code' in err) {
+        const code = (err as PersistenceError).code;
+        if (code === 'NOT_FOUND') {
+          return null;
+        }
+      }
+      throw err;
+    }
   }
 
   /**

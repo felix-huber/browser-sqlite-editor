@@ -1604,7 +1604,12 @@ export const DataGrid = memo(function DataGrid({
 
   if (data.length === 0) {
     return (
-      <div ref={gridContainerRef} className={`flex flex-col ${className}`} style={{ height }}>
+    <div
+      ref={gridContainerRef}
+      className={`flex flex-col ${className}`}
+      style={{ height }}
+      data-testid="data-grid"
+    >
         {/* Toolbar (even when empty, to allow adding rows) */}
         {(onAddRow || onDeleteRows) && (
           <div
@@ -1677,6 +1682,7 @@ export const DataGrid = memo(function DataGrid({
       ref={gridContainerRef}
       className={`flex flex-col ${className}`}
       style={{ height }}
+      data-testid="data-grid"
       role="grid"
       aria-label={tableInfo?.name ? `Data grid for ${tableInfo.name} table` : 'Data grid'}
       aria-rowcount={data.length + 1} // +1 for header row

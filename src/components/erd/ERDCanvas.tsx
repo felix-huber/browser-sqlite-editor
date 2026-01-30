@@ -54,6 +54,7 @@ export type RelationshipEdge = Edge<RelationshipEdgeData>
  * Existing FK info for duplicate checking
  */
 export interface ExistingFKInfo {
+  childTable?: string
   childColumn: string
   parentTable: string
   parentColumn: string

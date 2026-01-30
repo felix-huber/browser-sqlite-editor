@@ -356,7 +356,7 @@ export function validateForeignKey(
   pendingFK: PendingFKInfo,
   childTableInfo: TableInfo,
   parentTableInfo: TableInfo,
-  existingFKs: Array<{ childColumn: string; parentTable: string; parentColumn: string }>
+  existingFKs: Array<{ childColumn: string; parentTable: string; parentColumn: string; childTable?: string }>
 ): ValidationError[] {
   const errors: ValidationError[] = []
 
@@ -391,12 +391,17 @@ export function validateForeignKey(
   }
 
   // 3. Check for duplicate FK
-  const isDuplicate = existingFKs.some(
-    (fk) =>
+  const isDuplicate = existingFKs.some((fk) => {
+    const sameChildTable =
+      !fk.childTable ||
+      fk.childTable.toLowerCase() === pendingFK.childTable.toLowerCase()
+    return (
+      sameChildTable &&
       fk.childColumn.toLowerCase() === pendingFK.childColumn.toLowerCase() &&
       fk.parentTable.toLowerCase() === pendingFK.parentTable.toLowerCase() &&
       fk.parentColumn.toLowerCase() === pendingFK.parentColumn.toLowerCase()
-  )
+    )
+  })
   if (isDuplicate) {
     errors.push({
       type: 'DUPLICATE_FK',

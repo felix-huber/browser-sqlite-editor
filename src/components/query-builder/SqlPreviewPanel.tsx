@@ -12,7 +12,6 @@
  */
 
 import { memo, useState, useCallback, useMemo, useRef } from 'react'
-import { CodeMirrorEditor } from '../sql/CodeMirrorEditor'
 import { SqlResultsDisplay, type StatementResult } from '../sql/SqlResultsDisplay'
 import type { QueryResult, SqlError } from '../../types'
 
@@ -402,12 +401,12 @@ function SqlPreviewPanelComponent({
             Add tables and configure your query to see the generated SQL
           </div>
         ) : (
-          <CodeMirrorEditor
-            value={sql}
-            readOnly={true}
-            lineNumbers={true}
-            className="h-full"
-          />
+          <div
+            className="h-full overflow-auto bg-navy-900 text-navy-100 font-mono text-xs p-3"
+            data-testid="sql-preview-text"
+          >
+            <pre className="whitespace-pre">{sql}</pre>
+          </div>
         )}
       </div>
 

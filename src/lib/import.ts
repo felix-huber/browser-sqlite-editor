@@ -4,10 +4,13 @@
  * progress tracking, and full rollback on error.
  */
 
-import type { ColumnDef as CSVColumnDef } from './csv';
-import type { ColumnDef as JSONColumnDef } from './json';
+export type ColumnType = 'INTEGER' | 'REAL' | 'TEXT' | 'BLOB' | 'NULL';
 
-export type ColumnDef = CSVColumnDef | JSONColumnDef;
+export interface ColumnDef {
+  name: string;
+  type: ColumnType;
+  originalName?: string;
+}
 
 export interface ImportProgress {
   imported: number;

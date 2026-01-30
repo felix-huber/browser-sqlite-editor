@@ -1,4 +1,4 @@
-import { useCallback, useState, useMemo, type DragEvent } from 'react'
+import { useCallback, useState, useMemo, useEffect, type DragEvent } from 'react'
 import {
   ReactFlow,
   Controls,
@@ -12,7 +12,7 @@ import {
   type IsValidConnection,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { tableBoxNodeTypes, type TableBoxData, type TableBoxNodeType } from './TableBox'
+import { tableBoxNodeTypes, type TableBoxData, type TableBoxNodeType, type TableBoxColumnData } from './TableBox'
 import { joinEdgeTypes, type JoinEdgeType, type JoinType } from './JoinEdge'
 
 /** Maximum number of tables allowed on canvas */
@@ -48,16 +48,26 @@ export interface JoinConfig {
 interface QueryBuilderProps {
   /** List of available table names from the database schema */
   tables: string[]
+  /** Column metadata for tables (table name -> columns) */
+  tableColumns?: Record<string, TableBoxColumnData[]>
   /** Callback when tables on canvas change */
   onTablesChange?: (tableNames: string[]) => void
   /** Callback when joins change */
   onJoinsChange?: (joins: JoinConfig[]) => void
+  /** Callback when nodes/edges change */
+  onStateChange?: (nodes: TableBoxNodeType[], edges: JoinEdgeType[]) => void
 }
 
 /**
  * Visual query builder component with table list panel and React Flow canvas
  */
-export function QueryBuilder({ tables, onTablesChange, onJoinsChange }: QueryBuilderProps) {
+export function QueryBuilder({
+  tables,
+  tableColumns,
+  onTablesChange,
+  onJoinsChange,
+  onStateChange,
+}: QueryBuilderProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<TableBoxNodeType>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<JoinEdgeType>([])
   const [searchQuery, setSearchQuery] = useState('')
@@ -82,54 +92,23 @@ export function QueryBuilder({ tables, onTablesChange, onJoinsChange }: QueryBui
     event.dataTransfer.effectAllowed = 'copy'
   }, [])
 
-  // Handle drop on canvas
-  const handleDrop = useCallback(
-    (event: DragEvent<HTMLDivElement>) => {
-      event.preventDefault()
-
-      const tableName = event.dataTransfer.getData('application/query-builder-table')
-      if (!tableName) return
-
-      // Check if table already exists on canvas
-      if (tablesOnCanvas.includes(tableName)) return
-
-      // Check table limit
-      if (nodes.length >= MAX_TABLES) {
-        setShowLimitWarning(true)
-        setTimeout(() => setShowLimitWarning(false), 3000)
-        return
-      }
-
-      // Calculate drop position relative to canvas
-      const reactFlowBounds = event.currentTarget.getBoundingClientRect()
-      const position = {
-        x: event.clientX - reactFlowBounds.left - 100, // Center the node
-        y: event.clientY - reactFlowBounds.top - 50,
-      }
-
-      // Generate table alias (t1, t2, etc.)
-      const existingCount = nodes.length
-      const alias = `t${existingCount + 1}`
-
-      const newNode: TableBoxNodeType = {
-        id: `table-${tableName}-${Date.now()}`,
-        type: 'tableBox',
-        position,
-        data: {
-          tableName,
-          alias,
-          columns: [], // Will be populated when connected to schema
-          selectedColumns: [],
-        },
-      }
-
-      setNodes((nds) => {
-        const updated = [...nds, newNode]
-        onTablesChange?.(updated.map((n) => n.data.tableName))
-        return updated
-      })
+  const handleSelectionChange = useCallback(
+    (tableName: string, selectedColumns: string[]) => {
+      setNodes((nds) =>
+        nds.map((node) =>
+          node.data.tableName === tableName
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  selectedColumns,
+                },
+              }
+            : node
+        )
+      )
     },
-    [nodes.length, tablesOnCanvas, setNodes, onTablesChange]
+    [setNodes]
   )
 
   // Handle drag over (required for drop to work)
@@ -180,6 +159,110 @@ export function QueryBuilder({ tables, onTablesChange, onJoinsChange }: QueryBui
     },
     [onJoinsChange, getTableNameFromNode]
   )
+
+  const handleRemoveTable = useCallback(
+    (tableName: string) => {
+      let removedNodeIds: Set<string> | null = null
+
+      setNodes((nds) => {
+        const toRemove = nds.filter((node) => node.data.tableName === tableName)
+        removedNodeIds = new Set(toRemove.map((node) => node.id))
+        const updated = nds.filter((node) => node.data.tableName !== tableName)
+        onTablesChange?.(updated.map((n) => n.data.tableName))
+        return updated
+      })
+
+      setEdges((eds) => {
+        if (!removedNodeIds || removedNodeIds.size === 0) return eds
+        const updated = eds.filter(
+          (edge) => !removedNodeIds!.has(edge.source) && !removedNodeIds!.has(edge.target)
+        )
+        notifyJoinsChange(updated)
+        return updated
+      })
+    },
+    [setNodes, setEdges, onTablesChange, notifyJoinsChange]
+  )
+
+  // Handle drop on canvas
+  const handleDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      event.preventDefault()
+
+      const tableName = event.dataTransfer.getData('application/query-builder-table')
+      if (!tableName) return
+
+      // Check if table already exists on canvas
+      if (tablesOnCanvas.includes(tableName)) return
+
+      // Check table limit
+      if (nodes.length >= MAX_TABLES) {
+        setShowLimitWarning(true)
+        setTimeout(() => setShowLimitWarning(false), 3000)
+        return
+      }
+
+      // Calculate drop position relative to canvas
+      const reactFlowBounds = event.currentTarget.getBoundingClientRect()
+      const position = {
+        x: event.clientX - reactFlowBounds.left - 100, // Center the node
+        y: event.clientY - reactFlowBounds.top - 50,
+      }
+
+      // Generate table alias (t1, t2, etc.)
+      const existingCount = nodes.length
+      const alias = `t${existingCount + 1}`
+
+      const newNode: TableBoxNodeType = {
+        id: `table-${tableName}-${Date.now()}`,
+        type: 'tableBox',
+        position,
+        data: {
+          tableName,
+          alias,
+          columns: tableColumns?.[tableName] ?? [], // Populate if available
+          selectedColumns: [],
+          onSelectionChange: handleSelectionChange,
+          onRemove: handleRemoveTable,
+        },
+      }
+
+      setNodes((nds) => {
+        const updated = [...nds, newNode]
+        onTablesChange?.(updated.map((n) => n.data.tableName))
+        return updated
+      })
+    },
+    [nodes.length, tablesOnCanvas, setNodes, onTablesChange, tableColumns, handleSelectionChange, handleRemoveTable]
+  )
+
+  // Update node columns when tableColumns change
+  useEffect(() => {
+    if (!tableColumns) return
+    setNodes((nds) =>
+      nds.map((node) => {
+        const columns = tableColumns[node.data.tableName] ?? []
+        const selected = node.data.selectedColumns.filter((col) =>
+          columns.some((c) => c.name === col)
+        )
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            columns,
+            selectedColumns: selected,
+            onSelectionChange: handleSelectionChange,
+            onRemove: handleRemoveTable,
+          },
+        }
+      })
+    )
+  }, [tableColumns, setNodes, handleSelectionChange, handleRemoveTable])
+
+  // Notify parent of state changes
+  useEffect(() => {
+    onStateChange?.(nodes, edges)
+  }, [nodes, edges, onStateChange])
 
   // Validate connection - prevent self-join on same column
   const isValidConnection: IsValidConnection<JoinEdgeType> = useCallback(

@@ -23,6 +23,138 @@ import {
 } from '../idb-storage';
 
 // =============================================================================
+// IndexedDB Test Helpers
+// =============================================================================
+
+const originalIndexedDB = globalThis.indexedDB;
+
+interface FakeIndexedDbOptions {
+  getResult?: { name: string; blob: unknown; updatedAt: string } | undefined;
+  putError?: DOMException | null;
+  transactionError?: DOMException | null;
+}
+
+function createFakeRequest<T>(result: T, error?: DOMException | null) {
+  const request: IDBRequest = {
+    result,
+    error: error ?? null,
+    source: null,
+    transaction: null,
+    readyState: 'done',
+    onsuccess: null,
+    onerror: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => true,
+  } as unknown as IDBRequest;
+
+  setTimeout(() => {
+    if (error) {
+      request.onerror?.(new Event('error'));
+    } else {
+      request.onsuccess?.(new Event('success'));
+    }
+  }, 0);
+
+  return request;
+}
+
+function createFakeIndexedDB(options: FakeIndexedDbOptions): IDBFactory {
+  return {
+    open: () => {
+      const request: IDBOpenDBRequest = {
+        result: null as unknown as IDBDatabase,
+        error: null,
+        source: null,
+        transaction: null,
+        readyState: 'done',
+        onsuccess: null,
+        onerror: null,
+        onupgradeneeded: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => true,
+      } as unknown as IDBOpenDBRequest;
+
+      const db: IDBDatabase = {
+        name: 'idb-sqlite',
+        version: 1,
+        objectStoreNames: {
+          length: 1,
+          contains: () => true,
+          item: () => null,
+        },
+        close: () => {},
+        createObjectStore: () => ({} as IDBObjectStore),
+        deleteObjectStore: () => {},
+        transaction: () => {
+          if (options.transactionError) {
+            throw options.transactionError;
+          }
+
+          const store: IDBObjectStore = {
+            name: 'databases',
+            keyPath: 'name',
+            indexNames: { length: 0, contains: () => false, item: () => null },
+            transaction: null as unknown as IDBTransaction,
+            autoIncrement: false,
+            add: () => createFakeRequest(undefined, options.putError ?? null),
+            clear: () => createFakeRequest(undefined, null),
+            count: () => createFakeRequest(0, null),
+            delete: () => createFakeRequest(undefined, null),
+            get: () => createFakeRequest(options.getResult, null),
+            getAll: () => createFakeRequest([], null),
+            getAllKeys: () => createFakeRequest([], null),
+            getKey: () => createFakeRequest(undefined, null),
+            openCursor: () => createFakeRequest(null, null),
+            openKeyCursor: () => createFakeRequest(null, null),
+            put: () => createFakeRequest(undefined, options.putError ?? null),
+            createIndex: () => ({} as IDBIndex),
+            deleteIndex: () => {},
+            index: () => ({} as IDBIndex),
+          };
+
+          const tx: IDBTransaction = {
+            db,
+            error: null,
+            mode: 'readwrite',
+            objectStoreNames: {
+              length: 1,
+              contains: () => true,
+              item: () => 'databases',
+            },
+            onabort: null,
+            oncomplete: null,
+            onerror: null,
+            abort: () => {},
+            objectStore: () => store,
+            commit: () => {},
+            addEventListener: () => {},
+            removeEventListener: () => {},
+            dispatchEvent: () => true,
+          };
+
+          setTimeout(() => {
+            tx.oncomplete?.(new Event('complete'));
+          }, 0);
+
+          return tx;
+        },
+      } as unknown as IDBDatabase;
+
+      request.result = db;
+
+      setTimeout(() => {
+        request.onupgradeneeded?.(new Event('upgradeneeded'));
+        request.onsuccess?.(new Event('success'));
+      }, 0);
+
+      return request;
+    },
+  } as unknown as IDBFactory;
+}
+
+// =============================================================================
 // Tests for synchronous behavior (no IDB mock needed)
 // =============================================================================
 
@@ -500,5 +632,57 @@ describe('IDBStorage - flushAndClose with Debounce', () => {
 
     // Clean up
     storage.destroy();
+  });
+});
+
+// =============================================================================
+// Failure Scenario Tests
+// =============================================================================
+
+describe('IDBStorage - Failure Scenarios', () => {
+  afterEach(() => {
+    globalThis.indexedDB = originalIndexedDB;
+    resetIDBStorage();
+  });
+
+  it('returns null when object store is missing (storage cleared mid-session)', async () => {
+    globalThis.indexedDB = createFakeIndexedDB({
+      transactionError: new DOMException('Not found', 'NotFoundError'),
+    });
+
+    const storage = new IDBStorage();
+    const result = await storage.load('missing-db');
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null for corrupted snapshots (non-Blob data)', async () => {
+    globalThis.indexedDB = createFakeIndexedDB({
+      getResult: {
+        name: 'corrupt-db',
+        blob: 'not-a-blob',
+        updatedAt: '2026-01-28T00:00:00.000Z',
+      },
+    });
+
+    const storage = new IDBStorage();
+    const result = await storage.load('corrupt-db');
+
+    expect(result).toBeNull();
+  });
+
+  it('returns quota exceeded error and keeps pending writes on flush', async () => {
+    globalThis.indexedDB = createFakeIndexedDB({
+      putError: new DOMException('Quota exceeded', 'QuotaExceededError'),
+    });
+
+    const storage = new IDBStorage();
+    storage.scheduleWrite('quota-db', new Blob(['data']));
+
+    const result = await storage.flush();
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('QUOTA_EXCEEDED');
+    expect(storage.hasPendingWritesFor('quota-db')).toBe(true);
   });
 });

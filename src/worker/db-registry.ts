@@ -17,6 +17,7 @@
  */
 
 import type { StorageMode } from '../types';
+import { checkOPFSAvailability } from '../lib/opfs-vfs';
 
 // =============================================================================
 // Constants
@@ -282,10 +283,8 @@ export function toFilename(name: string): string {
  */
 async function isOpfsAvailable(): Promise<boolean> {
   try {
-    if (typeof navigator === 'undefined') return false;
-    if (!navigator.storage?.getDirectory) return false;
-    await navigator.storage.getDirectory();
-    return true;
+    const availability = await checkOPFSAvailability();
+    return availability.available;
   } catch {
     return false;
   }

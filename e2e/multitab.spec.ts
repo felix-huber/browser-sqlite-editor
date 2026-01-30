@@ -1,4 +1,10 @@
 import { test, expect, type Page } from '@playwright/test';
+import {
+  createAndOpenDatabase,
+  openDatabaseFromWelcome,
+  openTable,
+  runSql,
+} from './helpers/app';
 
 /**
  * Multi-Tab Locking E2E Tests
@@ -545,28 +551,6 @@ test.describe('Multi-Tab Locking', () => {
   });
 });
 
-test.describe('Read-Only Mode Verification', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await expect(page).toHaveTitle(/SQLite Editor/);
-    await clearAllStorage(page);
-  });
-
-  test('read-only banner data-testid exists in component', async ({ page }) => {
-    // This verifies the ReadOnlyBanner component has the expected test ID
-    // The banner only shows when isReadOnly is true, which requires actual lock contention
-    // We verify the component code has the data-testid attribute
-
-    const componentExists = await page.evaluate(() => {
-      // Check if ReadOnlyBanner component would render with expected attributes
-      // This is a smoke test - actual banner visibility tested via unit tests
-      return typeof document !== 'undefined';
-    });
-
-    expect(componentExists).toBe(true);
-  });
-});
-
 test.describe('Two Page Tests (Same Context = Shared localStorage)', () => {
   /**
    * These tests use two pages in the SAME browser context.
@@ -625,48 +609,38 @@ test.describe('Two Page Tests (Same Context = Shared localStorage)', () => {
   });
 
   test('crash recovery: Tab B takes over after Tab A crashes', async ({ context }) => {
-    // Create two pages in the SAME context
     const pageA = await context.newPage();
     const pageB = await context.newPage();
 
     const dbName = 'test-crash-recovery';
-    const tabAId = generateTabId();
-    const tabBId = generateTabId();
 
     try {
-      // Tab A: Setup
       await pageA.goto('/');
       await expect(pageA).toHaveTitle(/SQLite Editor/);
       await clearAllStorage(pageA);
+      await pageA.reload();
 
-      // Tab A: Create database and acquire lock
-      await createTestDatabase(pageA, dbName);
-      await acquireLockInTab(pageA, dbName, tabAId);
+      // Tab A: Create DB and open as writer
+      await createAndOpenDatabase(pageA, dbName);
+      await runSql(pageA, `CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO users (name) VALUES ('Alice');`);
+      await openTable(pageA, dbName, 'users');
 
-      // Tab B: Navigate
+      // Tab B: Open same DB (read-only)
       await pageB.goto('/');
+      await openDatabaseFromWelcome(pageB, dbName);
+      await openTable(pageB, dbName, 'users');
+      await expect(pageB.getByTestId('read-only-banner')).toBeVisible();
+      await expect(pageB.getByTestId('table-readonly')).toBeVisible();
 
-      // Tab B: Cannot acquire lock (held by Tab A)
-      const tabBAcquiredFirst = await acquireLockInTab(pageB, dbName, tabBId);
-      expect(tabBAcquiredFirst).toBe(false);
-
-      // Simulate Tab A crash by setting stale timestamp
-      await simulateCrashedTab(pageA, dbName, tabAId);
-
-      // Tab B: Can now see lock is stale
-      const staleStatus = await checkLockStatus(pageB, dbName);
-      expect(staleStatus.isStale).toBe(true);
-
-      // Tab B: Can take over stale lock
-      const tabBAcquiredAfterCrash = await acquireLockInTab(pageB, dbName, tabBId);
-      expect(tabBAcquiredAfterCrash).toBe(true);
-
-      // Verify Tab B holds lock
-      const finalStatus = await checkLockStatus(pageB, dbName);
-      expect(finalStatus.isLocked).toBe(true);
-      expect(finalStatus.holderId).toBe(tabBId);
-    } finally {
+      // Simulate crash by closing Tab A (lock stops heartbeating)
       await pageA.close();
+
+      // Wait for stale detection and take over
+      await expect(pageB.getByTestId('stale-warning')).toBeVisible({ timeout: 15000 });
+      await pageB.getByTestId('take-over-button').click();
+      await expect(pageB.getByTestId('read-only-banner')).toBeHidden({ timeout: 15000 });
+      await expect(pageB.getByTestId('add-row-button')).toBeEnabled();
+    } finally {
       await pageB.close();
     }
   });

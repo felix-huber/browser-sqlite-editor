@@ -36,6 +36,8 @@ export interface ImportDialogProps {
   onClose: () => void;
   /** Callback when import is confirmed */
   onImport: (options: ImportOptions) => Promise<void>;
+  /** Optional initial file to prefill and parse on open */
+  initialFile?: File | null;
   /** List of existing table names (for append option) */
   existingTables?: string[];
   /** Whether in read-only mode (dialog will not render if true) */
@@ -147,6 +149,7 @@ export function ImportDialog({
   isOpen,
   onClose,
   onImport,
+  initialFile = null,
   existingTables = [],
   isReadOnly = false,
 }: ImportDialogProps) {
@@ -175,6 +178,7 @@ export function ImportDialog({
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
+  const initialFileRef = useRef<File | null>(null);
 
   // Reset state when dialog opens/closes
   useEffect(() => {
@@ -191,6 +195,7 @@ export function ImportDialog({
       setImportProgress(0);
       setParsedData(null);
       setIsDragging(false);
+      initialFileRef.current = null;
     }
   }, [isOpen]);
 
@@ -262,6 +267,13 @@ export function ImportDialog({
       setDialogState('error');
     }
   }, []);
+
+  useEffect(() => {
+    if (!isOpen || !initialFile) return;
+    if (initialFileRef.current === initialFile) return;
+    initialFileRef.current = initialFile;
+    void handleFileSelect(initialFile);
+  }, [handleFileSelect, initialFile, isOpen]);
 
   // Handle file input change
   const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
