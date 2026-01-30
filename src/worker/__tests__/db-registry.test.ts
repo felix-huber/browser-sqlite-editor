@@ -785,15 +785,15 @@ describe('validateDatabaseName', () => {
     expect(validateDatabaseName('Con').success).toBe(false);
   });
 
-  it('should reject names exceeding max length', () => {
-    const longName = 'a'.repeat(256);
+  it('should reject names exceeding max length (64 per PRD)', () => {
+    const longName = 'a'.repeat(65);
     const result = validateDatabaseName(longName);
     expect(result.success).toBe(false);
     expect(result.error?.code).toBe('NAME_TOO_LONG');
   });
 
-  it('should accept names at max length', () => {
-    const maxName = 'a'.repeat(255);
+  it('should accept names at max length (64 per PRD)', () => {
+    const maxName = 'a'.repeat(64);
     const result = validateDatabaseName(maxName);
     expect(result.success).toBe(true);
   });
@@ -961,8 +961,8 @@ describe('DatabaseRegistry - renameDatabase', () => {
 // =============================================================================
 
 describe('Rename Constants', () => {
-  it('should have correct max name length', () => {
-    expect(_testing.MAX_NAME_LENGTH).toBe(255);
+  it('should have correct max name length (64 per PRD)', () => {
+    expect(_testing.MAX_NAME_LENGTH).toBe(64);
   });
 
   it('should have Windows reserved names defined', () => {

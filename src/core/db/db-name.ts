@@ -15,10 +15,11 @@ const RESERVED_NAMES = new Set([
   'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
 ]);
 
-// Allowed characters: alphanumeric, spaces, hyphens, underscores, parentheses
-const ALLOWED_CHARS_REGEX = /^[a-zA-Z0-9 \-_()]+$/;
+// Allowed characters per PRD: alphanumeric, spaces, hyphens, underscores, dots, parentheses
+const ALLOWED_CHARS_REGEX = /^[a-zA-Z0-9 \-_().]+$/;
 
-const MAX_NAME_LENGTH = 255;
+// Maximum name length per PRD (1-64 chars)
+const MAX_NAME_LENGTH = 64;
 
 /**
  * Validates a database name for filesystem and security safety.
@@ -31,9 +32,9 @@ export function validateDbName(name: string): ValidationResult {
     return { valid: false, error: 'Name cannot be empty' };
   }
 
-  // Check max length
+  // Check max length (64 chars per PRD)
   if (trimmed.length > MAX_NAME_LENGTH) {
-    return { valid: false, error: 'Name too long (max 255 characters)' };
+    return { valid: false, error: 'Name too long (max 64 characters)' };
   }
 
   // Check for path separators

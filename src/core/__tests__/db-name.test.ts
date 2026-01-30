@@ -48,12 +48,12 @@ describe('validateDbName', () => {
     expect(validateDbName('LPT9')).toEqual({ valid: false, error: 'Reserved name' });
   });
 
-  it('should reject names that are too long', () => {
-    const longName = 'a'.repeat(256);
-    expect(validateDbName(longName)).toEqual({ valid: false, error: 'Name too long (max 255 characters)' });
+  it('should reject names that are too long (>64 chars per PRD)', () => {
+    const longName = 'a'.repeat(65);
+    expect(validateDbName(longName)).toEqual({ valid: false, error: 'Name too long (max 64 characters)' });
 
-    // Exactly 255 should be valid
-    const maxName = 'a'.repeat(255);
+    // Exactly 64 should be valid
+    const maxName = 'a'.repeat(64);
     expect(validateDbName(maxName)).toEqual({ valid: true });
   });
 

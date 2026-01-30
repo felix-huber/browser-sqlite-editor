@@ -119,8 +119,14 @@ const WINDOWS_RESERVED_NAMES = new Set([
   'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9',
 ]);
 
-/** Maximum name length (filesystem limit) */
-const MAX_NAME_LENGTH = 255;
+/** Maximum name length per PRD (1-64 chars) */
+const MAX_NAME_LENGTH = 64;
+
+/**
+ * Allowed characters per PRD: alphanumeric, spaces, hyphens, underscores, dots, parentheses
+ * No path separators or control characters
+ */
+const PRD_ALLOWED_CHARS_REGEX = /^[a-zA-Z0-9 \-_().]+$/;
 
 /**
  * Validation error codes for rename operations
@@ -134,6 +140,7 @@ export type RenameErrorCode =
   | 'HIDDEN_FILE'
   | 'RESERVED_NAME'
   | 'PATH_TRAVERSAL'
+  | 'INVALID_CHARS'
   | 'NOT_FOUND'
   | 'RENAME_FAILED';
 
@@ -167,15 +174,15 @@ export interface DeleteResult {
 }
 
 /**
- * Validate a database name for rename operations
+ * Validate a database name per PRD requirements (US-002)
  *
  * Rules:
- * - Reject empty or whitespace-only names
- * - Reject names with path separators: / and \
+ * - Names must be 1–64 characters, trimmed of leading/trailing whitespace
+ * - Allowed characters: alphanumeric, spaces, hyphens, underscores, dots, parentheses
+ * - No path separators or control characters
  * - Reject names starting with . (hidden files)
  * - Reject reserved names: CON, PRN, NUL, AUX, COM1-9, LPT1-9 (Windows)
  * - Reject names with .. (path traversal)
- * - Max length: 255 characters
  *
  * @param name - Name to validate
  * @returns Validation result with error details if invalid
@@ -195,7 +202,7 @@ export function validateDatabaseName(name: string): RenameResult {
     };
   }
 
-  // Check max length
+  // Check max length (64 chars per PRD)
   if (trimmed.length > MAX_NAME_LENGTH) {
     return {
       success: false,
@@ -206,7 +213,7 @@ export function validateDatabaseName(name: string): RenameResult {
     };
   }
 
-  // Check for path separators
+  // Check for path separators (before general char check for specific error)
   if (trimmed.includes('/') || trimmed.includes('\\')) {
     return {
       success: false,
@@ -252,7 +259,58 @@ export function validateDatabaseName(name: string): RenameResult {
     };
   }
 
+  // Check for PRD-allowed characters only
+  // Allowed: alphanumeric, spaces, hyphens, underscores, dots, parentheses
+  if (!PRD_ALLOWED_CHARS_REGEX.test(trimmed)) {
+    return {
+      success: false,
+      error: {
+        code: 'INVALID_CHARS',
+        message: 'Database name contains invalid characters. Allowed: letters, numbers, spaces, hyphens, underscores, dots, parentheses',
+      },
+    };
+  }
+
   return { success: true };
+}
+
+/**
+ * Generate a unique import name with suffix on collision
+ * Per PRD: duplicate names are auto-suffixed with (1), (2), etc. on import
+ *
+ * @param baseName - The original name from the imported file
+ * @param existingNames - List of existing database names
+ * @returns A unique name, possibly with suffix
+ */
+export function generateImportName(baseName: string, existingNames: string[]): string {
+  const trimmedBase = baseName.trim();
+  const lowerExisting = existingNames.map((n) => n.toLowerCase());
+
+  // Check if base name is available (case-insensitive)
+  if (!lowerExisting.includes(trimmedBase.toLowerCase())) {
+    return trimmedBase;
+  }
+
+  // Find next available suffix
+  let suffix = 1;
+  while (suffix < 10000) { // Safety limit
+    const candidate = `${trimmedBase}(${suffix})`;
+    if (!lowerExisting.includes(candidate.toLowerCase())) {
+      // Validate length constraint
+      if (candidate.length <= MAX_NAME_LENGTH) {
+        return candidate;
+      }
+      // If too long, truncate base name to fit
+      const suffixStr = `(${suffix})`;
+      const maxBaseLen = MAX_NAME_LENGTH - suffixStr.length;
+      const truncatedBase = trimmedBase.substring(0, maxBaseLen);
+      return `${truncatedBase}${suffixStr}`;
+    }
+    suffix++;
+  }
+
+  // Fallback (should never reach here)
+  return `${trimmedBase}_${Date.now()}`;
 }
 
 // =============================================================================
@@ -1266,10 +1324,29 @@ export class DatabaseRegistry {
   }
 
   /**
-   * Check if a database name is already registered
+   * Check if a database name is already registered (exact match)
    */
   hasDatabase(name: string): boolean {
     return this.data.databases.some((e) => e.name === name);
+  }
+
+  /**
+   * Check if a database name exists (case-insensitive)
+   * Per PRD: names are case-preserving but collision-checked case-insensitively
+   *
+   * @param name Database name to check
+   * @returns true if a database with this name exists (ignoring case)
+   */
+  hasDatabaseCaseInsensitive(name: string): boolean {
+    const lowerName = name.trim().toLowerCase();
+    return this.data.databases.some((e) => e.name.toLowerCase() === lowerName);
+  }
+
+  /**
+   * Get all database names for collision checking
+   */
+  getDatabaseNames(): string[] {
+    return this.data.databases.map((e) => e.name);
   }
 
   /**
@@ -1430,6 +1507,7 @@ export const _testing = {
   IDB_VERSION,
   MAX_NAME_LENGTH,
   WINDOWS_RESERVED_NAMES,
+  PRD_ALLOWED_CHARS_REGEX,
   generateId,
   now,
   toFilename,

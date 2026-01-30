@@ -1,13 +1,13 @@
 {
-  "runId": "2026-01-30T22:47:26+01:00",
-  "updatedAt": "2026-01-30T22:49:55+01:00",
+  "runId": "2026-01-30T22:53:41+01:00",
+  "updatedAt": "2026-01-30T23:02:43+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-2wt",
-    "subject": "P1-01: Align OPFS layout with PRD",
+    "id": "bd-fec",
+    "subject": "P1-02: Enforce PRD naming rules",
     "status": "completed",
     "phase": "review",
     "attempt": 1
