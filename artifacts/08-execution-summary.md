@@ -9,3 +9,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-lx0 | P1-03: Registry self-heal | DONE | d36b4ecea321c4303c58bce2dfc2f512eb51759b | clean review |
 | bd-2de | P2-01: Stream SQLite import via SyncAccessHandle | DONE | 146bfb292db333f89cc2972f30fde0235c73acd1 | clean review |
 | bd-25k | P2-02: CSV header normalization per PRD | FAILED | - | review/verification failure |
+| bd-25k | P2-02: CSV header normalization per PRD | DONE | 73eac136be800a43d807115416844fbfb6446d43 | clean review |
