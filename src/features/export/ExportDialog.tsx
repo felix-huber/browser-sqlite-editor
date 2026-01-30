@@ -32,7 +32,7 @@ export interface ExportDialogProps {
 
 interface CSVOptionsState {
   delimiter: CSVDelimiter
-  spreadsheetSafe: boolean
+  formulaProtection: boolean
   includeHeaders: boolean
   lineEnding: LineEnding
 }
@@ -45,19 +45,6 @@ interface JSONOptionsState {
 interface SQLOptionsState {
   targetTableName: string
   includeCreateTable: boolean
-}
-
-/**
- * Escape formula-triggering characters for spreadsheet safety.
- * Prefixes dangerous characters with a single quote.
- */
-function escapeFormulaChar(value: unknown): unknown {
-  if (typeof value !== 'string') return value
-  const dangerousChars = ['=', '+', '-', '@']
-  if (dangerousChars.some((char) => value.startsWith(char))) {
-    return "'" + value
-  }
-  return value
 }
 
 /**
@@ -133,9 +120,10 @@ export function ExportDialog({
   rowLimitWarning = 100000,
 }: ExportDialogProps) {
   const [format, setFormat] = useState<ExportFormat>('csv')
+  const [blobWarning, setBlobWarning] = useState<number>(0)
   const [csvOptions, setCsvOptions] = useState<CSVOptionsState>({
     delimiter: ',',
-    spreadsheetSafe: false,
+    formulaProtection: true,
     includeHeaders: true,
     lineEnding: 'lf',
   })
@@ -159,9 +147,14 @@ export function ExportDialog({
   useEffect(() => {
     if (!isOpen) return
     setFormat('csv')
+    // Count BLOBs in the data
+    const blobCount = rows.reduce((count, row) => {
+      return count + row.filter((cell) => cell instanceof Uint8Array).length
+    }, 0)
+    setBlobWarning(blobCount)
     setCsvOptions({
       delimiter: ',',
-      spreadsheetSafe: false,
+      formulaProtection: true,
       includeHeaders: true,
       lineEnding: 'lf',
     })
@@ -169,7 +162,7 @@ export function ExportDialog({
       prettyPrint: true,
       arrayOfObjects: true,
     })
-  }, [isOpen])
+  }, [isOpen, rows])
 
   // Handle dialog open/close
   useEffect(() => {
@@ -215,28 +208,16 @@ export function ExportDialog({
 
     switch (format) {
       case 'csv': {
-        // Apply spreadsheet-safe escaping if enabled
-        const processedRows = csvOptions.spreadsheetSafe
-          ? rows.map((row) => row.map(escapeFormulaChar))
-          : rows
-
-        // Custom delimiter handling - we need to use papaparse's config
+        // Build export options with formula protection and BLOB handling
         const csvExportOptions: CSVExportOptions = {
           includeBOM: true,
           includeHeader: csvOptions.includeHeaders,
-          blobHandling: 'hex',
+          blobHandling: 'placeholder',
+          formulaProtection: csvOptions.formulaProtection,
+          delimiter: csvOptions.delimiter,
         }
 
-        let csvContent = exportToCSV(columns, processedRows, csvExportOptions)
-
-        // Replace delimiter if not comma
-        if (csvOptions.delimiter !== ',') {
-          // Re-export with the correct delimiter
-          // Note: papaparse doesn't expose delimiter in unparse directly in our wrapper
-          // So we do a simple post-process for semicolon/tab
-          // This is safe because CSV values are properly quoted
-          csvContent = csvContent.replace(/,/g, csvOptions.delimiter)
-        }
+        const csvContent = exportToCSV(columns, rows, csvExportOptions)
 
         content = convertLineEndings(csvContent, csvOptions.lineEnding)
         filename = `${tableName}.csv`
@@ -384,6 +365,36 @@ export function ExportDialog({
             </div>
           )}
 
+          {/* BLOB warning */}
+          {format === 'csv' && blobWarning > 0 && (
+            <div
+              className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded text-sm"
+              role="alert"
+              data-testid="blob-warning"
+            >
+              <svg
+                className="w-5 h-5 text-amber-600 shrink-0 mt-0.5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <div>
+                <p className="font-medium text-amber-800">BLOB data detected</p>
+                <p className="text-amber-700">
+                  {blobWarning} BLOB cell{blobWarning !== 1 ? 's' : ''} will be exported as [BLOB] placeholders.
+                  Binary data cannot be represented in CSV format.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Format selector */}
           <div>
             <label className="block text-sm font-medium text-navy-700 mb-2">
@@ -456,22 +467,22 @@ export function ExportDialog({
                 <span className="text-sm text-navy-700">Include headers</span>
               </label>
 
-              {/* Spreadsheet Safe */}
+              {/* Formula Protection */}
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={csvOptions.spreadsheetSafe}
+                  checked={csvOptions.formulaProtection}
                   onChange={(e) =>
                     setCsvOptions((prev) => ({
                       ...prev,
-                      spreadsheetSafe: e.target.checked,
+                      formulaProtection: e.target.checked,
                     }))
                   }
                   className="w-4 h-4 text-navy-600 border-navy-300 rounded focus:ring-navy-600"
-                  data-testid="csv-spreadsheet-safe"
+                  data-testid="csv-formula-protection"
                 />
                 <span className="text-sm text-navy-700">
-                  Spreadsheet-safe (escape formulas)
+                  Formula injection protection
                 </span>
               </label>
 

@@ -48,16 +48,6 @@ describe('exportToCSV', () => {
       expect(csv).toBe('name\r\nAlice');
     });
 
-    it('handles null values', () => {
-      const columns = ['name', 'age'];
-      const rows = [[null, 30], ['Bob', null]];
-
-      const csv = exportToCSV(columns, rows, { includeBOM: false });
-
-      expect(csv).toContain(',30');
-      expect(csv).toContain('Bob,');
-    });
-
     it('handles empty rows', () => {
       const columns = ['name', 'age'];
       const rows: unknown[][] = [];
@@ -68,50 +58,131 @@ describe('exportToCSV', () => {
     });
   });
 
+  describe('NULL vs empty string encoding', () => {
+    it('exports NULL as empty unquoted cell', () => {
+      const columns = ['a', 'b', 'c'];
+      const rows = [[null, 'value', null]];
+
+      const csv = exportToCSV(columns, rows, { includeBOM: false });
+
+      // NULL should be empty unquoted: ,value,
+      expect(csv).toBe('a,b,c\r\n,value,');
+    });
+
+    it('exports empty string as quoted ""', () => {
+      const columns = ['a', 'b', 'c'];
+      const rows = [['', 'value', '']];
+
+      const csv = exportToCSV(columns, rows, { includeBOM: false });
+
+      // Empty string should be quoted: "","value",""
+      expect(csv).toBe('a,b,c\r\n"",value,""');
+    });
+
+    it('distinguishes NULL from empty string in same row', () => {
+      const columns = ['null_col', 'empty_col', 'text_col'];
+      const rows = [[null, '', 'hello']];
+
+      const csv = exportToCSV(columns, rows, { includeBOM: false });
+
+      // null_col=unquoted empty, empty_col=quoted "", text_col=hello
+      expect(csv).toBe('null_col,empty_col,text_col\r\n,"",hello');
+    });
+
+    it('handles multiple rows with mixed NULL and empty string', () => {
+      const columns = ['col'];
+      const rows = [[null], [''], ['text'], [null]];
+
+      const csv = exportToCSV(columns, rows, { includeBOM: false });
+
+      const lines = csv.split('\r\n');
+      expect(lines[0]).toBe('col');
+      expect(lines[1]).toBe(''); // NULL = empty unquoted
+      expect(lines[2]).toBe('""'); // empty string = quoted
+      expect(lines[3]).toBe('text');
+      expect(lines[4]).toBe(''); // NULL = empty unquoted
+    });
+  });
+
+  describe('formula injection protection', () => {
+    it('escapes formula-like values by default (formulaProtection ON)', () => {
+      const columns = ['data'];
+      const rows = [['=SUM(A1:A10)'], ['+1+2'], ['-1-2'], ['@import'], ['\ttab']];
+
+      const csv = exportToCSV(columns, rows, { includeBOM: false });
+
+      // Each dangerous character should be prefixed with single quote
+      // No extra quotes needed unless the value contains comma/quote/newline
+      expect(csv).toContain("'=SUM(A1:A10)");
+      expect(csv).toContain("'+1+2");
+      expect(csv).toContain("'-1-2");
+      expect(csv).toContain("'@import");
+      expect(csv).toContain("'\ttab");
+    });
+
+    it('does not escape formula-like values when formulaProtection is OFF', () => {
+      const columns = ['data'];
+      const rows = [['=SUM(A1:A10)'], ['+1+2']];
+
+      const csv = exportToCSV(columns, rows, { includeBOM: false, formulaProtection: false });
+
+      expect(csv).toContain('=SUM(A1:A10)');
+      expect(csv).toContain('+1+2');
+    });
+
+    it('leaves normal values unchanged with formula protection ON', () => {
+      const columns = ['data'];
+      const rows = [['hello'], ['123'], ['email@example.com']];
+
+      const csv = exportToCSV(columns, rows, { includeBOM: false });
+
+      expect(csv).toContain('hello');
+      expect(csv).toContain('123');
+      // email@example.com doesn't start with @, so no escaping
+      expect(csv).toContain('email@example.com');
+    });
+  });
+
   describe('BLOB handling', () => {
-    it('converts BLOB to hex string by default', () => {
+    it('converts BLOB to hex string when blobHandling is hex', () => {
       const columns = ['id', 'data'];
       const rows = [[1, new Uint8Array([0xde, 0xad, 0xbe, 0xef])]];
 
-      const csv = exportToCSV(columns, rows, { includeBOM: false });
+      const csv = exportToCSV(columns, rows, { includeBOM: false, blobHandling: 'hex' });
 
       expect(csv).toContain('deadbeef');
     });
 
-    it('replaces BLOB with placeholder when blobHandling is omit', () => {
+    it('replaces BLOB with placeholder by default (blobHandling defaults to placeholder)', () => {
       const columns = ['id', 'data'];
       const rows = [[1, new Uint8Array([0xde, 0xad])]];
 
-      const csv = exportToCSV(columns, rows, {
-        includeBOM: false,
-        blobHandling: 'omit',
-      });
+      const csv = exportToCSV(columns, rows, { includeBOM: false });
 
       expect(csv).toContain('[BLOB]');
       expect(csv).not.toContain('dead');
     });
 
-    it('uses custom placeholder for omitted BLOBs', () => {
+    it('uses custom placeholder for BLOBs', () => {
       const columns = ['id', 'data'];
       const rows = [[1, new Uint8Array([0x01])]];
 
       const csv = exportToCSV(columns, rows, {
         includeBOM: false,
-        blobHandling: 'omit',
         blobPlaceholder: '<binary>',
       });
 
       expect(csv).toContain('<binary>');
     });
 
-    it('handles empty BLOB', () => {
+    it('handles empty BLOB with placeholder', () => {
       const columns = ['data'];
       const rows = [[new Uint8Array([])]];
 
       const csv = exportToCSV(columns, rows, { includeBOM: false });
 
-      // Empty hex string
-      expect(csv).toBe('data\r\n');
+      // Empty BLOB still shows placeholder
+      expect(csv).toBe('data\r\n[BLOB]');
     });
   });
 
@@ -125,6 +196,55 @@ describe('exportToCSV', () => {
       // UTF-8 BOM is U+FEFF
       expect(csv.charCodeAt(0)).toBe(0xfeff);
       expect(csv.startsWith('\uFEFF')).toBe(true);
+    });
+  });
+
+  describe('delimiter option', () => {
+    it('uses semicolon delimiter when specified', () => {
+      const columns = ['name', 'age'];
+      const rows = [['Alice', 30]];
+
+      const csv = exportToCSV(columns, rows, { includeBOM: false, delimiter: ';' });
+
+      expect(csv).toBe('name;age\r\nAlice;30');
+    });
+
+    it('uses tab delimiter when specified', () => {
+      const columns = ['name', 'age'];
+      const rows = [['Alice', 30]];
+
+      const csv = exportToCSV(columns, rows, { includeBOM: false, delimiter: '\t' });
+
+      expect(csv).toBe('name\tage\r\nAlice\t30');
+    });
+
+    it('does not corrupt data containing commas when using semicolon delimiter', () => {
+      const columns = ['text'];
+      const rows = [['hello, world']];
+
+      const csv = exportToCSV(columns, rows, { includeBOM: false, delimiter: ';' });
+
+      // With semicolon delimiter, comma in data should NOT be quoted
+      expect(csv).toBe('text\r\nhello, world');
+    });
+
+    it('quotes values containing the delimiter character', () => {
+      const columns = ['text'];
+      const rows = [['hello;world']];
+
+      const csv = exportToCSV(columns, rows, { includeBOM: false, delimiter: ';' });
+
+      // Value contains semicolon, so must be quoted
+      expect(csv).toBe('text\r\n"hello;world"');
+    });
+
+    it('quotes values containing tab when using tab delimiter', () => {
+      const columns = ['text'];
+      const rows = [['hello\tworld']];
+
+      const csv = exportToCSV(columns, rows, { includeBOM: false, delimiter: '\t' });
+
+      expect(csv).toBe('text\r\n"hello\tworld"');
     });
   });
 

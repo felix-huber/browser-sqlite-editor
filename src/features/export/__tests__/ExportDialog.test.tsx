@@ -106,22 +106,22 @@ describe('ExportDialog', () => {
       expect(checkbox).not.toBeChecked()
     })
 
-    it('renders spreadsheet-safe checkbox (unchecked by default)', () => {
+    it('renders formula protection checkbox (checked by default)', () => {
       renderDialog()
 
-      const checkbox = screen.getByTestId('csv-spreadsheet-safe')
+      const checkbox = screen.getByTestId('csv-formula-protection')
       expect(checkbox).toBeInTheDocument()
-      expect(checkbox).not.toBeChecked()
+      expect(checkbox).toBeChecked()
     })
 
-    it('toggles spreadsheet-safe option', async () => {
+    it('toggles formula protection option', async () => {
       const user = userEvent.setup()
       renderDialog()
 
-      const checkbox = screen.getByTestId('csv-spreadsheet-safe')
+      const checkbox = screen.getByTestId('csv-formula-protection')
       await user.click(checkbox)
 
-      expect(checkbox).toBeChecked()
+      expect(checkbox).not.toBeChecked()
     })
 
     it('renders line ending selector', () => {
@@ -348,6 +348,67 @@ describe('ExportDialog', () => {
       renderDialog({ rows, rowLimitWarning: 25 })
 
       expect(screen.getByTestId('row-warning')).toBeInTheDocument()
+    })
+  })
+
+  describe('BLOB warning', () => {
+    it('shows BLOB warning when data contains Uint8Array cells in CSV mode', () => {
+      const rows = [
+        [1, 'Alice', new Uint8Array([0xde, 0xad])],
+        [2, 'Bob', new Uint8Array([0xbe, 0xef])],
+      ]
+      renderDialog({ rows })
+
+      expect(screen.getByTestId('blob-warning')).toBeInTheDocument()
+      expect(screen.getByText(/2 BLOB cells/)).toBeInTheDocument()
+    })
+
+    it('shows singular "cell" when only one BLOB', () => {
+      const rows = [
+        [1, 'Alice', new Uint8Array([0x01])],
+        [2, 'Bob', 'no blob here'],
+      ]
+      renderDialog({ rows })
+
+      expect(screen.getByTestId('blob-warning')).toBeInTheDocument()
+      expect(screen.getByText(/1 BLOB cell will/)).toBeInTheDocument()
+    })
+
+    it('does not show BLOB warning when no BLOBs present', () => {
+      renderDialog() // default rows have no BLOBs
+
+      expect(screen.queryByTestId('blob-warning')).not.toBeInTheDocument()
+    })
+
+    it('hides BLOB warning when switching to JSON format', async () => {
+      const user = userEvent.setup()
+      const rows = [[1, new Uint8Array([0x01])]]
+      renderDialog({ rows })
+
+      expect(screen.getByTestId('blob-warning')).toBeInTheDocument()
+
+      await user.click(screen.getByTestId('format-json'))
+
+      expect(screen.queryByTestId('blob-warning')).not.toBeInTheDocument()
+    })
+
+    it('hides BLOB warning when switching to SQL format', async () => {
+      const user = userEvent.setup()
+      const rows = [[1, new Uint8Array([0x01])]]
+      renderDialog({ rows })
+
+      expect(screen.getByTestId('blob-warning')).toBeInTheDocument()
+
+      await user.click(screen.getByTestId('format-sql'))
+
+      expect(screen.queryByTestId('blob-warning')).not.toBeInTheDocument()
+    })
+
+    it('BLOB warning has alert role for accessibility', () => {
+      const rows = [[1, new Uint8Array([0x01])]]
+      renderDialog({ rows })
+
+      expect(screen.getByTestId('blob-warning')).toHaveAttribute('role', 'alert')
     })
   })
 
