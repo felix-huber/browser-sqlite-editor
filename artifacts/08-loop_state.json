@@ -1,13 +1,13 @@
 {
   "runId": "2026-01-30T22:53:41+01:00",
-  "updatedAt": "2026-01-30T23:36:02+01:00",
+  "updatedAt": "2026-01-30T23:45:23+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-2de",
-    "subject": "P2-01: Stream SQLite import via SyncAccessHandle",
+    "id": "bd-25k",
+    "subject": "P2-02: CSV header normalization per PRD",
     "status": "completed",
     "phase": "review",
     "attempt": 2

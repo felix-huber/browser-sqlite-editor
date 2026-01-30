@@ -29,7 +29,7 @@ function stripBOM(str: string): string {
 /**
  * Normalize header name:
  * - Trim whitespace
- * - Replace spaces with underscores
+ * - Keep spaces (use identifier quoting in SQL)
  * - Handle empty headers by generating column_N
  */
 function normalizeHeader(header: string, index: number): { name: string; originalName: string } {
@@ -38,11 +38,59 @@ function normalizeHeader(header: string, index: number): { name: string; origina
 
   if (!name) {
     name = `column_${index + 1}`
-  } else {
-    name = name.replace(/\s+/g, '_')
   }
 
   return { name, originalName }
+}
+
+/**
+ * Deduplicate headers case-insensitively.
+ * 'name', 'Name' becomes 'name', 'Name_1'
+ * Handles collision when suffixed name already exists (e.g., 'name', 'name_1', 'Name')
+ */
+function deduplicateHeaders(headers: { name: string; originalName: string }[]): { name: string; originalName: string }[] {
+  // First pass: collect all header names (lowercased) for collision detection
+  const allNames = new Set<string>(headers.map(h => h.name.toLowerCase()))
+  const usedNames = new Set<string>()
+  const result: { name: string; originalName: string }[] = []
+
+  for (const header of headers) {
+    const lowerName = header.name.toLowerCase()
+
+    if (!usedNames.has(lowerName)) {
+      // First occurrence of this name, keep as-is
+      result.push(header)
+      usedNames.add(lowerName)
+    } else {
+      // Duplicate: find a suffix that doesn't collide
+      let suffix = 1
+      let candidateName = `${header.name}_${suffix}`
+      while (allNames.has(candidateName.toLowerCase()) || usedNames.has(candidateName.toLowerCase())) {
+        suffix++
+        candidateName = `${header.name}_${suffix}`
+      }
+      result.push({
+        name: candidateName,
+        originalName: header.originalName,
+      })
+      usedNames.add(candidateName.toLowerCase())
+    }
+  }
+
+  return result
+}
+
+/**
+ * Validate that bytes are valid UTF-8
+ */
+function isValidUtf8(bytes: Uint8Array): boolean {
+  try {
+    const decoder = new TextDecoder('utf-8', { fatal: true })
+    decoder.decode(bytes)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -167,11 +215,20 @@ export function parseCSVString(csvString: string): ParseResult {
   const headerRow = hasHeader ? normalizedRows[0] : []
   const dataRows = hasHeader ? normalizedRows.slice(1) : normalizedRows
 
-  // Build column definitions
-  const columns: ColumnDef[] = []
+  // Build raw headers
+  const rawHeaders: { name: string; originalName: string }[] = []
   for (let i = 0; i < maxWidth; i++) {
     const rawHeader = hasHeader ? (headerRow[i] ?? '') : ''
-    const { name, originalName } = normalizeHeader(rawHeader, i)
+    rawHeaders.push(normalizeHeader(rawHeader, i))
+  }
+
+  // Deduplicate headers case-insensitively
+  const dedupedHeaders = deduplicateHeaders(rawHeaders)
+
+  // Build column definitions with type inference
+  const columns: ColumnDef[] = []
+  for (let i = 0; i < maxWidth; i++) {
+    const { name, originalName } = dedupedHeaders[i]
 
     // Get sample values for type inference
     const sampleValues = dataRows
@@ -211,9 +268,34 @@ export function parseCSVString(csvString: string): ParseResult {
 }
 
 /**
- * Parse CSV from File using streaming for large files
+ * Read file as ArrayBuffer using FileReader (for test environment compatibility)
  */
-export function parseCSVFile(file: File): Promise<ParseResult> {
+function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+  // Try native arrayBuffer() first (faster in modern browsers)
+  if (typeof file.arrayBuffer === 'function') {
+    return file.arrayBuffer()
+  }
+  // Fallback for test environments
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as ArrayBuffer)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsArrayBuffer(file)
+  })
+}
+
+/**
+ * Parse CSV from File using streaming for large files.
+ * Validates UTF-8 encoding before parsing.
+ */
+export async function parseCSVFile(file: File): Promise<ParseResult> {
+  // Validate UTF-8 encoding first
+  const buffer = await readFileAsArrayBuffer(file)
+  const bytes = new Uint8Array(buffer)
+  if (!isValidUtf8(bytes)) {
+    throw new Error('CSV file contains non-UTF-8 characters. Please convert to UTF-8 encoding before importing.')
+  }
+
   return new Promise((resolve, reject) => {
     const rows: string[][] = []
     let isFirstChunk = true
@@ -255,11 +337,20 @@ export function parseCSVFile(file: File): Promise<ParseResult> {
         const headerRow = hasHeader ? normalizedRows[0] : []
         const dataRows = hasHeader ? normalizedRows.slice(1) : normalizedRows
 
-        // Build column definitions
-        const columns: ColumnDef[] = []
+        // Build raw headers
+        const rawHeaders: { name: string; originalName: string }[] = []
         for (let i = 0; i < maxWidth; i++) {
           const rawHeader = hasHeader ? (headerRow[i] ?? '') : ''
-          const { name, originalName } = normalizeHeader(rawHeader, i)
+          rawHeaders.push(normalizeHeader(rawHeader, i))
+        }
+
+        // Deduplicate headers case-insensitively
+        const dedupedHeaders = deduplicateHeaders(rawHeaders)
+
+        // Build column definitions with type inference
+        const columns: ColumnDef[] = []
+        for (let i = 0; i < maxWidth; i++) {
+          const { name, originalName } = dedupedHeaders[i]
 
           // Get sample values for type inference
           const sampleValues = dataRows
@@ -302,6 +393,20 @@ export function parseCSVFile(file: File): Promise<ParseResult> {
       },
     })
   })
+}
+
+/**
+ * Parse CSV from raw bytes with UTF-8 validation.
+ * Throws if the input is not valid UTF-8.
+ */
+export function parseCSVBytes(bytes: Uint8Array): ParseResult {
+  if (!isValidUtf8(bytes)) {
+    throw new Error('CSV file contains non-UTF-8 characters. Please convert to UTF-8 encoding before importing.')
+  }
+
+  const decoder = new TextDecoder('utf-8')
+  const csvString = decoder.decode(bytes)
+  return parseCSVString(csvString)
 }
 
 /**

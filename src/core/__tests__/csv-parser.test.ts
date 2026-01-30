@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseCSVString, parseCSVFile, serializeToCSV, type ColumnDef } from '../io/csv'
+import { parseCSVString, parseCSVFile, parseCSVBytes, serializeToCSV, type ColumnDef } from '../io/csv'
 
 describe('CSV Parser', () => {
   describe('parseCSVString', () => {
@@ -82,16 +82,52 @@ world`
       expect(result.columns[0].type).toBe('TEXT')
     })
 
-    it('should normalize header: replace spaces with underscores', () => {
+    it('should preserve spaces in headers (for identifier quoting)', () => {
       const csv = `First Name,Last Name,Email Address
 Alice,Smith,alice@example.com`
 
       const result = parseCSVString(csv)
 
-      expect(result.columns[0].name).toBe('First_Name')
+      expect(result.columns[0].name).toBe('First Name')
       expect(result.columns[0].originalName).toBe('First Name')
-      expect(result.columns[1].name).toBe('Last_Name')
-      expect(result.columns[2].name).toBe('Email_Address')
+      expect(result.columns[1].name).toBe('Last Name')
+      expect(result.columns[2].name).toBe('Email Address')
+    })
+
+    it('should auto-suffix duplicate headers case-insensitively', () => {
+      const csv = `name,Name,NAME,other
+Alice,Bob,Charlie,value`
+
+      const result = parseCSVString(csv)
+
+      expect(result.columns[0].name).toBe('name')
+      expect(result.columns[1].name).toBe('Name_1')
+      expect(result.columns[2].name).toBe('NAME_2')
+      expect(result.columns[3].name).toBe('other')
+    })
+
+    it('should handle duplicate headers with spaces', () => {
+      const csv = `My Column,my column,Another
+a,b,c`
+
+      const result = parseCSVString(csv)
+
+      expect(result.columns[0].name).toBe('My Column')
+      expect(result.columns[1].name).toBe('my column_1')
+      expect(result.columns[2].name).toBe('Another')
+    })
+
+    it('should avoid collision when suffixed name already exists', () => {
+      // 'name_1' already exists, so 'Name' duplicate should become 'name_2' not 'Name_1'
+      const csv = `name,name_1,Name,other
+a,b,c,d`
+
+      const result = parseCSVString(csv)
+
+      expect(result.columns[0].name).toBe('name')
+      expect(result.columns[1].name).toBe('name_1')
+      expect(result.columns[2].name).toBe('Name_2') // skips _1 since it exists
+      expect(result.columns[3].name).toBe('other')
     })
 
     it('should normalize header: trim whitespace', () => {
@@ -286,6 +322,42 @@ Alice,30`
 
       expect(result.columns).toHaveLength(0)
       expect(result.rows).toHaveLength(0)
+    })
+
+    it('should reject non-UTF-8 file', async () => {
+      // Latin-1 encoded bytes with characters that are invalid in UTF-8
+      const invalidUtf8 = new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x80, 0xff, 0x0a])
+      const file = new File([invalidUtf8], 'invalid.csv', { type: 'text/csv' })
+
+      await expect(parseCSVFile(file)).rejects.toThrow('non-UTF-8')
+    })
+  })
+
+  describe('parseCSVBytes', () => {
+    it('should reject non-UTF-8 files', () => {
+      // Latin-1 encoded bytes with characters that are invalid in UTF-8
+      // 0x80-0xFF in isolation are invalid UTF-8 sequences
+      const invalidUtf8 = new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x80, 0xff, 0x0a]) // "hello" + invalid bytes
+
+      expect(() => parseCSVBytes(invalidUtf8)).toThrow('non-UTF-8')
+    })
+
+    it('should accept valid UTF-8 files', () => {
+      const validUtf8 = new TextEncoder().encode('name,age\nAlice,30')
+      const result = parseCSVBytes(validUtf8)
+
+      expect(result.columns).toHaveLength(2)
+      expect(result.columns[0].name).toBe('name')
+    })
+
+    it('should accept UTF-8 with BOM', () => {
+      const bom = new Uint8Array([0xef, 0xbb, 0xbf]) // UTF-8 BOM
+      const content = new TextEncoder().encode('name,age\nAlice,30')
+      const withBom = new Uint8Array([...bom, ...content])
+
+      const result = parseCSVBytes(withBom)
+
+      expect(result.columns[0].name).toBe('name')
     })
   })
 
