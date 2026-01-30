@@ -16,3 +16,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-qdl | P4-02: FK creation validation | FAILED | - | review/verification failure |
 | bd-qdl | P4-02: FK creation validation | FAILED | - | review/verification failure |
 | bd-33g | P1-04: ERD layout OPFS sidecar | DONE | 5d261c9e57b9e4c1ca6883c9c1294d7e8f71f892 | clean review |
+| bd-1xr | P5-02: Stable ordering with tie-breakers | DONE | 5f04927872df70be66037483c390187076e08b32 | clean review |
