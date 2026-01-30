@@ -68,6 +68,7 @@ Options:
   --no-commit              Do not auto-commit after successful review
   --allow-dirty            Skip clean working tree check (for testing)
   --continue-on-error      Continue loop even if a task fails
+  --max-tasks <n>          Max tasks to process in loop mode (0=unlimited)
   --auto-push              Push after each commit (requires clean upstream)
   --commit-prefix <type>   Commit prefix (default: feat)
   -h, --help               Show help
@@ -121,6 +122,8 @@ parse_args() {
         ALLOW_DIRTY="true"; shift ;;
       --continue-on-error)
         CONTINUE_ON_ERROR="true"; shift ;;
+      --max-tasks)
+        MAX_TASKS="$2"; shift 2 ;;
       --auto-push)
         AUTO_PUSH="true"; shift ;;
       --commit-prefix)
@@ -843,7 +846,12 @@ main() {
 
   if [[ "$LOOP_MODE" == "true" ]]; then
     require_clean_worktree
+    local tasks_completed=0
     while select_next_task; do
+      if [[ "$MAX_TASKS" -gt 0 && "$tasks_completed" -ge "$MAX_TASKS" ]]; then
+        log "Reached max tasks limit ($MAX_TASKS). Stopping."
+        break
+      fi
       VERIFY_CMDS=""
       load_task
       log "Next task: $TASK_ID - $SUBJECT"
@@ -878,6 +886,8 @@ main() {
         exit 0
       fi
       log_learning "Task $TASK_ID completed. Add learnings here if needed."
+      tasks_completed=$((tasks_completed + 1))
+      log "Tasks completed this run: $tasks_completed"
     done
     log "No more unblocked tasks found. Done."
     exit 0
