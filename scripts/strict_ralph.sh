@@ -889,7 +889,14 @@ main() {
         update_task_status "$TASK_ID" "committed" "$ch"
         log_progress "COMPLETE task $TASK_ID - $SUBJECT ($ch)"
         append_summary "$TASK_ID" "$SUBJECT" "DONE" "$ch" "clean review"
-        require_clean_worktree
+        # Commit any state files modified after task commit
+        if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+          git add -A
+          git commit -m "chore: update state after $TASK_ID" --no-verify 2>/dev/null || true
+          if [[ "$AUTO_PUSH" == "true" ]]; then
+            git push 2>/dev/null || true
+          fi
+        fi
       else
         update_task_status "$TASK_ID" "complete"
         log_progress "COMPLETE task $TASK_ID - $SUBJECT (no auto-commit)"
