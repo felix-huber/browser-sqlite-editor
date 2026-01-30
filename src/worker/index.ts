@@ -324,7 +324,9 @@ async function exportDatabaseBlob(dbName: string): Promise<Blob> {
   // IDB mode: read from IDB VFS, fall back to legacy snapshot storage
   const idbBytes = await readIdbVfsDatabase(entry.name);
   if (idbBytes) {
-    return new Blob([idbBytes.buffer.slice(0)], { type: 'application/x-sqlite3' });
+    const copy = new Uint8Array(idbBytes.byteLength);
+    copy.set(idbBytes);
+    return new Blob([copy.buffer], { type: 'application/x-sqlite3' });
   }
 
   const storage = getIDBStorage();

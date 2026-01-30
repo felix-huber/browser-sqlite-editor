@@ -176,7 +176,7 @@ export function TableDesignerView({
         setIsApplying(false);
       }
     },
-    [client, isReadOnly, onOpenTable]
+    [client, isReadOnly, onDirtyChange, onOpenTable]
   );
 
   const handleApplyChanges = useCallback(async (
@@ -301,6 +301,7 @@ export function TableDesignerView({
     existingForeignKeys,
     existingTable,
     isReadOnly,
+    onDirtyChange,
     onOpenTable,
   ]);
 
