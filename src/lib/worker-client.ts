@@ -262,7 +262,15 @@ export class WorkerClient {
       });
 
       const taggedRequest: TaggedRequest = { id, request: req };
-      this.worker!.postMessage(taggedRequest);
+      try {
+        this.worker!.postMessage(taggedRequest);
+      } catch (err) {
+        clearTimeout(timeoutId);
+        this.pendingRequests.delete(id);
+        const error =
+          err instanceof Error ? err : new WorkerError(`Worker request failed: ${String(err)}`);
+        reject(error);
+      }
     });
   }
 

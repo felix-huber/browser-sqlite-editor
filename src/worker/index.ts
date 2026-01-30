@@ -5,17 +5,7 @@
  * keeping the UI responsive during heavy operations.
  */
 
-import type { WorkerRequest, WorkerResponse, WorkerErrorCode } from '../types';
-import { getEngine } from '../lib/db-engine';
-import { getSchemaInfo, getTableInfo, getAllForeignKeys } from '../lib/schema';
-import { checkOPFSAvailability, databaseExistsInOPFS } from '../lib/opfs-vfs';
-import {
-  executeRebuildPlan,
-  extractTableDependents,
-  generateRebuildPlanWithColumnMapping,
-  type SqliteMasterObject,
-} from '../lib/rebuild';
-import { registerQuery, requestCancellation } from './query-cancel';
+import type { WorkerRequest, WorkerResponse } from '../types';
 import {
   isStorageError,
   normalizeStorageError,
@@ -24,26 +14,35 @@ import {
   getStorageEstimate,
   type StorageError,
 } from './quota-errors';
-import { getIDBStorage } from './idb-storage';
-import { importDatabase } from './file-import';
-import { getRegistry, toFilename } from './db-registry';
 import {
-  getOPFSPath,
-  OPFS_VFS_NAME,
-  IDB_VFS_NAME,
-  readOPFSDatabase,
-  deleteOPFSDatabase,
-} from '../lib/opfs-vfs';
+  handleQueryRequest,
+  handleExecRequest,
+  handleCancelRequest,
+} from './handlers/query';
 import {
-  handleCreateTable,
-  handleAlterTable,
-  handleDropTable,
-  handleDropColumn,
-} from './schema-modification';
-
-const IDB_VFS_VERSION = 6;
-const IDB_VFS_METADATA_STORE = 'metadata';
-const IDB_VFS_BLOCKS_STORE = 'blocks';
+  handleOpenRequest,
+  handleCloseRequest,
+  handleCreateDbRequest,
+  handleDeleteDbRequest,
+  handleRenameDbRequest,
+  handleGetRegistryRequest,
+} from './handlers/registry';
+import {
+  handleFlushSnapshotRequest,
+  handleExportRequest,
+  handleImportRequest,
+  handleFlushAndCloseRequest,
+} from './handlers/import-export';
+import {
+  handleSchemaRequest,
+  handleTableInfoRequest,
+  handleForeignKeysRequest,
+  handleCreateTableRequest,
+  handleAlterTableRequest,
+  handleDropTableRequest,
+  handleDropColumnRequest,
+  handleRebuildTableRequest,
+} from './handlers/schema';
 
 /**
  * Tagged request with correlation ID from main thread
@@ -128,222 +127,6 @@ export async function withStorageProtection<T>(
 }
 
 /**
- * Create a query executor bound to the current engine instance
- */
-function createQueryExecutor() {
-  const engine = getEngine();
-  return async (sql: string, params?: unknown[]) => {
-    return engine.query(sql, params);
-  };
-}
-
-/**
- * Resolve database path based on storage mode
- */
-async function resolveDbPath(
-  dbName: string,
-  options: { allowCreate?: boolean } = {}
-): Promise<{ path: string; vfsName?: string }> {
-  const registry = getRegistry();
-  if (!registry.isInitialized()) {
-    await registry.init();
-  }
-  const entry = registry.getDatabaseByName(dbName);
-  let storageMode = entry?.storageType ?? registry.getStorageMode();
-  if (storageMode === 'opfs') {
-    const availability = await checkOPFSAvailability();
-    if (!availability.available) {
-      storageMode = 'idb';
-    } else if (!options.allowCreate) {
-      const exists = await databaseExistsInOPFS(toFilename(dbName));
-      if (!exists) {
-        storageMode = 'idb';
-      }
-    }
-  }
-  if (storageMode === 'opfs') {
-    return { path: getOPFSPath(toFilename(dbName)), vfsName: OPFS_VFS_NAME };
-  }
-  if (storageMode === 'idb') {
-    return { path: dbName, vfsName: IDB_VFS_NAME };
-  }
-  return { path: dbName };
-}
-
-function toIdbVfsPath(name: string): string {
-  return new URL(name, 'file://').pathname;
-}
-
-async function openIdbVfsDatabase(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(IDB_VFS_NAME, IDB_VFS_VERSION);
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(IDB_VFS_BLOCKS_STORE)) {
-        db.createObjectStore(IDB_VFS_BLOCKS_STORE, { keyPath: ['path', 'offset', 'version'] });
-      } else {
-        const tx = request.transaction;
-        const blocks = tx?.objectStore(IDB_VFS_BLOCKS_STORE);
-        if (blocks && blocks.indexNames.contains('version')) {
-          blocks.deleteIndex('version');
-        }
-      }
-      if (!db.objectStoreNames.contains(IDB_VFS_METADATA_STORE)) {
-        db.createObjectStore(IDB_VFS_METADATA_STORE, { keyPath: 'name' });
-      }
-    };
-  });
-}
-
-async function readIdbVfsDatabase(dbName: string): Promise<Uint8Array | null> {
-  const db = await openIdbVfsDatabase();
-  try {
-    const path = toIdbVfsPath(dbName);
-    const tx = db.transaction([IDB_VFS_METADATA_STORE, IDB_VFS_BLOCKS_STORE], 'readonly');
-    const metadata = tx.objectStore(IDB_VFS_METADATA_STORE);
-    const blocks = tx.objectStore(IDB_VFS_BLOCKS_STORE);
-
-    const meta = await new Promise<{ name: string; fileSize: number; version: number } | undefined>(
-      (resolve, reject) => {
-        const request = metadata.get(path);
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      }
-    );
-
-    if (!meta) {
-      return null;
-    }
-
-    const fileSize = Math.max(0, meta.fileSize ?? 0);
-    const output = new Uint8Array(fileSize);
-
-    const range = IDBKeyRange.bound([path, -Infinity], [path, Infinity]);
-    const entries = await new Promise<{ path: string; offset: number; version: number; data: Uint8Array }[]>(
-      (resolve, reject) => {
-        const results: { path: string; offset: number; version: number; data: Uint8Array }[] = [];
-        const request = blocks.openCursor(range);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-          const cursor = request.result;
-          if (!cursor) {
-            resolve(results);
-            return;
-          }
-          results.push(cursor.value as { path: string; offset: number; version: number; data: Uint8Array });
-          cursor.continue();
-        };
-      }
-    );
-
-    for (const block of entries) {
-      if (block.version !== meta.version) {
-        continue;
-      }
-      const start = Math.max(0, -block.offset);
-      if (start >= fileSize) {
-        continue;
-      }
-      const sliceLength = Math.min(block.data.byteLength, fileSize - start);
-      output.set(block.data.subarray(0, sliceLength), start);
-    }
-
-    return output;
-  } finally {
-    db.close();
-  }
-}
-
-/**
- * Export a database as a Blob based on storage mode
- */
-async function exportDatabaseBlob(dbName: string): Promise<Blob> {
-  const registry = getRegistry();
-  if (!registry.isInitialized()) {
-    await registry.init();
-  }
-
-  const entry = registry.getDatabaseByName(dbName);
-  if (!entry) {
-    throw new Error(`Database "${dbName}" not found`);
-  }
-
-  const storageMode = entry.storageType ?? registry.getStorageMode();
-
-  // If this DB is currently open, attempt a checkpoint to include WAL changes.
-  try {
-    const engine = getEngine();
-    if (engine.isReady() && engine.getDbName()) {
-      const { path } = await resolveDbPath(dbName);
-      if (engine.getDbName() === path) {
-        await engine.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-      }
-    }
-  } catch {
-    // Best-effort: export can still proceed without checkpoint
-  }
-
-  if (storageMode === 'opfs') {
-    const engine = getEngine();
-    const exportFile = `__export_${Date.now()}_${Math.random().toString(36).slice(2)}.sqlite`;
-    let vacuumed = false;
-
-    try {
-      if (engine.isReady() && engine.getDbName()) {
-        const { path } = await resolveDbPath(dbName);
-        if (engine.getDbName() === path) {
-          try {
-            await engine.exec(`VACUUM INTO '${getOPFSPath(exportFile)}'`);
-            vacuumed = true;
-          } catch {
-            // Fall back to reading the live file
-          }
-        }
-      }
-
-      const bytes = await readOPFSDatabase(vacuumed ? exportFile : toFilename(entry.name));
-      if (!bytes) {
-        throw new Error(`Database file for "${dbName}" not found in OPFS`);
-      }
-      const copy = new Uint8Array(bytes.byteLength);
-      copy.set(bytes);
-      return new Blob([copy.buffer], { type: 'application/x-sqlite3' });
-    } finally {
-      if (vacuumed) {
-        try {
-          await deleteOPFSDatabase(exportFile);
-        } catch {
-          // Best-effort cleanup
-        }
-      }
-    }
-  }
-
-  // IDB mode: read from IDB VFS, fall back to legacy snapshot storage
-  const idbBytes = await readIdbVfsDatabase(entry.name);
-  if (idbBytes) {
-    const copy = new Uint8Array(idbBytes.byteLength);
-    copy.set(idbBytes);
-    return new Blob([copy.buffer], { type: 'application/x-sqlite3' });
-  }
-
-  const storage = getIDBStorage();
-  try {
-    await storage.flush();
-  } catch {
-    // Ignore flush failures here; try to export the last good snapshot
-  }
-
-  const blob = await storage.load(entry.name);
-  if (!blob) {
-    throw new Error(`Database file for "${dbName}" not found in IndexedDB`);
-  }
-  return blob.type ? blob : blob.slice(0, blob.size, 'application/x-sqlite3');
-}
-
-/**
  * Handle incoming messages from the main thread
  */
 async function handleMessage(event: WorkerMessageEvent): Promise<void> {
@@ -355,264 +138,35 @@ async function handleMessage(event: WorkerMessageEvent): Promise<void> {
       break;
 
     case 'query':
-      {
-        const cleanup = registerQuery(String(id));
-        try {
-          const engine = getEngine();
-          // Engine must be open before querying
-          if (!engine.isReady()) {
-            throw new Error('No database open. Please open a database first.');
-          }
-          const result = await engine.query(request.sql, request.params);
-          postResponse({ type: 'queryResult', result }, id);
-        } catch (err) {
-          const normalized =
-            typeof err === 'object' && err !== null && 'code' in err && 'message' in err
-              ? (err as { code?: string; message?: string })
-              : null;
-          const message =
-            normalized?.message ??
-            (err instanceof Error ? err.message : String(err));
-          const lowerMessage = message.toLowerCase();
-          const normalizedCode =
-            typeof normalized?.code === 'string'
-              ? (normalized.code as WorkerErrorCode)
-              : undefined;
-          const code: WorkerErrorCode =
-            normalizedCode ??
-            (message.toUpperCase().includes('SQLITE_CONSTRAINT')
-              ? 'CONSTRAINT_VIOLATION'
-              : lowerMessage.includes('syntax error')
-              ? 'SYNTAX_ERROR'
-              : lowerMessage.includes('interrupt') || lowerMessage.includes('cancel')
-              ? 'CANCELED'
-              : 'UNKNOWN');
-          postResponse({
-            type: 'error',
-            message,
-            code,
-          }, id);
-        } finally {
-          cleanup();
-        }
-      }
+      await handleQueryRequest(request, id, postResponse);
       break;
 
     case 'exec':
-      {
-        const cleanup = registerQuery(String(id));
-        try {
-          const engine = getEngine();
-          // Engine must be open before executing
-          if (!engine.isReady()) {
-            throw new Error('No database open. Please open a database first.');
-          }
-          const result = await engine.exec(request.sql, request.params);
-          postResponse({ type: 'success', data: result }, id);
-        } catch (err) {
-          const normalized =
-            typeof err === 'object' && err !== null && 'code' in err && 'message' in err
-              ? (err as { code?: string; message?: string })
-              : null;
-          const message =
-            normalized?.message ??
-            (err instanceof Error ? err.message : String(err));
-          const lowerMessage = message.toLowerCase();
-          const normalizedCode =
-            typeof normalized?.code === 'string'
-              ? (normalized.code as WorkerErrorCode)
-              : undefined;
-          const code: WorkerErrorCode =
-            normalizedCode ??
-            (message.toUpperCase().includes('SQLITE_CONSTRAINT')
-              ? 'CONSTRAINT_VIOLATION'
-              : lowerMessage.includes('syntax error')
-              ? 'SYNTAX_ERROR'
-              : lowerMessage.includes('interrupt') || lowerMessage.includes('cancel')
-              ? 'CANCELED'
-              : 'UNKNOWN');
-          postResponse({
-            type: 'error',
-            message,
-            code,
-          }, id);
-        } finally {
-          cleanup();
-        }
-      }
+      await handleExecRequest(request, id, postResponse);
       break;
 
     case 'open':
-      try {
-        const engine = getEngine();
-        // Initialize engine if not ready
-        if (!engine.isReady()) {
-          await engine.initialize();
-        }
-        const { path, vfsName } = await resolveDbPath(request.dbName);
-        const readOnly = request.readOnly ?? false;
-        const createIfMissing = vfsName === OPFS_VFS_NAME && !readOnly;
-        await engine.open(path, vfsName, { readOnly, createIfMissing });
-        postResponse({ type: 'lockStatus', isWriter: !(request.readOnly ?? false) }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'error',
-          message: `Failed to open database: ${message}`,
-          code: 'UNKNOWN',
-        }, id);
-      }
+      await handleOpenRequest(request, id, postResponse);
       break;
 
     case 'close':
-      try {
-        const engine = getEngine();
-        await engine.close();
-        postResponse({ type: 'success' }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'error',
-          message: `Failed to close database: ${message}`,
-          code: 'UNKNOWN',
-        }, id);
-      }
+      await handleCloseRequest(request, id, postResponse);
       break;
 
     case 'createDb':
-      try {
-        const engine = getEngine();
-        // Initialize engine if not ready
-        if (!engine.isReady()) {
-          await engine.initialize();
-        }
-        // Open creates the database if it doesn't exist
-        const { path, vfsName } = await resolveDbPath(request.name, { allowCreate: true });
-        await engine.open(path, vfsName, { createIfMissing: true });
-        // Add to registry
-        const registry = getRegistry();
-        if (!registry.isInitialized()) {
-          await registry.init();
-        }
-        await registry.registerDatabase(request.name);
-        postResponse({ type: 'success' }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'error',
-          message: `Failed to create database: ${message}`,
-          code: 'UNKNOWN',
-        }, id);
-      }
+      await handleCreateDbRequest(request, id, postResponse);
       break;
 
     case 'deleteDb':
-      try {
-        const registry = getRegistry();
-        if (!registry.isInitialized()) {
-          await registry.init();
-        }
-        const result = await registry.deleteDatabase(request.name);
-        if (!result.success) {
-          const code = result.error?.code === 'NOT_FOUND' ? 'NOT_FOUND' : 'UNKNOWN';
-          postResponse({
-            type: 'error',
-            message: result.error?.message ?? 'Failed to delete database',
-            code,
-          }, id);
-          break;
-        }
-        postResponse({
-          type: 'success',
-          data: result.warnings ? { warnings: result.warnings } : undefined,
-        }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'error',
-          message: `Failed to delete database: ${message}`,
-          code: 'UNKNOWN',
-        }, id);
-      }
+      await handleDeleteDbRequest(request, id, postResponse);
       break;
 
     case 'renameDb':
-      try {
-        const registry = getRegistry();
-        if (!registry.isInitialized()) {
-          await registry.init();
-        }
-        const entry = registry.getDatabaseByName(request.oldName);
-        if (!entry) {
-          postResponse({
-            type: 'error',
-            message: `Database "${request.oldName}" not found`,
-            code: 'NOT_FOUND',
-          }, id);
-          break;
-        }
-
-        const result = await registry.renameDatabase(entry.id, request.newName);
-        if (!result.success) {
-          const errorCode = result.error?.code;
-          const code =
-            errorCode === 'NOT_FOUND'
-              ? 'NOT_FOUND'
-              : errorCode === 'NAME_EXISTS' ||
-                errorCode === 'NAME_EMPTY' ||
-                errorCode === 'NAME_TOO_LONG' ||
-                errorCode === 'PATH_SEPARATOR' ||
-                errorCode === 'HIDDEN_FILE' ||
-                errorCode === 'RESERVED_NAME' ||
-                errorCode === 'PATH_TRAVERSAL'
-              ? 'INVALID_NAME'
-              : 'UNKNOWN';
-          postResponse({
-            type: 'error',
-            message: result.error?.message ?? 'Failed to rename database',
-            code,
-          }, id);
-          break;
-        }
-
-        postResponse({ type: 'success' }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'error',
-          message: `Failed to rename database: ${message}`,
-          code: 'UNKNOWN',
-        }, id);
-      }
+      await handleRenameDbRequest(request, id, postResponse);
       break;
 
     case 'getRegistry':
-      try {
-        const registry = getRegistry();
-        if (!registry.isInitialized()) {
-          await registry.init();
-        }
-        const entries = registry.listDatabases();
-        // Convert RegistryEntry to DatabaseEntry format
-        const databases = entries.map((e) => ({
-          name: e.name,
-          file: e.storageType === 'opfs' ? toFilename(e.name) : e.name,
-          createdAt: e.createdAt,
-          lastOpenedAt: e.lastOpenedAt,
-          fkEnforced: true, // Default to enabled
-        }));
-        postResponse({
-          type: 'registryResult',
-          registry: { v: 1, databases },
-        }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'error',
-          message: `Failed to get registry: ${message}`,
-          code: 'UNKNOWN',
-        }, id);
-      }
+      await handleGetRegistryRequest(request, id, postResponse);
       break;
 
     case 'acquireLock':
@@ -629,414 +183,55 @@ async function handleMessage(event: WorkerMessageEvent): Promise<void> {
       break;
 
     case 'flushSnapshot':
-      try {
-        const storage = getIDBStorage();
-        const result = await storage.flush();
-        if (!result.success) {
-          postResponse({
-            type: 'error',
-            message: result.error?.message ?? 'Failed to flush snapshot',
-            code: result.error?.code ?? 'UNKNOWN',
-          }, id);
-          break;
-        }
-        postResponse({ type: 'success' }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'error',
-          message: `Failed to flush snapshot: ${message}`,
-          code: 'UNKNOWN',
-        }, id);
-      }
+      await handleFlushSnapshotRequest(request, id, postResponse);
       break;
 
     case 'export':
-      try {
-        const blob = await exportDatabaseBlob(request.dbName);
-        postResponse({ type: 'success', data: blob }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const code = message.includes('not found') ? 'NOT_FOUND' : 'UNKNOWN';
-        postResponse({
-          type: 'error',
-          message: `Export failed: ${message}`,
-          code,
-        }, id);
-      }
+      await handleExportRequest(request, id, postResponse);
       break;
 
     case 'schema':
-      try {
-        const queryExecutor = createQueryExecutor();
-        const schema = await getSchemaInfo(queryExecutor);
-        postResponse({ type: 'schemaResult', schema }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'error',
-          message: `Failed to get schema: ${message}`,
-          code: 'UNKNOWN',
-        }, id);
-      }
+      await handleSchemaRequest(request, id, postResponse);
       break;
 
     case 'tableInfo':
-      try {
-        const queryExecutor = createQueryExecutor();
-        const tableInfo = await getTableInfo(queryExecutor, request.table);
-        postResponse({ type: 'tableInfoResult', tableInfo }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const code = message.includes('not found') ? 'NOT_FOUND' : 'UNKNOWN';
-        postResponse({
-          type: 'error',
-          message: `Failed to get table info: ${message}`,
-          code,
-        }, id);
-      }
+      await handleTableInfoRequest(request, id, postResponse);
       break;
 
     case 'foreignKeys':
-      try {
-        const queryExecutor = createQueryExecutor();
-        const foreignKeys = await getAllForeignKeys(queryExecutor);
-        postResponse({ type: 'foreignKeysResult', foreignKeys }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'error',
-          message: `Failed to query foreign keys: ${message}`,
-          code: 'UNKNOWN',
-        }, id);
-      }
+      await handleForeignKeysRequest(request, id, postResponse);
       break;
 
     case 'cancel':
-      try {
-        // Request cancellation - the requestId is extracted from the tagged request
-        // in the handleMessage caller if present
-        await requestCancellation();
-        postResponse({ type: 'success' }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'error',
-          message: `Failed to cancel: ${message}`,
-          code: 'UNKNOWN',
-        }, id);
-      }
+      await handleCancelRequest(request, id, postResponse);
       break;
 
     case 'flushAndClose':
-      try {
-        const storage = getIDBStorage();
-        const result = await storage.flushAndClose(request.dbId);
-
-        postResponse({
-          type: 'flushAndCloseResult',
-          success: result.success,
-          error: result.error
-            ? {
-                code: result.error.code,
-                message: result.error.message,
-                attempts: result.error.attempts,
-              }
-            : undefined,
-        }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'flushAndCloseResult',
-          success: false,
-          error: {
-            code: 'IDB_FLUSH_FAILED',
-            message: `Unexpected error during flushAndClose: ${message}`,
-            attempts: 0,
-          },
-        }, id);
-      }
+      await handleFlushAndCloseRequest(request, id, postResponse);
       break;
 
     case 'import':
-      try {
-        // Initialize registry if needed
-        const registry = getRegistry();
-        if (!registry.isInitialized()) {
-          await registry.init();
-        }
-
-        const storageMode = registry.getStorageMode();
-
-        // Import with progress reporting (progress is broadcast, not a response)
-        const importResult = await importDatabase(request.file, {
-          nameHint: request.nameHint,
-          storageMode,
-          onProgress: (percent) => {
-            postBroadcast({ type: 'progress', percent, message: 'Importing database...' });
-          },
-        });
-
-        if (importResult.success) {
-          postResponse({
-            type: 'success',
-            data: {
-              dbId: importResult.dbId,
-              dbName: importResult.dbName,
-              storageType: importResult.storageType,
-              fileSize: importResult.fileSize,
-            },
-          }, id);
-        } else {
-          postResponse({
-            type: 'error',
-            message: importResult.message,
-            code: importResult.code,
-          }, id);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'error',
-          message: `Import failed: ${message}`,
-          code: 'UNKNOWN',
-        }, id);
-      }
+      await handleImportRequest(request, id, postResponse, postBroadcast);
       break;
 
     case 'createTable':
-      try {
-        const queryExecutor = createQueryExecutor();
-        const result = await handleCreateTable({
-          def: request.def,
-          query: queryExecutor,
-          isReadOnly: request.isReadOnly,
-        });
-
-        postResponse({
-          type: 'schemaModificationResult',
-          success: result.success,
-          error: result.error
-            ? {
-                code: result.error.code,
-                message: result.error.message,
-                details: result.error.details,
-              }
-            : undefined,
-        }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'schemaModificationResult',
-          success: false,
-          error: {
-            code: 'UNKNOWN',
-            message: `Create table failed: ${message}`,
-          },
-        }, id);
-      }
+      await handleCreateTableRequest(request, id, postResponse);
       break;
 
     case 'alterTable':
-      try {
-        const queryExecutor = createQueryExecutor();
-        const result = await handleAlterTable({
-          table: request.table,
-          action: request.action,
-          query: queryExecutor,
-          isReadOnly: request.isReadOnly,
-        });
-
-        postResponse({
-          type: 'schemaModificationResult',
-          success: result.success,
-          error: result.error
-            ? {
-                code: result.error.code,
-                message: result.error.message,
-                details: result.error.details,
-              }
-            : undefined,
-        }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'schemaModificationResult',
-          success: false,
-          error: {
-            code: 'UNKNOWN',
-            message: `Alter table failed: ${message}`,
-          },
-        }, id);
-      }
+      await handleAlterTableRequest(request, id, postResponse);
       break;
 
     case 'dropTable':
-      try {
-        const queryExecutor = createQueryExecutor();
-        const result = await handleDropTable({
-          table: request.table,
-          query: queryExecutor,
-          isReadOnly: request.isReadOnly,
-        });
-
-        postResponse({
-          type: 'schemaModificationResult',
-          success: result.success,
-          error: result.error
-            ? {
-                code: result.error.code,
-                message: result.error.message,
-                details: result.error.details,
-              }
-            : undefined,
-        }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'schemaModificationResult',
-          success: false,
-          error: {
-            code: 'UNKNOWN',
-            message: `Drop table failed: ${message}`,
-          },
-        }, id);
-      }
+      await handleDropTableRequest(request, id, postResponse);
       break;
 
     case 'dropColumn':
-      try {
-        const queryExecutor = createQueryExecutor();
-        const result = await handleDropColumn({
-          table: request.table,
-          column: request.column,
-          query: queryExecutor,
-          isReadOnly: request.isReadOnly,
-        });
-
-        postResponse({
-          type: 'schemaModificationResult',
-          success: result.success,
-          error: result.error
-            ? {
-                code: result.error.code,
-                message: result.error.message,
-                details: result.error.details,
-              }
-            : undefined,
-        }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'schemaModificationResult',
-          success: false,
-          error: {
-            code: 'UNKNOWN',
-            message: `Drop column failed: ${message}`,
-          },
-        }, id);
-      }
+      await handleDropColumnRequest(request, id, postResponse);
       break;
 
     case 'rebuildTable':
-      try {
-        if (request.isReadOnly) {
-          postResponse({
-            type: 'schemaModificationResult',
-            success: false,
-            error: {
-              code: 'READ_ONLY',
-              message: 'Cannot rebuild table in read-only mode',
-            },
-          }, id);
-          break;
-        }
-
-        const engine = getEngine();
-        if (!engine.isReady()) {
-          throw new Error('No database open. Please open a database first.');
-        }
-
-        const queryExecutor = createQueryExecutor();
-        const tableInfo = await getTableInfo(queryExecutor, request.table);
-
-        const masterResult = await engine.query(
-          `SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master`
-        );
-
-        const masterRows: SqliteMasterObject[] = masterResult.rows.map((row) => ({
-          type: row[0] as SqliteMasterObject['type'],
-          name: row[1] as string,
-          tblName: row[2] as string,
-          rootpage: typeof row[3] === 'number' ? row[3] as number : 0,
-          sql: (row[4] as string | null) ?? null,
-        }));
-
-        const allForeignKeys = await getAllForeignKeys(queryExecutor);
-        const foreignKeyMap = new Map<string, typeof allForeignKeys[number][]>();
-        for (const fk of allForeignKeys) {
-          const list = foreignKeyMap.get(fk.childTable) ?? [];
-          list.push(fk);
-          foreignKeyMap.set(fk.childTable, list);
-        }
-
-        const dependents = extractTableDependents(request.table, masterRows, foreignKeyMap);
-        const oldColumns = tableInfo.columns.map((col) => col.name);
-        const newColumns = request.newColumns.length > 0 ? request.newColumns : oldColumns;
-        const renameMap =
-          request.columnRenames && request.columnRenames.length > 0
-            ? new Map(request.columnRenames.map((c) => [c.oldName, c.newName]))
-            : undefined;
-
-        const plan = generateRebuildPlanWithColumnMapping(
-          request.table,
-          request.newCreateSql,
-          dependents,
-          oldColumns,
-          newColumns,
-          renameMap
-        );
-
-        const result = await executeRebuildPlan(engine, plan, {
-          expectedColumns: newColumns,
-        });
-
-        if (!result.success) {
-          const message = result.error ?? 'Table rebuild failed';
-          const lowerMessage = message.toLowerCase();
-          const code: WorkerErrorCode =
-            lowerMessage.includes('foreign key') || lowerMessage.includes('constraint')
-              ? 'CONSTRAINT_VIOLATION'
-              : lowerMessage.includes('not found')
-                ? 'NOT_FOUND'
-                : 'UNKNOWN';
-
-          postResponse({
-            type: 'schemaModificationResult',
-            success: false,
-            error: {
-              code,
-              message,
-              details: result.verificationFailures
-                ? result.verificationFailures.map((failure) => failure.message).join('; ')
-                : undefined,
-            },
-          }, id);
-          break;
-        }
-
-        postResponse({ type: 'schemaModificationResult', success: true }, id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        postResponse({
-          type: 'schemaModificationResult',
-          success: false,
-          error: {
-            code: 'UNKNOWN',
-            message: `Rebuild table failed: ${message}`,
-          },
-        }, id);
-      }
+      await handleRebuildTableRequest(request, id, postResponse);
       break;
 
     // Future handlers will be added here as the worker is extended

@@ -183,9 +183,9 @@ export class DatabaseEngine {
   private async _doInitialize(): Promise<void> {
     try {
       // Load the WASM module
-      const resolvedWasmUrl = new URL(wasmUrl, import.meta.url).toString();
+      const resolvedWasmUrl = resolveWasmUrl(wasmUrl);
       const module = await SQLiteESMFactory({
-        locateFile: () => resolvedWasmUrl,
+        locateFile: (file: string) => (file.endsWith('.wasm') ? resolvedWasmUrl : file),
       });
 
       // Build the SQLite API
@@ -478,6 +478,27 @@ export class DatabaseEngine {
     this.state = 'uninitialized';
     this.initPromise = null;
   }
+}
+
+function resolveWasmUrl(url: string): string {
+  // Absolute/data/blob URLs can be used directly.
+  if (/^(https?:|data:|blob:)/.test(url)) {
+    return url;
+  }
+
+  // Handle blob-based workers by extracting the origin from the blob URL.
+  try {
+    if (typeof self !== 'undefined' && 'location' in self && self.location?.href) {
+      const locationUrl = new URL(self.location.href);
+      if (locationUrl.origin && locationUrl.origin !== 'null') {
+        return new URL(url, locationUrl.origin).toString();
+      }
+    }
+  } catch {
+    // Fall through to import.meta.url resolution.
+  }
+
+  return new URL(url, import.meta.url).toString();
 }
 
 // =============================================================================
