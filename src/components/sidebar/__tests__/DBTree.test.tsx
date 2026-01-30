@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { DBTree, type DBTreeSchema } from '../DBTree';
 import { useDatabaseStore } from '../../../store';
 import type { DatabaseEntry } from '../../../types';
@@ -52,34 +52,40 @@ describe('DBTree', () => {
     expect(screen.getByTestId('db-name-test-db')).toHaveTextContent('test-db');
   });
 
-  it('calls onToggleExpand when clicked', () => {
+  it('calls onToggleExpand when clicked', async () => {
     const onToggleExpand = vi.fn();
     render(<DBTree {...defaultProps} onToggleExpand={onToggleExpand} />);
 
     const dbRow = screen.getByTestId('db-row-test-db');
     fireEvent.click(dbRow);
 
-    expect(onToggleExpand).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(onToggleExpand).toHaveBeenCalled();
+    });
   });
 
-  it('calls onToggleExpand on Enter key', () => {
+  it('calls onToggleExpand on Enter key', async () => {
     const onToggleExpand = vi.fn();
     render(<DBTree {...defaultProps} onToggleExpand={onToggleExpand} />);
 
     const dbRow = screen.getByTestId('db-row-test-db');
     fireEvent.keyDown(dbRow, { key: 'Enter' });
 
-    expect(onToggleExpand).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(onToggleExpand).toHaveBeenCalled();
+    });
   });
 
-  it('calls onToggleExpand on Space key', () => {
+  it('calls onToggleExpand on Space key', async () => {
     const onToggleExpand = vi.fn();
     render(<DBTree {...defaultProps} onToggleExpand={onToggleExpand} />);
 
     const dbRow = screen.getByTestId('db-row-test-db');
     fireEvent.keyDown(dbRow, { key: ' ' });
 
-    expect(onToggleExpand).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(onToggleExpand).toHaveBeenCalled();
+    });
   });
 
   it('does not show contents when collapsed', () => {

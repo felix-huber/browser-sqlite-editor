@@ -21,9 +21,7 @@ import { NewDatabaseDialog } from './components/common/NewDatabaseDialog';
 import { ConfirmDialog } from './components/common/ConfirmDialog';
 import { Welcome } from './components/welcome/Welcome';
 import { Sidebar } from './components/sidebar';
-import { TableView } from './components/table';
 import type { GridEditActions } from './components/grid/DataGrid';
-import TableDesignerView from './components/designer/TableDesignerView';
 import { ImportDialog } from './components/import/ImportDialog';
 import { StatusBar } from './components/layout/StatusBar';
 import { OpenDatabaseButton } from './components/layout/OpenDatabaseButton';
@@ -51,6 +49,8 @@ import type { QueryResult, QueryHistoryItem, DatabaseRegistry } from './types';
 const ERDView = lazy(() => import('./components/erd/ERDView'));
 const QueryBuilderView = lazy(() => import('./components/query-builder/QueryBuilderView'));
 const SqlEditorPanel = lazy(() => import('./components/sql/SqlEditorPanel'));
+const TableView = lazy(() => import('./components/table/TableView'));
+const TableDesignerView = lazy(() => import('./components/designer/TableDesignerView'));
 
 /** View types for the main content area */
 type ViewType = 'welcome' | 'table' | 'sql' | 'erd' | 'designer' | 'query-builder';
@@ -773,24 +773,28 @@ function App() {
           );
         }
         return (
-          <TableView
-            tableName={tableName}
-            viewName={activeView.viewName}
-            isReadOnly={isReadOnly}
-            onEditStateChange={handleGridEditStateChange}
-            onEditActionsChange={handleGridEditActionsChange}
-            onOpenSql={openSqlWithQuery}
-          />
+          <Suspense fallback={lazyFallback}>
+            <TableView
+              tableName={tableName}
+              viewName={activeView.viewName}
+              isReadOnly={isReadOnly}
+              onEditStateChange={handleGridEditStateChange}
+              onEditActionsChange={handleGridEditActionsChange}
+              onOpenSql={openSqlWithQuery}
+            />
+          </Suspense>
         );
       }
       case 'designer':
         return (
-          <TableDesignerView
-            tableName={activeView.tableName}
-            isReadOnly={isReadOnly}
-            onOpenTable={handleDesignerOpenTable}
-            onDirtyChange={handleDesignerDirtyChange}
-          />
+          <Suspense fallback={lazyFallback}>
+            <TableDesignerView
+              tableName={activeView.tableName}
+              isReadOnly={isReadOnly}
+              onOpenTable={handleDesignerOpenTable}
+              onDirtyChange={handleDesignerDirtyChange}
+            />
+          </Suspense>
         );
       case 'erd':
         return (

@@ -399,6 +399,13 @@ test.describe('Persistence Tests', () => {
 
   test.describe('Basic Persistence (IndexedDB)', () => {
     test('registry entry persists across page refresh', async ({ page }) => {
+      const testData = [
+        0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, // "SQLite f"
+        0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00, // "ormat 3\0"
+      ];
+
+      await storeIdbDatabase(page, 'test-db', testData);
+
       // Create a registry entry
       const id = await createIdbRegistryEntry(page, 'test-db');
       expect(id).toBeTruthy();

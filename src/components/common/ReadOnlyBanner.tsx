@@ -51,21 +51,26 @@ export function ReadOnlyBanner({ staleThresholdMs = STALE_THRESHOLD_MS }: ReadOn
       const lockManager = getLockManager();
       const status = await lockManager.queryLockStatus(activeDbId);
 
-      if (status.isLocked) {
-        setLockHolderInfo(status.holderId);
-
-        // Check staleness based on heartbeat
-        if (status.acquiredAt) {
-          const timeSinceHeartbeat = Date.now() - status.acquiredAt;
-          setIsStale(timeSinceHeartbeat > staleThresholdMs);
-        } else {
-          // Web Locks mode - check if status reports stale
-          setIsStale(status.isStale);
-        }
-      } else {
-        // Lock was released - trigger retry
+      if (!status.isLocked && !status.isStale) {
+        // Lock released and no stale signal.
         setIsStale(false);
         setLockHolderInfo(null);
+        return;
+      }
+
+      setLockHolderInfo(status.holderId);
+
+      if (status.isStale) {
+        setIsStale(true);
+        return;
+      }
+
+      if (status.acquiredAt) {
+        const timeSinceHeartbeat = Date.now() - status.acquiredAt;
+        setIsStale(timeSinceHeartbeat > staleThresholdMs);
+      } else {
+        // Web Locks mode - no staleness available
+        setIsStale(false);
       }
     };
 

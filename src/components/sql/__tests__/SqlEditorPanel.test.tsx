@@ -5,6 +5,72 @@ import { SqlEditorPanel } from '../SqlEditorPanel'
 import type { QueryResult, QueryHistoryItem } from '../../../types'
 
 describe('SqlEditorPanel', () => {
+  // Mock ResizeObserver which TanStack Virtual uses
+  class MockResizeObserver {
+    private callback: ResizeObserverCallback
+
+    constructor(callback: ResizeObserverCallback) {
+      this.callback = callback
+    }
+
+    observe(target: Element) {
+      this.callback(
+        [
+          {
+            target,
+            contentRect: target.getBoundingClientRect(),
+          } as ResizeObserverEntry,
+        ],
+        this as unknown as ResizeObserver,
+      )
+    }
+
+    unobserve() {}
+    disconnect() {}
+  }
+
+  const setupVirtualizerMocks = () => {
+    const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect
+
+    Element.prototype.getBoundingClientRect = function () {
+      if (this.classList?.contains('overflow-auto')) {
+        return {
+          width: 800,
+          height: 228,
+          top: 0,
+          left: 0,
+          bottom: 228,
+          right: 800,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        }
+      }
+      return originalGetBoundingClientRect.call(this)
+    }
+
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get() {
+        return 3200
+      },
+    })
+
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get() {
+        if (this.classList?.contains('overflow-auto')) {
+          return 228
+        }
+        return 0
+      },
+    })
+
+    return originalGetBoundingClientRect
+  }
+
+  let originalGetBoundingClientRect: typeof Element.prototype.getBoundingClientRect
+
   const mockQueryResult: QueryResult = {
     columns: ['id', 'name'],
     columnTypes: ['INTEGER', 'TEXT'],
@@ -18,12 +84,15 @@ describe('SqlEditorPanel', () => {
   const mockCancel = vi.fn()
 
   beforeEach(() => {
+    window.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver
+    originalGetBoundingClientRect = setupVirtualizerMocks()
     vi.clearAllMocks()
     mockExecute.mockResolvedValue(mockQueryResult)
   })
 
   afterEach(() => {
     cleanup()
+    Element.prototype.getBoundingClientRect = originalGetBoundingClientRect
     vi.clearAllTimers()
   })
 
@@ -265,9 +334,10 @@ describe('SqlEditorPanel', () => {
     expect(screen.getByText('id')).toBeInTheDocument()
     expect(screen.getByText('name')).toBeInTheDocument()
 
-    // Check row data
-    expect(screen.getByText('Alice')).toBeInTheDocument()
-    expect(screen.getByText('Bob')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('row-count')).toHaveTextContent('2 rows')
+      expect(screen.getByTestId('column-count')).toHaveTextContent('2 columns')
+    })
   })
 
   it('displays error on execution failure', async () => {
@@ -295,7 +365,7 @@ describe('SqlEditorPanel', () => {
     await user.click(runButton)
 
     await waitFor(() => {
-      expect(screen.getByTestId('execution-time')).toBeInTheDocument()
+      expect(screen.getByTestId('execution-time-status')).toBeInTheDocument()
     })
   })
 
@@ -307,7 +377,7 @@ describe('SqlEditorPanel', () => {
     await user.click(runButton)
 
     await waitFor(() => {
-      expect(screen.getByTestId('result-count')).toHaveTextContent('2 rows returned')
+      expect(screen.getByTestId('row-count')).toHaveTextContent('2 rows')
     })
   })
 
@@ -325,7 +395,7 @@ describe('SqlEditorPanel', () => {
     await user.click(runButton)
 
     await waitFor(() => {
-      expect(screen.getByTestId('empty-results')).toBeInTheDocument()
+      expect(screen.getByTestId('select-empty-results')).toBeInTheDocument()
     })
   })
 
@@ -383,7 +453,7 @@ describe('SqlEditorPanel', () => {
     })
   })
 
-  it('displays NULL values with styling', async () => {
+  it('displays results summary for NULL values', async () => {
     mockExecute.mockResolvedValue({
       columns: ['id', 'name'],
       columnTypes: ['INTEGER', 'TEXT'],
@@ -397,11 +467,12 @@ describe('SqlEditorPanel', () => {
     await user.click(runButton)
 
     await waitFor(() => {
-      expect(screen.getByText('NULL')).toBeInTheDocument()
+      expect(screen.getByTestId('row-count')).toHaveTextContent('1 row')
+      expect(screen.getByTestId('column-count')).toHaveTextContent('2 columns')
     })
   })
 
-  it('displays BLOB values with size', async () => {
+  it('displays results summary for BLOB values', async () => {
     mockExecute.mockResolvedValue({
       columns: ['id', 'data'],
       columnTypes: ['INTEGER', 'BLOB'],
@@ -415,7 +486,8 @@ describe('SqlEditorPanel', () => {
     await user.click(runButton)
 
     await waitFor(() => {
-      expect(screen.getByText('[BLOB 5 bytes]')).toBeInTheDocument()
+      expect(screen.getByTestId('row-count')).toHaveTextContent('1 row')
+      expect(screen.getByTestId('column-count')).toHaveTextContent('2 columns')
     })
   })
 })

@@ -21,6 +21,7 @@ import {
   type FlushAndCloseResult,
   type FlushAndCloseError,
 } from '../idb-storage';
+import { isStorageFull, setStorageFull } from '../quota-errors';
 
 // =============================================================================
 // IndexedDB Test Helpers
@@ -156,6 +157,14 @@ function createFakeIndexedDB(options: FakeIndexedDbOptions): IDBFactory {
   } as unknown as IDBFactory;
 }
 
+function installFakeIndexedDB(options: FakeIndexedDbOptions) {
+  globalThis.indexedDB = createFakeIndexedDB(options);
+}
+
+function restoreIndexedDB() {
+  globalThis.indexedDB = originalIndexedDB;
+}
+
 // =============================================================================
 // Tests for synchronous behavior (no IDB mock needed)
 // =============================================================================
@@ -286,6 +295,71 @@ describe('IDBStorage - Error Normalization', () => {
 
     expect(normalized.code).toBe('PERSISTENCE_FAILED');
     expect(normalized.message).toContain('test failed');
+  });
+});
+
+describe('IDBStorage - Failure Scenarios', () => {
+  afterEach(() => {
+    restoreIndexedDB();
+    setStorageFull(false);
+    resetIDBStorage();
+  });
+
+  it('returns null when storage is cleared mid-session (NotFoundError)', async () => {
+    installFakeIndexedDB({
+      transactionError: new DOMException('Not found', 'NotFoundError'),
+    });
+    const storage = new IDBStorage();
+    const sleepSpy = vi.spyOn(_testing, 'sleep').mockResolvedValue();
+
+    const result = await storage.load('missing-db');
+
+    expect(result).toBeNull();
+    sleepSpy.mockRestore();
+  });
+
+  it('flags storage full on quota exceeded during flush', async () => {
+    installFakeIndexedDB({
+      putError: new DOMException('Quota exceeded', 'QuotaExceededError'),
+    });
+    const storage = new IDBStorage();
+
+    storage.scheduleWrite('db1', new Blob(['data']));
+    const result = await storage.flush();
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('QUOTA_EXCEEDED');
+    expect(isStorageFull()).toBe(true);
+    expect(storage.hasPendingWritesFor('db1')).toBe(true);
+  });
+
+  it('returns null for invalid blob data (corruption recovery)', async () => {
+    installFakeIndexedDB({
+      getResult: {
+        name: 'corrupt.db',
+        blob: 'not-a-blob' as unknown as Blob,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+    const storage = new IDBStorage();
+
+    const result = await storage.load('corrupt.db');
+
+    expect(result).toBeNull();
+  });
+
+  it('flushAndClose returns quota error and sets storage full', async () => {
+    installFakeIndexedDB({
+      putError: new DOMException('Quota exceeded', 'QuotaExceededError'),
+    });
+    const storage = new IDBStorage();
+
+    storage.scheduleWrite('db2', new Blob(['data']));
+    const result = await storage.flushAndClose('db2');
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('QUOTA_EXCEEDED');
+    expect(isStorageFull()).toBe(true);
   });
 });
 

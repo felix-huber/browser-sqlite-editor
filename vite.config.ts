@@ -4,6 +4,21 @@ import { VitePWA } from 'vite-plugin-pwa'
 import { visualizer } from 'rollup-plugin-visualizer'
 
 export default defineConfig({
+  build: {
+    rollupOptions: {
+      output: {
+        entryFileNames: 'assets/[name]-[hash].js',
+      },
+    },
+  },
+  worker: {
+    rollupOptions: {
+      output: {
+        entryFileNames: 'assets/worker-[name]-[hash].js',
+        chunkFileNames: 'assets/worker-[name]-[hash].js',
+      },
+    },
+  },
   plugins: [
     react(),
     // Generate bundle analysis when ANALYZE=true

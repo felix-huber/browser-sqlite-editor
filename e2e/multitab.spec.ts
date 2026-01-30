@@ -418,6 +418,12 @@ test.describe('Multi-Tab Locking', () => {
       await releaseLockInTab(pageA, dbName); // Explicitly release before close
       await pageA.close();
 
+      // Wait for localStorage propagation to Tab B
+      await pageB.waitForFunction(
+        (name) => !localStorage.getItem(`sqlite-editor-lock-${name}`),
+        dbName
+      );
+
       // Tab B can now acquire lock
       tabBAcquired = await acquireLockInTab(pageB, dbName, tabBId);
       expect(tabBAcquired).toBe(true);

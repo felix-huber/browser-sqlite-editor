@@ -157,6 +157,22 @@ export function ExportDialog({
     setSqlOptions((prev) => ({ ...prev, targetTableName: tableName }))
   }, [tableName])
 
+  // Reset options when opening to ensure a predictable default state
+  useEffect(() => {
+    if (!isOpen) return
+    setFormat('csv')
+    setCsvOptions({
+      delimiter: ',',
+      spreadsheetSafe: false,
+      includeHeaders: true,
+      lineEnding: 'lf',
+    })
+    setJsonOptions({
+      prettyPrint: true,
+      arrayOfObjects: true,
+    })
+  }, [isOpen])
+
   // Handle dialog open/close
   useEffect(() => {
     const dialog = dialogRef.current
@@ -285,7 +301,6 @@ export function ExportDialog({
     }
 
     triggerDownload(content, filename, mimeType)
-    onClose()
   }, [
     format,
     csvOptions,
@@ -295,7 +310,6 @@ export function ExportDialog({
     rows,
     tableName,
     tableInfo,
-    onClose,
   ])
 
   const showRowWarning = rows.length > rowLimitWarning
@@ -615,6 +629,7 @@ export function ExportDialog({
         {/* Footer */}
         <div className="flex justify-end gap-3 px-4 py-3 border-t border-navy-200 bg-navy-50 rounded-b-lg">
           <button
+            type="button"
             onClick={onClose}
             className="px-4 py-2 text-sm font-medium text-navy-700 bg-white border border-navy-300 rounded hover:bg-navy-50 transition-colors"
             data-testid="cancel-button"
@@ -622,6 +637,7 @@ export function ExportDialog({
             Cancel
           </button>
           <button
+            type="button"
             onClick={handleExport}
             className="px-4 py-2 text-sm font-medium text-white bg-navy-600 rounded hover:bg-navy-700 transition-colors"
             data-testid="download-button"

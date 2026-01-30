@@ -116,28 +116,40 @@ describe('Sidebar', () => {
     }, { timeout: 300 });
   });
 
-  it('expands database when clicked', () => {
+  it('expands database when clicked', async () => {
     mockState.databases = mockDatabases;
     mockUseDatabases.mockReturnValue(mockDatabases);
     render(<Sidebar />);
 
     const dbRow = screen.getByTestId('db-row-test-db');
-    fireEvent.click(dbRow);
+    await act(async () => {
+      fireEvent.click(dbRow);
+    });
 
-    expect(screen.getByTestId('db-contents-test-db')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('db-contents-test-db')).toBeInTheDocument();
+    });
   });
 
-  it('collapses database when clicked again', () => {
+  it('collapses database when clicked again', async () => {
     mockState.databases = mockDatabases;
     mockUseDatabases.mockReturnValue(mockDatabases);
     render(<Sidebar />);
 
     const dbRow = screen.getByTestId('db-row-test-db');
-    fireEvent.click(dbRow);
-    expect(screen.getByTestId('db-contents-test-db')).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(dbRow);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('db-contents-test-db')).toBeInTheDocument();
+    });
 
-    fireEvent.click(dbRow);
-    expect(screen.queryByTestId('db-contents-test-db')).not.toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(dbRow);
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('db-contents-test-db')).not.toBeInTheDocument();
+    });
   });
 
   it('calls onSelectTable when a table is selected', () => {

@@ -70,14 +70,23 @@
   },
   "size-limit": [
     {
-      "name": "Total JS bundle",
-      "path": "dist/assets/*.js",
-      "limit": "300 KB"
+      "name": "Startup JS bundle",
+      "path": [
+        "dist/assets/index-*.js",
+        "dist/assets/worker-*.js"
+      ],
+      "limit": "200 KB"
     },
     {
       "name": "Main chunk (gzip)",
       "path": "dist/assets/index-*.js",
       "limit": "100 KB",
+      "gzip": true
+    },
+    {
+      "name": "Worker chunk (gzip)",
+      "path": "dist/assets/worker-*.js",
+      "limit": "80 KB",
       "gzip": true
     },
     {

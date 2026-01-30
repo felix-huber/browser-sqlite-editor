@@ -294,7 +294,7 @@ describe('ExportDialog', () => {
       expect(createdLinks.length).toBeGreaterThan(0)
       expect(createdLinks[0].click).toHaveBeenCalled()
       expect(revokeObjectURLSpy).toHaveBeenCalled()
-      expect(onClose).toHaveBeenCalled()
+      expect(onClose).not.toHaveBeenCalled()
     })
 
     it('uses correct filename for CSV export', async () => {

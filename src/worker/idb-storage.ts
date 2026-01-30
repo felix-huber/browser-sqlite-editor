@@ -387,7 +387,7 @@ export class IDBStorage {
       }
 
       // Set global storage full flag for quota errors
-      if (isStorageError(err)) {
+      if (error.code === 'QUOTA_EXCEEDED' || isStorageError(err)) {
         setStorageFull(true);
       }
 

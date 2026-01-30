@@ -1254,8 +1254,9 @@ describe('DataGrid', () => {
         expect(onAddRow).toHaveBeenCalledTimes(1);
       });
 
-      // Submit button should be disabled when required fields are empty
-      expect(submitButton).toBeDisabled();
+      // Required field errors should be shown
+      expect(screen.getByTestId('error-name')).toBeInTheDocument();
+      expect(screen.getByTestId('error-price')).toBeInTheDocument();
     });
 
     it('submits form with values when required fields are filled', async () => {
@@ -1281,8 +1282,8 @@ describe('DataGrid', () => {
       });
 
       // Fill required fields
-      await user.type(screen.getByTestId('field-name'), 'Test Product');
-      await user.type(screen.getByTestId('field-price'), '19.99');
+      fireEvent.change(screen.getByTestId('field-name'), { target: { value: 'Test Product' } });
+      fireEvent.change(screen.getByTestId('field-price'), { target: { value: '19.99' } });
 
       // Submit
       await user.click(screen.getByTestId('add-row-submit'));
@@ -1293,7 +1294,7 @@ describe('DataGrid', () => {
           name: 'Test Product',
           price: 19.99,
         });
-      });
+      }, { timeout: 2000 });
     });
 
     it('closes dialog when Cancel is clicked', async () => {
