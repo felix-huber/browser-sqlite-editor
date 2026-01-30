@@ -1,0 +1,20 @@
+{
+  "runId": "2026-01-30T22:34:08+01:00",
+  "updatedAt": "2026-01-30T22:34:08+01:00",
+  "mode": {
+    "loop": true,
+    "beads": true
+  },
+  "task": {
+    "id": "bd-2wt",
+    "subject": "P1-01: Align OPFS layout with PRD",
+    "status": "running",
+    "phase": "implement",
+    "attempt": 1
+  },
+  "tools": {
+    "implementer": "claude",
+    "reviewer": "claude"
+  },
+  "note": "iteration 1"
+}

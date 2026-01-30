@@ -667,11 +667,11 @@ describe('DatabaseRegistry - Helper Methods', () => {
 
 describe('DatabaseRegistry - Constants', () => {
   it('should have correct OPFS directory', () => {
-    expect(_testing.OPFS_DIR).toBe('/sqlite-editor');
+    expect(_testing.OPFS_DIR).toBe('/wasm-sqlite-editor');
   });
 
   it('should have correct OPFS registry path', () => {
-    expect(_testing.OPFS_REGISTRY_PATH).toBe('/sqlite-editor/registry.json');
+    expect(_testing.OPFS_REGISTRY_PATH).toBe('/wasm-sqlite-editor/registry.json');
   });
 
   it('should have correct IDB registry database name', () => {

@@ -23,8 +23,11 @@ import { checkOPFSAvailability, IDB_VFS_NAME } from '../core/engine/opfs-vfs';
 // Constants
 // =============================================================================
 
-/** OPFS directory for SQLite editor */
-const OPFS_DIR = '/sqlite-editor';
+/** OPFS root directory for SQLite editor */
+const OPFS_DIR = '/wasm-sqlite-editor';
+
+/** OPFS subdirectory for database files */
+const DATABASES_SUBDIR = 'databases';
 
 /** OPFS registry file path */
 const OPFS_REGISTRY_PATH = `${OPFS_DIR}/registry.json`;
@@ -301,11 +304,35 @@ async function isOpfsAvailable(): Promise<boolean> {
 }
 
 /**
- * Get or create the OPFS root directory for sqlite-editor
+ * Get or create the OPFS root directory for wasm-sqlite-editor
  */
 async function getOpfsRoot(): Promise<FileSystemDirectoryHandle> {
   const root = await navigator.storage.getDirectory();
-  return root.getDirectoryHandle('sqlite-editor', { create: true });
+  return root.getDirectoryHandle('wasm-sqlite-editor', { create: true });
+}
+
+/**
+ * Get or create the OPFS databases subdirectory
+ */
+async function getOpfsDatabasesDir(): Promise<FileSystemDirectoryHandle> {
+  const root = await getOpfsRoot();
+  return root.getDirectoryHandle(DATABASES_SUBDIR, { create: true });
+}
+
+/**
+ * Construct the full OPFS path for a database file
+ */
+function getOpfsDatabasePath(name: string): string {
+  const filename = toFilename(name);
+  return `${OPFS_DIR}/${DATABASES_SUBDIR}/${filename}`;
+}
+
+/**
+ * Construct the full OPFS path for an ERD sidecar file
+ */
+function getOpfsErdPath(name: string): string {
+  const basename = toFilename(name).replace(/\.sqlite$/, '');
+  return `${OPFS_DIR}/${DATABASES_SUBDIR}/${basename}.erd.json`;
 }
 
 /**
@@ -341,12 +368,12 @@ async function writeOpfsRegistry(data: RegistryData): Promise<void> {
 }
 
 /**
- * List all database files in OPFS
+ * List all database files in OPFS databases/ subdirectory
  */
 async function listOpfsFiles(): Promise<string[]> {
   const files: string[] = [];
   try {
-    const dir = await getOpfsRoot();
+    const dir = await getOpfsDatabasesDir();
     // Cast to AsyncIterable to work with the iterator
     const entries = (dir as unknown as AsyncIterable<[string, FileSystemHandle]>)[Symbol.asyncIterator]();
     for await (const [name, handle] of { [Symbol.asyncIterator]: () => entries }) {
@@ -361,11 +388,11 @@ async function listOpfsFiles(): Promise<string[]> {
 }
 
 /**
- * Check if a database file exists in OPFS
+ * Check if a database file exists in OPFS databases/ subdirectory
  */
 async function opfsFileExists(filename: string): Promise<boolean> {
   try {
-    const dir = await getOpfsRoot();
+    const dir = await getOpfsDatabasesDir();
     await dir.getFileHandle(filename);
     return true;
   } catch {
@@ -374,7 +401,7 @@ async function opfsFileExists(filename: string): Promise<boolean> {
 }
 
 /**
- * Rename a file in OPFS
+ * Rename a file in OPFS databases/ subdirectory
  *
  * Since OPFS doesn't have a native rename API, we:
  * 1. Read the old file
@@ -382,7 +409,7 @@ async function opfsFileExists(filename: string): Promise<boolean> {
  * 3. Delete the old file
  */
 async function renameOpfsFile(oldFilename: string, newFilename: string): Promise<void> {
-  const dir = await getOpfsRoot();
+  const dir = await getOpfsDatabasesDir();
 
   // Get the old file
   const oldHandle = await dir.getFileHandle(oldFilename);
@@ -403,10 +430,10 @@ async function renameOpfsFile(oldFilename: string, newFilename: string): Promise
 }
 
 /**
- * Rename the .erd.json sidecar file in OPFS (if it exists)
+ * Rename the .erd.json sidecar file in OPFS databases/ subdirectory (if it exists)
  */
 async function renameOpfsSidecar(oldBasename: string, newBasename: string): Promise<void> {
-  const dir = await getOpfsRoot();
+  const dir = await getOpfsDatabasesDir();
   const oldSidecar = `${oldBasename}.erd.json`;
   const newSidecar = `${newBasename}.erd.json`;
 
@@ -433,10 +460,10 @@ async function renameOpfsSidecar(oldBasename: string, newBasename: string): Prom
 }
 
 /**
- * Delete a database file from OPFS
+ * Delete a database file from OPFS databases/ subdirectory
  */
 async function deleteOpfsFile(filename: string): Promise<void> {
-  const dir = await getOpfsRoot();
+  const dir = await getOpfsDatabasesDir();
   try {
     await dir.removeEntry(filename);
   } catch (err) {
@@ -449,10 +476,10 @@ async function deleteOpfsFile(filename: string): Promise<void> {
 }
 
 /**
- * Delete the .erd.json sidecar file in OPFS (if it exists)
+ * Delete the .erd.json sidecar file in OPFS databases/ subdirectory (if it exists)
  */
 async function deleteOpfsSidecar(basename: string): Promise<void> {
-  const dir = await getOpfsRoot();
+  const dir = await getOpfsDatabasesDir();
   const sidecar = `${basename}.erd.json`;
 
   try {
@@ -1396,6 +1423,7 @@ export function resetRegistry(): void {
 
 export const _testing = {
   OPFS_DIR,
+  DATABASES_SUBDIR,
   OPFS_REGISTRY_PATH,
   IDB_REGISTRY_DB,
   IDB_REGISTRY_STORE,
@@ -1405,6 +1433,8 @@ export const _testing = {
   generateId,
   now,
   toFilename,
+  getOpfsDatabasePath,
+  getOpfsErdPath,
   isOpfsAvailable,
   readOpfsRegistry,
   writeOpfsRegistry,
