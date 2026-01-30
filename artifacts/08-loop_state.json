@@ -1,20 +1,20 @@
 {
-  "runId": "2026-01-30T22:53:41+01:00",
-  "updatedAt": "2026-01-31T00:23:36+01:00",
+  "runId": "2026-01-31T00:28:10+01:00",
+  "updatedAt": "2026-01-31T00:34:12+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-qdl",
-    "subject": "P4-02: FK creation validation",
-    "status": "running",
-    "phase": "fix",
-    "attempt": 3
+    "id": "bd-33g",
+    "subject": "P1-04: ERD layout OPFS sidecar",
+    "status": "completed",
+    "phase": "review",
+    "attempt": 1
   },
   "tools": {
     "implementer": "claude",
     "reviewer": "claude"
   },
-  "note": "iteration 3"
+  "note": "clean review"
 }

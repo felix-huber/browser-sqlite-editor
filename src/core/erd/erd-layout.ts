@@ -2,13 +2,27 @@
  * ERD Layout Persistence
  *
  * Saves and loads ERD node positions, collapsed state, and viewport settings.
- * Uses localStorage keyed by database name with migration support.
+ *
+ * Storage:
+ * - Primary: OPFS sidecar at /wasm-sqlite-editor/databases/<db>.erd.json
+ * - Fallback: localStorage keyed by database name (legacy, for migration)
+ *
+ * Migration:
+ * - On first load, checks for existing localStorage key 'erd-layout:<db>'
+ * - If found, migrates to OPFS sidecar and deletes localStorage entry
+ * - One-time migration, idempotent
+ *
+ * Corrupt file handling:
+ * - If .erd.json is missing or corrupt, returns not_found/invalid_json
+ * - Caller should use auto-layout (no error shown to user)
  */
+
+import { getStorageAdapter, toErdFilename } from './erd-storage-adapter';
 
 /** Current schema version for migrations */
 const CURRENT_VERSION = 1;
 
-/** localStorage key prefix */
+/** localStorage key prefix (legacy, for migration) */
 const STORAGE_PREFIX = 'erd-layout:';
 
 /** Node position and state */
@@ -52,10 +66,17 @@ export function createEmptyLayout(): ERDLayoutV1 {
 }
 
 /**
- * Get the localStorage key for a database
+ * Get the localStorage key for a database (legacy)
  */
 function getStorageKey(dbName: string): string {
   return `${STORAGE_PREFIX}${dbName}`;
+}
+
+/**
+ * Get the ERD sidecar filename for a database
+ */
+function getErdFilename(dbName: string): string {
+  return toErdFilename(dbName);
 }
 
 /**
@@ -112,80 +133,156 @@ function migrateLayout(layout: ERDLayoutAny): ERDLayoutV1 | null {
 }
 
 /**
- * Load layout from localStorage for a database
- *
- * @param dbName - Database name (used as key)
- * @returns Load result with layout or error reason
+ * Parse and validate layout JSON
  */
-export function loadLayout(dbName: string): LoadResult {
-  const key = getStorageKey(dbName);
+function parseLayout(json: string): LoadResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return { ok: false, reason: 'invalid_json' };
+  }
 
+  if (!isValidLayout(parsed)) {
+    return { ok: false, reason: 'invalid_json' };
+  }
+
+  const migrated = migrateLayout(parsed);
+  if (migrated === null) {
+    return { ok: false, reason: 'migration_failed' };
+  }
+
+  return { ok: true, layout: migrated };
+}
+
+/**
+ * Attempt to load layout from localStorage (legacy)
+ */
+function loadFromLocalStorage(dbName: string): LoadResult {
+  const key = getStorageKey(dbName);
   try {
     const stored = localStorage.getItem(key);
-
     if (stored === null) {
       return { ok: false, reason: 'not_found' };
     }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(stored);
-    } catch {
-      console.warn(`ERD layout for "${dbName}" contains invalid JSON`);
-      return { ok: false, reason: 'invalid_json' };
-    }
-
-    if (!isValidLayout(parsed)) {
-      console.warn(`ERD layout for "${dbName}" has invalid structure`);
-      return { ok: false, reason: 'invalid_json' };
-    }
-
-    const migrated = migrateLayout(parsed);
-    if (migrated === null) {
-      console.warn(
-        `ERD layout for "${dbName}" version ${parsed.version} cannot be migrated`
-      );
-      return { ok: false, reason: 'migration_failed' };
-    }
-
-    return { ok: true, layout: migrated };
-  } catch (error) {
-    console.warn(`Failed to load ERD layout for "${dbName}":`, error);
-    return { ok: false, reason: 'invalid_json' };
+    return parseLayout(stored);
+  } catch {
+    return { ok: false, reason: 'not_found' };
   }
 }
 
 /**
- * Save layout to localStorage for a database
+ * Load layout from OPFS sidecar or localStorage (with migration)
+ *
+ * @param dbName - Database name (used as key)
+ * @returns Load result with layout or error reason
+ */
+export async function loadLayout(dbName: string): Promise<LoadResult> {
+  const adapter = getStorageAdapter();
+  const opfsAvailable = await adapter.isOpfsAvailable();
+
+  if (opfsAvailable) {
+    // Try OPFS first
+    try {
+      const content = await adapter.readSidecar(dbName);
+      if (content !== null) {
+        const result = parseLayout(content);
+        if (!result.ok) {
+          console.warn(`ERD layout for "${dbName}" is corrupt, will use auto-layout`);
+        }
+        return result;
+      }
+    } catch (err) {
+      console.warn(`Failed to read ERD layout from OPFS for "${dbName}":`, err);
+    }
+
+    // OPFS doesn't have it - check localStorage for migration
+    const localStorageResult = loadFromLocalStorage(dbName);
+    if (localStorageResult.ok) {
+      // Migrate to OPFS
+      try {
+        await adapter.writeSidecar(dbName, JSON.stringify(localStorageResult.layout));
+        // Clean up localStorage
+        try {
+          localStorage.removeItem(getStorageKey(dbName));
+        } catch {
+          // Ignore localStorage cleanup errors
+        }
+        return localStorageResult;
+      } catch (err) {
+        console.warn(`Failed to migrate ERD layout to OPFS for "${dbName}":`, err);
+        return localStorageResult;
+      }
+    } else if (localStorageResult.reason !== 'not_found') {
+      // localStorage has corrupt data - clean it up
+      try {
+        localStorage.removeItem(getStorageKey(dbName));
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+
+    return { ok: false, reason: 'not_found' };
+  }
+
+  // Fallback to localStorage only
+  return loadFromLocalStorage(dbName);
+}
+
+/**
+ * Save layout to OPFS sidecar (or localStorage as fallback)
  *
  * @param dbName - Database name (used as key)
  * @param layout - Layout to save
  * @returns true if saved successfully, false otherwise
  */
-export function saveLayout(dbName: string, layout: ERDLayoutV1): boolean {
-  const key = getStorageKey(dbName);
+export async function saveLayout(dbName: string, layout: ERDLayoutV1): Promise<boolean> {
+  const adapter = getStorageAdapter();
+  const opfsAvailable = await adapter.isOpfsAvailable();
+  const json = JSON.stringify(layout);
 
+  if (opfsAvailable) {
+    try {
+      await adapter.writeSidecar(dbName, json);
+      return true;
+    } catch (err) {
+      console.error(`Failed to save ERD layout to OPFS for "${dbName}":`, err);
+      return false;
+    }
+  }
+
+  // Fallback to localStorage
   try {
-    const json = JSON.stringify(layout);
-    localStorage.setItem(key, json);
+    localStorage.setItem(getStorageKey(dbName), json);
     return true;
-  } catch (error) {
-    console.error(`Failed to save ERD layout for "${dbName}":`, error);
+  } catch (err) {
+    console.error(`Failed to save ERD layout to localStorage for "${dbName}":`, err);
     return false;
   }
 }
 
 /**
- * Delete layout from localStorage for a database
+ * Delete layout from OPFS sidecar (and localStorage if exists)
  *
  * @param dbName - Database name
  */
-export function deleteLayout(dbName: string): void {
-  const key = getStorageKey(dbName);
+export async function deleteLayout(dbName: string): Promise<void> {
+  const adapter = getStorageAdapter();
+  const opfsAvailable = await adapter.isOpfsAvailable();
+
+  if (opfsAvailable) {
+    try {
+      await adapter.deleteSidecar(dbName);
+    } catch (err) {
+      console.warn(`Failed to delete ERD layout from OPFS for "${dbName}":`, err);
+    }
+  }
+
+  // Also clean up localStorage (for migration cleanup)
   try {
-    localStorage.removeItem(key);
-  } catch (error) {
-    console.warn(`Failed to delete ERD layout for "${dbName}":`, error);
+    localStorage.removeItem(getStorageKey(dbName));
+  } catch {
+    // Ignore localStorage cleanup errors
   }
 }
 
@@ -304,3 +401,18 @@ export function pruneRemovedNodes(
     nodes: prunedNodes,
   };
 }
+
+// =============================================================================
+// Exports for testing
+// =============================================================================
+
+export const _testing = {
+  CURRENT_VERSION,
+  STORAGE_PREFIX,
+  getStorageKey,
+  getErdFilename,
+  isValidLayout,
+  migrateLayout,
+  parseLayout,
+  loadFromLocalStorage,
+};

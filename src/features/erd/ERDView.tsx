@@ -203,7 +203,7 @@ export function ERDView({ onOpenDesigner }: ERDViewProps) {
 
       const foreignKeys = await client.getForeignKeys();
 
-      const layoutResult = loadLayout(activeDbId);
+      const layoutResult = await loadLayout(activeDbId);
       let layout = layoutResult.ok ? layoutResult.layout : createEmptyLayout();
       layout = pruneRemovedNodes(layout, tableNames);
 
@@ -267,7 +267,7 @@ export function ERDView({ onOpenDesigner }: ERDViewProps) {
       }
 
       if (layoutUpdated) {
-        saveLayout(activeDbId, updatedLayout);
+        void saveLayout(activeDbId, updatedLayout);
       }
 
       setNodes(nextNodes);
@@ -296,9 +296,9 @@ export function ERDView({ onOpenDesigner }: ERDViewProps) {
   }, [loadData]);
 
   const handleNodesChange = useCallback(
-    (updatedNodes: TableNode[]) => {
+    async (updatedNodes: TableNode[]) => {
       if (!activeDbId) return;
-      const layoutResult = loadLayout(activeDbId);
+      const layoutResult = await loadLayout(activeDbId);
       let layout = layoutResult.ok ? layoutResult.layout : createEmptyLayout();
       let changed = false;
 
@@ -311,7 +311,7 @@ export function ERDView({ onOpenDesigner }: ERDViewProps) {
       }
 
       if (changed) {
-        saveLayout(activeDbId, layout);
+        void saveLayout(activeDbId, layout);
       }
     },
     [activeDbId]
