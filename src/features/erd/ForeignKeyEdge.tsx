@@ -12,12 +12,12 @@ import type { ForeignKeyAction } from '../../types/index'
 export interface ForeignKeyEdgeData extends Record<string, unknown> {
   /** Child table (source of FK) */
   childTable: string
-  /** Child column */
-  childColumn: string
+  /** Child columns (array for composite FK support) */
+  childColumns: string[]
   /** Parent table (referenced) */
   parentTable: string
-  /** Parent column (referenced) */
-  parentColumn: string
+  /** Parent columns (array for composite FK support) */
+  parentColumns: string[]
   /** ON DELETE action */
   onDelete: ForeignKeyAction
   /** ON UPDATE action */
@@ -26,12 +26,26 @@ export interface ForeignKeyEdgeData extends Record<string, unknown> {
   cardinality: 'one-to-one' | 'one-to-many'
   /** Whether the FK column is nullable (optional relationship) */
   isOptional: boolean
+  /** Whether this is a composite FK (multiple columns) */
+  isComposite: boolean
   /** Callback when edge is deleted */
   onEdgeDelete?: (edgeId: string) => void
   /** Callback when context menu is requested (right-click) */
   onContextMenu?: (edgeId: string, position: { x: number; y: number }) => void
   /** Callback when edge edit is requested */
   onEdgeEdit?: (edgeId: string) => void
+}
+
+/**
+ * Format label for composite FK display.
+ * Single-column: 'col → ref'
+ * Composite: '(a, b) → (x, y)'
+ */
+export function formatCompositeFKLabel(childColumns: string[], parentColumns: string[]): string {
+  if (childColumns.length === 1) {
+    return `${childColumns[0]} → ${parentColumns[0]}`
+  }
+  return `(${childColumns.join(', ')}) → (${parentColumns.join(', ')})`
 }
 
 /** FK edge type for React Flow */
@@ -198,6 +212,7 @@ function formatFkAction(
 /**
  * Custom React Flow edge for visualizing foreign key relationships.
  * Supports crow's foot notation with optional markers.
+ * Composite FKs (multiple columns) are rendered as read-only.
  */
 function ForeignKeyEdgeComponent({
   id,
@@ -216,16 +231,21 @@ function ForeignKeyEdgeComponent({
   const onUpdate = data?.onUpdate ?? 'NO ACTION'
   const cardinality = data?.cardinality ?? 'one-to-many'
   const isOptional = data?.isOptional ?? false
+  const isComposite = data?.isComposite ?? false
+  const childColumns = data?.childColumns ?? []
+  const parentColumns = data?.parentColumns ?? []
 
   // Determine colors based on state
   const defaultColor = '#9ca3af' // gray-400
   const hoverColor = '#3b82f6' // blue-500
   const selectedColor = '#2563eb' // blue-600
   const cascadeColor = '#ef4444' // red-500 (for ON DELETE CASCADE)
+  const compositeColor = '#8b5cf6' // violet-500 (for composite FKs)
 
   // Use cascade color if ON DELETE CASCADE for visual warning
+  // Use composite color for composite FKs
   const isCascade = onDelete === 'CASCADE'
-  const baseColor = isCascade ? cascadeColor : defaultColor
+  const baseColor = isComposite ? compositeColor : isCascade ? cascadeColor : defaultColor
   const activeColor = isHovered ? hoverColor : selected ? selectedColor : baseColor
 
   // Dashed line for CASCADE (visual warning)
@@ -251,45 +271,60 @@ function ForeignKeyEdgeComponent({
   const strokeWidth = isHovered || selected ? 3 : 2
 
   // Build tooltip content
+  const childColsStr = childColumns.length > 1
+    ? `(${childColumns.join(', ')})`
+    : childColumns[0] ?? ''
+  const parentColsStr = parentColumns.length > 1
+    ? `(${parentColumns.join(', ')})`
+    : parentColumns[0] ?? ''
   const tooltipLines: string[] = [
-    `${data?.childTable}.${data?.childColumn}`,
-    `    -> ${data?.parentTable}.${data?.parentColumn}`,
+    `${data?.childTable}.${childColsStr}`,
+    `    -> ${data?.parentTable}.${parentColsStr}`,
   ]
+  if (isComposite) tooltipLines.push('(Composite FK - read-only)')
   if (onDelete !== 'NO ACTION') tooltipLines.push(`ON DELETE ${onDelete}`)
   if (onUpdate !== 'NO ACTION') tooltipLines.push(`ON UPDATE ${onUpdate}`)
   const tooltipText = tooltipLines.join('\n')
 
-  // Build label content (only show non-NO ACTION actions)
+  // Build label content
+  // For composite FKs, show the column mapping label
+  const compositeLabel = isComposite ? formatCompositeFKLabel(childColumns, parentColumns) : null
   const deleteLabel = formatFkAction(onDelete, 'DELETE')
   const updateLabel = formatFkAction(onUpdate, 'UPDATE')
-  const hasLabel = deleteLabel || updateLabel
+  const hasLabel = compositeLabel || deleteLabel || updateLabel
 
-  // Delete handler
+  // Delete handler - disabled for composite FKs
   const handleDelete = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
-      data?.onEdgeDelete?.(id)
+      if (!isComposite) {
+        data?.onEdgeDelete?.(id)
+      }
     },
-    [id, data]
+    [id, data, isComposite]
   )
 
-  // Context menu handler (right-click)
+  // Context menu handler (right-click) - disabled for composite FKs
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      data?.onContextMenu?.(id, { x: e.clientX, y: e.clientY })
+      if (!isComposite) {
+        data?.onContextMenu?.(id, { x: e.clientX, y: e.clientY })
+      }
     },
-    [id, data]
+    [id, data, isComposite]
   )
 
-  // Double-click to edit
+  // Double-click to edit - disabled for composite FKs
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
-      data?.onEdgeEdit?.(id)
+      if (!isComposite) {
+        data?.onEdgeEdit?.(id)
+      }
     },
-    [id, data]
+    [id, data, isComposite]
   )
 
   return (
@@ -387,13 +422,14 @@ function ForeignKeyEdgeComponent({
                 }}
                 data-testid={`fk-action-label-${id}`}
               >
+                {compositeLabel && <div>{compositeLabel}</div>}
                 {deleteLabel && <div>{deleteLabel}</div>}
                 {updateLabel && <div>{updateLabel}</div>}
               </div>
             )}
 
-            {/* Delete button - visible on hover or selected */}
-            {(isHovered || selected) && (
+            {/* Delete button - visible on hover or selected, hidden for composite FKs */}
+            {(isHovered || selected) && !isComposite && (
               <button
                 onClick={handleDelete}
                 className="p-1 rounded hover:bg-red-100 transition-colors bg-white border border-navy-200 shadow-sm"

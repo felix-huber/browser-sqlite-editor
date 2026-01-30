@@ -23,6 +23,7 @@ import {
   groupForeignKeyInfos,
   type ColumnDefinition,
 } from '../../core/db/ddl';
+import type { ForeignKeyEdgeData } from './ForeignKeyEdge';
 import { applyGeneratedExpressions } from '../../core/db/generated-columns';
 import type { ForeignKeyInfo, TableInfo } from '../../types';
 
@@ -108,36 +109,78 @@ export function ERDView({ onOpenDesigner }: ERDViewProps) {
         uniqueSingleColumns.set(name, uniqueCols);
       }
 
+      // Group FKs by (childTable, constraintId) to handle composite FKs
+      const groupedByTable = new Map<string, Map<number, ForeignKeyInfo[]>>();
       for (const fk of foreignKeys) {
-        const childInfo = tableInfos.get(fk.childTable);
-        const parentInfo = tableInfos.get(fk.parentTable);
-        if (!childInfo || !parentInfo) continue;
+        let tableGroup = groupedByTable.get(fk.childTable);
+        if (!tableGroup) {
+          tableGroup = new Map();
+          groupedByTable.set(fk.childTable, tableGroup);
+        }
+        const existing = tableGroup.get(fk.id) ?? [];
+        existing.push(fk);
+        tableGroup.set(fk.id, existing);
+      }
 
-        const childCol = childInfo.columns.find((c) => c.name === fk.childColumn);
-        const isOptional = childCol ? !childCol.notnull : false;
-        const uniqueCols = uniqueSingleColumns.get(fk.childTable) ?? new Set();
-        const singlePk = singlePkColumns.get(fk.childTable);
-        const isUnique =
-          uniqueCols.has(fk.childColumn) || (singlePk !== null && singlePk === fk.childColumn);
+      // Create one edge per constraint (grouping composite FK columns)
+      for (const [childTable, constraintGroups] of groupedByTable) {
+        for (const [constraintId, fkGroup] of constraintGroups) {
+          const childInfo = tableInfos.get(childTable);
+          const parentTable = fkGroup[0].parentTable;
+          const parentInfo = tableInfos.get(parentTable);
+          if (!childInfo || !parentInfo) continue;
 
-        edges.push({
-          id: `fk-${fk.childTable}-${fk.childColumn}-${fk.parentTable}-${fk.parentColumn}`,
-          type: 'fkEdge',
-          source: fk.childTable,
-          target: fk.parentTable,
-          sourceHandle: `${fk.childColumn}-source`,
-          targetHandle: `${fk.parentColumn}-target`,
-          data: {
-            childTable: fk.childTable,
-            childColumn: fk.childColumn,
-            parentTable: fk.parentTable,
-            parentColumn: fk.parentColumn,
-            onDelete: fk.onDelete,
-            onUpdate: fk.onUpdate,
+          const isComposite = fkGroup.length > 1;
+          const childColumns = fkGroup.map((fk) => fk.childColumn);
+          const parentColumns = fkGroup.map((fk) => fk.parentColumn);
+
+          // Check if any FK column is nullable (optional relationship)
+          const isOptional = fkGroup.some((fk) => {
+            const childCol = childInfo.columns.find((c) => c.name === fk.childColumn);
+            return childCol ? !childCol.notnull : false;
+          });
+
+          // For cardinality: check if all child columns form a unique constraint
+          const uniqueCols = uniqueSingleColumns.get(childTable) ?? new Set();
+          const singlePk = singlePkColumns.get(childTable);
+          // Single-column: check if unique
+          // Composite: for simplicity, default to one-to-many (determining composite uniqueness is complex)
+          const isUnique = !isComposite && (
+            uniqueCols.has(childColumns[0]) ||
+            (singlePk !== null && singlePk === childColumns[0])
+          );
+
+          // Edge ID: for composite FKs, use constraintId; for single, use column names
+          const edgeId = isComposite
+            ? `fk-${childTable}-composite-${constraintId}-${parentTable}`
+            : `fk-${childTable}-${childColumns[0]}-${parentTable}-${parentColumns[0]}`;
+
+          // Source/target handles: use first column for positioning
+          const sourceHandle = `${childColumns[0]}-source`;
+          const targetHandle = `${parentColumns[0]}-target`;
+
+          const edgeData: ForeignKeyEdgeData = {
+            childTable,
+            childColumns,
+            parentTable,
+            parentColumns,
+            onDelete: fkGroup[0].onDelete,
+            onUpdate: fkGroup[0].onUpdate,
             cardinality: isUnique ? 'one-to-one' : 'one-to-many',
             isOptional,
-          },
-        });
+            isComposite,
+          };
+
+          edges.push({
+            id: edgeId,
+            type: 'fkEdge',
+            source: childTable,
+            target: parentTable,
+            sourceHandle,
+            targetHandle,
+            data: edgeData,
+          });
+        }
       }
 
       return edges;

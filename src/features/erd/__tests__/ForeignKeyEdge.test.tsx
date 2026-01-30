@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   foreignKeyEdgeTypes,
+  formatCompositeFKLabel,
   type ForeignKeyEdgeData,
 } from '../ForeignKeyEdge'
 import type { ForeignKeyAction } from '../../../types/index'
@@ -28,41 +29,82 @@ describe('ForeignKeyEdge', () => {
     })
   })
 
+  describe('formatCompositeFKLabel', () => {
+    it('formats single-column FK without parentheses', () => {
+      const label = formatCompositeFKLabel(['user_id'], ['id'])
+      expect(label).toBe('user_id → id')
+    })
+
+    it('formats composite FK with parentheses', () => {
+      const label = formatCompositeFKLabel(['org_id', 'user_id'], ['org_id', 'user_id'])
+      expect(label).toBe('(org_id, user_id) → (org_id, user_id)')
+    })
+
+    it('formats three-column composite FK', () => {
+      const label = formatCompositeFKLabel(['a', 'b', 'c'], ['x', 'y', 'z'])
+      expect(label).toBe('(a, b, c) → (x, y, z)')
+    })
+  })
+
   describe('ForeignKeyEdgeData type', () => {
-    it('can create valid ForeignKeyEdgeData with all fields', () => {
+    it('can create valid ForeignKeyEdgeData with all fields (single-column)', () => {
       const data: ForeignKeyEdgeData = {
         childTable: 'posts',
-        childColumn: 'user_id',
+        childColumns: ['user_id'],
         parentTable: 'users',
-        parentColumn: 'id',
+        parentColumns: ['id'],
         onDelete: 'CASCADE',
         onUpdate: 'NO ACTION',
         cardinality: 'one-to-many',
         isOptional: false,
+        isComposite: false,
         onEdgeDelete: (_id: string) => {},
       }
 
       expect(data.childTable).toBe('posts')
-      expect(data.childColumn).toBe('user_id')
+      expect(data.childColumns).toEqual(['user_id'])
       expect(data.parentTable).toBe('users')
-      expect(data.parentColumn).toBe('id')
+      expect(data.parentColumns).toEqual(['id'])
       expect(data.onDelete).toBe('CASCADE')
       expect(data.onUpdate).toBe('NO ACTION')
       expect(data.cardinality).toBe('one-to-many')
       expect(data.isOptional).toBe(false)
+      expect(data.isComposite).toBe(false)
       expect(typeof data.onEdgeDelete).toBe('function')
+    })
+
+    it('can create valid ForeignKeyEdgeData for composite FK', () => {
+      const data: ForeignKeyEdgeData = {
+        childTable: 'order_items',
+        childColumns: ['order_id', 'product_id'],
+        parentTable: 'order_products',
+        parentColumns: ['order_id', 'product_id'],
+        onDelete: 'CASCADE',
+        onUpdate: 'NO ACTION',
+        cardinality: 'one-to-many',
+        isOptional: false,
+        isComposite: true,
+        onEdgeDelete: (_id: string) => {},
+      }
+
+      expect(data.childTable).toBe('order_items')
+      expect(data.childColumns).toEqual(['order_id', 'product_id'])
+      expect(data.parentTable).toBe('order_products')
+      expect(data.parentColumns).toEqual(['order_id', 'product_id'])
+      expect(data.isComposite).toBe(true)
     })
 
     it('supports one-to-one cardinality', () => {
       const data: ForeignKeyEdgeData = {
         childTable: 'profiles',
-        childColumn: 'user_id',
+        childColumns: ['user_id'],
         parentTable: 'users',
-        parentColumn: 'id',
+        parentColumns: ['id'],
         onDelete: 'CASCADE',
         onUpdate: 'NO ACTION',
         cardinality: 'one-to-one',
         isOptional: false,
+        isComposite: false,
       }
 
       expect(data.cardinality).toBe('one-to-one')
@@ -71,13 +113,14 @@ describe('ForeignKeyEdge', () => {
     it('supports one-to-many cardinality', () => {
       const data: ForeignKeyEdgeData = {
         childTable: 'orders',
-        childColumn: 'customer_id',
+        childColumns: ['customer_id'],
         parentTable: 'customers',
-        parentColumn: 'id',
+        parentColumns: ['id'],
         onDelete: 'SET NULL',
         onUpdate: 'CASCADE',
         cardinality: 'one-to-many',
         isOptional: true,
+        isComposite: false,
       }
 
       expect(data.cardinality).toBe('one-to-many')
@@ -87,13 +130,14 @@ describe('ForeignKeyEdge', () => {
     it('allows optional callbacks', () => {
       const dataWithoutCallbacks: ForeignKeyEdgeData = {
         childTable: 'a',
-        childColumn: 'b',
+        childColumns: ['b'],
         parentTable: 'c',
-        parentColumn: 'd',
+        parentColumns: ['d'],
         onDelete: 'NO ACTION',
         onUpdate: 'NO ACTION',
         cardinality: 'one-to-many',
         isOptional: false,
+        isComposite: false,
       }
 
       expect(dataWithoutCallbacks.onEdgeDelete).toBeUndefined()
@@ -111,13 +155,14 @@ describe('ForeignKeyEdge', () => {
       actions.forEach((action) => {
         const data: ForeignKeyEdgeData = {
           childTable: 'child',
-          childColumn: 'ref_id',
+          childColumns: ['ref_id'],
           parentTable: 'parent',
-          parentColumn: 'id',
+          parentColumns: ['id'],
           onDelete: action,
           onUpdate: action,
           cardinality: 'one-to-many',
           isOptional: false,
+          isComposite: false,
         }
         expect(data.onDelete).toBe(action)
         expect(data.onUpdate).toBe(action)
@@ -130,13 +175,14 @@ describe('ForeignKeyEdge', () => {
       // Verify that the types support cascade which triggers dashed line
       const cascadeData: ForeignKeyEdgeData = {
         childTable: 'posts',
-        childColumn: 'user_id',
+        childColumns: ['user_id'],
         parentTable: 'users',
-        parentColumn: 'id',
+        parentColumns: ['id'],
         onDelete: 'CASCADE',
         onUpdate: 'NO ACTION',
         cardinality: 'one-to-many',
         isOptional: false,
+        isComposite: false,
       }
 
       expect(cascadeData.onDelete).toBe('CASCADE')
@@ -149,13 +195,14 @@ describe('ForeignKeyEdge', () => {
       // Most FKs represent one-to-many relationships (many children to one parent)
       const fkData: ForeignKeyEdgeData = {
         childTable: 'order_items',
-        childColumn: 'order_id',
+        childColumns: ['order_id'],
         parentTable: 'orders',
-        parentColumn: 'id',
+        parentColumns: ['id'],
         onDelete: 'CASCADE',
         onUpdate: 'NO ACTION',
         cardinality: 'one-to-many',
         isOptional: false,
+        isComposite: false,
       }
 
       expect(fkData.cardinality).toBe('one-to-many')
@@ -166,17 +213,53 @@ describe('ForeignKeyEdge', () => {
       // Optional FKs (nullable) show circle marker
       const optionalFk: ForeignKeyEdgeData = {
         childTable: 'employees',
-        childColumn: 'manager_id',
+        childColumns: ['manager_id'],
         parentTable: 'employees',
-        parentColumn: 'id',
+        parentColumns: ['id'],
         onDelete: 'SET NULL',
         onUpdate: 'NO ACTION',
         cardinality: 'one-to-many',
         isOptional: true, // manager_id is nullable
+        isComposite: false,
       }
 
       expect(optionalFk.isOptional).toBe(true)
       // Note: Optional circle marker is verified in E2E tests
+    })
+  })
+
+  describe('composite FK behavior', () => {
+    it('composite FKs are marked as read-only', () => {
+      const compositeFk: ForeignKeyEdgeData = {
+        childTable: 'order_details',
+        childColumns: ['order_id', 'product_id'],
+        parentTable: 'order_products',
+        parentColumns: ['order_id', 'product_id'],
+        onDelete: 'CASCADE',
+        onUpdate: 'NO ACTION',
+        cardinality: 'one-to-many',
+        isOptional: false,
+        isComposite: true,
+      }
+
+      expect(compositeFk.isComposite).toBe(true)
+      // Note: Read-only behavior (no edit/delete) verified in E2E tests
+    })
+
+    it('single-column FKs are not composite', () => {
+      const singleFk: ForeignKeyEdgeData = {
+        childTable: 'posts',
+        childColumns: ['user_id'],
+        parentTable: 'users',
+        parentColumns: ['id'],
+        onDelete: 'NO ACTION',
+        onUpdate: 'NO ACTION',
+        cardinality: 'one-to-many',
+        isOptional: false,
+        isComposite: false,
+      }
+
+      expect(singleFk.isComposite).toBe(false)
     })
   })
 })

@@ -103,6 +103,7 @@ interface FKDialogInfo {
   parentColumn: string
   onDelete: ForeignKeyAction
   onUpdate: ForeignKeyAction
+  isComposite?: boolean
 }
 
 const defaultNodes: TableNode[] = []
@@ -270,14 +271,15 @@ export function ERDCanvas({
             type: 'fkEdge',
             data: {
               childTable: pendingFK.childTable,
-              childColumn: pendingFK.childColumn,
+              childColumns: [pendingFK.childColumn],
               parentTable: pendingFK.parentTable,
-              parentColumn: pendingFK.parentColumn,
+              parentColumns: [pendingFK.parentColumn],
               onDelete,
               onUpdate,
               cardinality: 'one-to-many',
               isOptional: true,
-            },
+              isComposite: false,
+            } as ForeignKeyEdgeData,
           }
           setEdges((eds) => addEdge(newEdge, eds))
           onShowToast?.('Foreign key created successfully', 'success')
@@ -317,13 +319,18 @@ export function ERDCanvas({
       if (!edge || !edge.data) return null
 
       const data = edge.data as ForeignKeyEdgeData
+      const isComposite = data.isComposite ?? false
+      // Use first column for single-column FKs, all columns for composite (read-only)
+      const childColumns = data.childColumns ?? []
+      const parentColumns = data.parentColumns ?? []
       return {
         childTable: data.childTable,
-        childColumn: data.childColumn,
+        childColumn: childColumns[0] ?? '',
         parentTable: data.parentTable,
-        parentColumn: data.parentColumn,
+        parentColumn: parentColumns[0] ?? '',
         onDelete: data.onDelete ?? 'NO ACTION',
         onUpdate: data.onUpdate ?? 'NO ACTION',
+        isComposite,
       }
     },
     [edges]
@@ -459,9 +466,9 @@ export function ERDCanvas({
               if (
                 data &&
                 data.childTable === editingFK.childTable &&
-                data.childColumn === editingFK.childColumn &&
+                data.childColumns?.[0] === editingFK.childColumn &&
                 data.parentTable === editingFK.parentTable &&
-                data.parentColumn === editingFK.parentColumn
+                data.parentColumns?.[0] === editingFK.parentColumn
               ) {
                 return {
                   ...e,
@@ -528,9 +535,9 @@ export function ERDCanvas({
             if (!data) return true
             return !(
               data.childTable === deletingFK.childTable &&
-              data.childColumn === deletingFK.childColumn &&
+              data.childColumns?.[0] === deletingFK.childColumn &&
               data.parentTable === deletingFK.parentTable &&
-              data.parentColumn === deletingFK.parentColumn
+              data.parentColumns?.[0] === deletingFK.parentColumn
             )
           })
         )
