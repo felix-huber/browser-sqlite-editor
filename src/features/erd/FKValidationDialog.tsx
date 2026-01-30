@@ -3,10 +3,17 @@
  *
  * Shows validation results and allows configuring ON DELETE/UPDATE actions
  * before creating the FK relationship via table rebuild.
+ *
+ * Enhanced validation features:
+ * - Single-column PK/UNIQUE check (composite PK doesn't qualify)
+ * - Data integrity validation (orphan row detection)
+ * - One-click UNIQUE index creation
+ * - Progress indicator with cancel for large tables
  */
 
 import { useState, useCallback, useEffect } from 'react'
 import type { ForeignKeyAction } from '../../types/index'
+import type { ParentColumnValidation, DataIntegrityResult } from './FKValidation'
 
 // =============================================================================
 // Types
@@ -82,6 +89,20 @@ export interface FKValidationDialogProps {
   onClose: () => void
   /** Callback when FK is confirmed for creation */
   onCreate: (onDelete: ForeignKeyAction, onUpdate: ForeignKeyAction) => void
+  /** Enhanced validation: parent column uniqueness result */
+  uniquenessResult?: ParentColumnValidation | null
+  /** Enhanced validation: data integrity result */
+  integrityResult?: DataIntegrityResult | null
+  /** Enhanced validation: DDL for creating unique index (for preview) */
+  createUniqueIndexDDL?: string | null
+  /** Enhanced validation: callback to create unique index */
+  onCreateUniqueIndex?: () => Promise<void>
+  /** Enhanced validation: whether unique index is being created */
+  isCreatingIndex?: boolean
+  /** Enhanced validation: callback to cancel validation */
+  onCancelValidation?: () => void
+  /** Enhanced validation: whether validating a large table (>10k rows) */
+  isLargeTable?: boolean
 }
 
 // =============================================================================
@@ -111,15 +132,24 @@ export function FKValidationDialog({
   isCreating,
   onClose,
   onCreate,
+  uniquenessResult,
+  integrityResult,
+  createUniqueIndexDDL,
+  onCreateUniqueIndex,
+  isCreatingIndex = false,
+  onCancelValidation,
+  isLargeTable = false,
 }: FKValidationDialogProps) {
   const [onDelete, setOnDelete] = useState<ForeignKeyAction>('NO ACTION')
   const [onUpdate, setOnUpdate] = useState<ForeignKeyAction>('NO ACTION')
+  const [showDDLPreview, setShowDDLPreview] = useState(false)
 
-  // Reset actions when dialog opens with new FK
+  // Reset actions and state when dialog opens with new FK
   useEffect(() => {
     if (isOpen) {
       setOnDelete('NO ACTION')
       setOnUpdate('NO ACTION')
+      setShowDDLPreview(false)
     }
   }, [isOpen, pendingFK?.childColumn, pendingFK?.parentColumn])
 
@@ -128,7 +158,9 @@ export function FKValidationDialog({
   }, [onCreate, onDelete, onUpdate])
 
   const hasBlockingErrors = errors.some((e) => e.isBlocking)
-  const canCreate = !isValidating && !isCreating && !hasBlockingErrors
+  const hasUniquenessError = uniquenessResult !== undefined && uniquenessResult !== null && !uniquenessResult.isValid
+  const hasIntegrityError = integrityResult !== undefined && integrityResult !== null && !integrityResult.isValid
+  const canCreate = !isValidating && !isCreating && !isCreatingIndex && !hasBlockingErrors && !hasUniquenessError && !hasIntegrityError
 
   if (!isOpen || !pendingFK) {
     return null
@@ -176,7 +208,7 @@ export function FKValidationDialog({
             </div>
           </div>
 
-          {/* Validation Errors */}
+          {/* Validation Errors (legacy) */}
           {errors.length > 0 && (
             <div className="space-y-2" data-testid="validation-errors">
               {errors.map((error, index) => (
@@ -199,33 +231,155 @@ export function FKValidationDialog({
             </div>
           )}
 
+          {/* Enhanced Uniqueness Validation Error */}
+          {hasUniquenessError && uniquenessResult && (
+            <div className="space-y-3" data-testid="uniqueness-error">
+              <div className="flex items-start gap-2 p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700">
+                <span className="shrink-0">❌</span>
+                <div className="flex-1">
+                  <span>{uniquenessResult.errorMessage}</span>
+                  {uniquenessResult.isPartOfCompositePK && (
+                    <p className="mt-1 text-xs text-red-600">
+                      This column is part of a composite primary key. Single-column FKs require a single-column PK or UNIQUE index.
+                    </p>
+                  )}
+                  {uniquenessResult.isPartOfCompositeUniqueIndex && (
+                    <p className="mt-1 text-xs text-red-600">
+                      This column is only part of a composite UNIQUE index. Single-column FKs require a single-column UNIQUE constraint.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Create Index Action */}
+              {uniquenessResult.canCreateUniqueIndex && onCreateUniqueIndex && (
+                <div className="bg-navy-50 rounded-lg p-3 space-y-2">
+                  <p className="text-sm text-navy-700">
+                    You can create a UNIQUE index on this column to enable the FK:
+                  </p>
+                  {showDDLPreview && createUniqueIndexDDL && (
+                    <pre
+                      className="text-xs bg-navy-100 p-2 rounded overflow-x-auto text-navy-800"
+                      data-testid="create-index-ddl-preview"
+                    >
+                      {createUniqueIndexDDL}
+                    </pre>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowDDLPreview(!showDDLPreview)}
+                      className="text-xs text-navy-600 hover:text-navy-800 underline"
+                      data-testid="toggle-ddl-preview"
+                    >
+                      {showDDLPreview ? 'Hide DDL' : 'Show DDL'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onCreateUniqueIndex}
+                      disabled={isCreatingIndex}
+                      className={`px-3 py-1.5 text-sm font-medium rounded-md ${
+                        isCreatingIndex
+                          ? 'bg-navy-200 text-navy-400 cursor-not-allowed'
+                          : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                      }`}
+                      data-testid="create-unique-index-button"
+                    >
+                      {isCreatingIndex ? 'Creating...' : 'Create UNIQUE Index'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Enhanced Data Integrity Error */}
+          {hasIntegrityError && integrityResult && (
+            <div className="space-y-2" data-testid="integrity-error">
+              <div className="flex items-start gap-2 p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700">
+                <span className="shrink-0">❌</span>
+                <div className="flex-1">
+                  <span>{integrityResult.errorMessage}</span>
+                  <p className="mt-1 text-xs text-red-600">
+                    These rows must be fixed or deleted before the FK can be created.
+                  </p>
+                </div>
+              </div>
+
+              {/* Sample Violations */}
+              {integrityResult.sampleViolations.length > 0 && (
+                <div className="bg-red-50 rounded-lg p-3 space-y-2 overflow-x-auto">
+                  <p className="text-xs font-medium text-red-700">
+                    Sample violating rows (showing up to 10):
+                  </p>
+                  <div className="max-h-40 overflow-y-auto">
+                    <table className="text-xs w-full" data-testid="violation-samples">
+                      <thead>
+                        <tr className="border-b border-red-200">
+                          {Object.keys(integrityResult.sampleViolations[0] || {}).map((col) => (
+                            <th key={col} className="px-2 py-1 text-left text-red-700 font-medium">
+                              {col}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {integrityResult.sampleViolations.map((row, idx) => (
+                          <tr key={idx} className="border-b border-red-100">
+                            {Object.values(row).map((val, colIdx) => (
+                              <td key={colIdx} className="px-2 py-1 text-red-600">
+                                {val === null ? <em>NULL</em> : String(val)}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Validation in progress */}
           {isValidating && (
             <div
-              className="flex items-center gap-2 text-navy-500 text-sm"
+              className="flex items-center justify-between gap-2 text-navy-500 text-sm p-3 bg-navy-50 rounded-lg"
               data-testid="validation-loading"
             >
-              <svg
-                className="animate-spin h-4 w-4"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
-              </svg>
-              <span>Validating foreign key...</span>
+              <div className="flex items-center gap-2">
+                <svg
+                  className="animate-spin h-4 w-4"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  />
+                </svg>
+                <span>{isLargeTable ? 'Validating (large table)...' : 'Validating foreign key...'}</span>
+              </div>
+              {onCancelValidation && (
+                <button
+                  type="button"
+                  onClick={onCancelValidation}
+                  className="text-xs text-navy-600 hover:text-navy-800 underline"
+                  data-testid="cancel-validation-button"
+                >
+                  Cancel
+                </button>
+              )}
             </div>
           )}
 

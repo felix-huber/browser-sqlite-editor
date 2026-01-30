@@ -12,3 +12,6 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-25k | P2-02: CSV header normalization per PRD | DONE | 73eac136be800a43d807115416844fbfb6446d43 | clean review |
 | bd-3ae | P2-05: CSV export NULL vs empty string | DONE | c395d333eb44a8d41aaa3158a368ef80e2d5b2bc | clean review |
 | bd-3vd | P4-01: Composite FK single edge rendering | DONE | ae12b8cc2f454d29694cd10f7254ec1061a2944f | clean review |
+| bd-qdl | P4-02: FK creation validation | FAILED | - | review/verification failure |
+| bd-qdl | P4-02: FK creation validation | FAILED | - | review/verification failure |
+| bd-qdl | P4-02: FK creation validation | FAILED | - | review/verification failure |

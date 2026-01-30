@@ -1,20 +1,20 @@
 {
   "runId": "2026-01-30T22:53:41+01:00",
-  "updatedAt": "2026-01-31T00:01:28+01:00",
+  "updatedAt": "2026-01-31T00:23:36+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-3vd",
-    "subject": "P4-01: Composite FK single edge rendering",
-    "status": "completed",
-    "phase": "review",
-    "attempt": 1
+    "id": "bd-qdl",
+    "subject": "P4-02: FK creation validation",
+    "status": "running",
+    "phase": "fix",
+    "attempt": 3
   },
   "tools": {
     "implementer": "claude",
     "reviewer": "claude"
   },
-  "note": "clean review"
+  "note": "iteration 3"
 }

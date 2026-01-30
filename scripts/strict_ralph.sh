@@ -326,7 +326,7 @@ update_task_status() {
         br close "$id" --reason "completed" 2>&1 || log "Warning: br close failed for $id"
         ;;
       error)
-        br update "$id" --status blocked --comment "Failed during strict loop" 2>&1 || log "Warning: br update to blocked failed for $id"
+        br update "$id" --status blocked 2>&1 || log "Warning: br update to blocked failed for $id"
         ;;
       *)
         br update "$id" --status "$status" 2>&1 || log "Warning: br update to $status failed for $id"
