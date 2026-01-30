@@ -37,6 +37,12 @@ interface MockStorageState {
   throwOnRename: boolean;
   deletedFiles: Set<string>;
   throwOnDelete: boolean;
+  /** Map of filename to lastModified timestamp */
+  fileLastModified: Map<string, number>;
+  /** List of ALL files in the directory (including sidecars, journals) */
+  allFiles: string[];
+  /** Files deleted via deleteRawFile */
+  deletedRawFiles: Set<string>;
 }
 
 function createMockAdapter(state: MockStorageState): StorageAdapter {
@@ -62,6 +68,11 @@ function createMockAdapter(state: MockStorageState): StorageAdapter {
       if (idx !== -1) {
         state.fileList[idx] = newName;
       }
+      // Also update allFiles
+      const allIdx = state.allFiles.indexOf(oldName);
+      if (allIdx !== -1) {
+        state.allFiles[allIdx] = newName;
+      }
     }),
     fileExists: vi.fn(async (_mode, name: string) => {
       return state.existingFiles.has(name);
@@ -75,6 +86,31 @@ function createMockAdapter(state: MockStorageState): StorageAdapter {
       const idx = state.fileList.indexOf(name);
       if (idx !== -1) {
         state.fileList.splice(idx, 1);
+      }
+    }),
+    getFileLastModified: vi.fn(async (_mode, filename: string) => {
+      return state.fileLastModified.get(filename) ?? 0;
+    }),
+    listAllFiles: vi.fn(async () => [...state.allFiles]),
+    deleteRawFile: vi.fn(async (filename: string) => {
+      state.deletedRawFiles.add(filename);
+      const idx = state.allFiles.indexOf(filename);
+      if (idx !== -1) {
+        state.allFiles.splice(idx, 1);
+      }
+    }),
+    renameRawFile: vi.fn(async (oldFilename: string, newFilename: string) => {
+      if (state.throwOnRename) {
+        throw new Error('Simulated rename failure');
+      }
+      state.renamedFiles.set(oldFilename, newFilename);
+      const idx = state.allFiles.indexOf(oldFilename);
+      if (idx !== -1) {
+        state.allFiles[idx] = newFilename;
+      }
+      const fileListIdx = state.fileList.indexOf(oldFilename);
+      if (fileListIdx !== -1) {
+        state.fileList[fileListIdx] = newFilename;
       }
     }),
   };
@@ -97,6 +133,9 @@ beforeEach(() => {
     throwOnRename: false,
     deletedFiles: new Set(),
     throwOnDelete: false,
+    fileLastModified: new Map(),
+    allFiles: [],
+    deletedRawFiles: new Set(),
   };
   resetRegistry();
 });
@@ -490,6 +529,356 @@ describe('DatabaseRegistry - Self-Healing', () => {
 
       expect(result.wasCorrupted).toBe(true);
       expect(registry.count()).toBe(0);
+    });
+  });
+
+  describe('Case Collision Resolution', () => {
+    it('should resolve case collision by keeping most recently modified file', async () => {
+      // Two files that differ only by case
+      mockState.registryData = { databases: [] };
+      mockState.fileList = ['mydb.sqlite', 'MyDB.sqlite'];
+      mockState.allFiles = ['mydb.sqlite', 'MyDB.sqlite'];
+      mockState.opfsAvailable = true;
+      // mydb.sqlite was modified more recently
+      mockState.fileLastModified.set('mydb.sqlite', 2000);
+      mockState.fileLastModified.set('MyDB.sqlite', 1000);
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const result = await registry.init();
+
+      // Should rename the older file (MyDB.sqlite) to have (conflict-N) suffix
+      // The renamed file preserves its original case: MyDB (conflict-1).sqlite
+      expect(mockState.renamedFiles.get('MyDB.sqlite')).toBe('MyDB (conflict-1).sqlite');
+
+      // Should discover both files (one as original, one as conflict)
+      expect(result.discovered.length).toBe(2);
+      expect(result.caseCollisionsResolved).toBe(1);
+
+      // Should log the resolution
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Case collision resolved')
+      );
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should use lexicographically first filename as tie-breaker when timestamps equal', async () => {
+      mockState.registryData = { databases: [] };
+      mockState.fileList = ['zoo.sqlite', 'ZOO.sqlite'];
+      mockState.allFiles = ['zoo.sqlite', 'ZOO.sqlite'];
+      mockState.opfsAvailable = true;
+      // Same timestamp
+      mockState.fileLastModified.set('zoo.sqlite', 1000);
+      mockState.fileLastModified.set('ZOO.sqlite', 1000);
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      const result = await registry.init();
+
+      // Byte-wise comparison: 'Z' (90) < 'z' (122), so ZOO.sqlite comes first
+      // ZOO.sqlite is kept, zoo.sqlite is renamed - preserving its original case
+      expect(mockState.renamedFiles.get('zoo.sqlite')).toBe('zoo (conflict-1).sqlite');
+      expect(result.caseCollisionsResolved).toBe(1);
+    });
+
+    it('should handle multiple case collision groups', async () => {
+      mockState.registryData = { databases: [] };
+      mockState.fileList = ['a.sqlite', 'A.sqlite', 'b.sqlite', 'B.sqlite'];
+      mockState.allFiles = ['a.sqlite', 'A.sqlite', 'b.sqlite', 'B.sqlite'];
+      mockState.opfsAvailable = true;
+      mockState.fileLastModified.set('a.sqlite', 2000);
+      mockState.fileLastModified.set('A.sqlite', 1000);
+      mockState.fileLastModified.set('b.sqlite', 1000);
+      mockState.fileLastModified.set('B.sqlite', 2000);
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      const result = await registry.init();
+
+      // a.sqlite kept (newer), A.sqlite renamed - preserves its case
+      expect(mockState.renamedFiles.get('A.sqlite')).toBe('A (conflict-1).sqlite');
+      // B.sqlite kept (newer), b.sqlite renamed - preserves its case
+      expect(mockState.renamedFiles.get('b.sqlite')).toBe('b (conflict-1).sqlite');
+      expect(result.caseCollisionsResolved).toBe(2);
+    });
+
+    it('should not resolve collisions when files have different names (not just case)', async () => {
+      mockState.registryData = { databases: [] };
+      mockState.fileList = ['mydb.sqlite', 'mydb2.sqlite'];
+      mockState.allFiles = ['mydb.sqlite', 'mydb2.sqlite'];
+      mockState.opfsAvailable = true;
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      const result = await registry.init();
+
+      // No renames should occur
+      expect(mockState.renamedFiles.size).toBe(0);
+      expect(result.caseCollisionsResolved).toBe(0);
+      expect(registry.count()).toBe(2);
+    });
+
+    it('should handle 3+ way case collision with unique conflict suffixes', async () => {
+      // Three files that differ only by case
+      mockState.registryData = { databases: [] };
+      mockState.fileList = ['mydb.sqlite', 'MyDB.sqlite', 'MYDB.sqlite'];
+      mockState.allFiles = ['mydb.sqlite', 'MyDB.sqlite', 'MYDB.sqlite'];
+      mockState.opfsAvailable = true;
+      // mydb.sqlite is most recent, then MyDB.sqlite, then MYDB.sqlite
+      mockState.fileLastModified.set('mydb.sqlite', 3000);
+      mockState.fileLastModified.set('MyDB.sqlite', 2000);
+      mockState.fileLastModified.set('MYDB.sqlite', 1000);
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const result = await registry.init();
+
+      // mydb.sqlite should be kept (most recent)
+      // MyDB.sqlite (2nd) should be renamed to MyDB (conflict-1).sqlite
+      // MYDB.sqlite (3rd) should be renamed to MYDB (conflict-2).sqlite
+      expect(mockState.renamedFiles.get('MyDB.sqlite')).toBe('MyDB (conflict-1).sqlite');
+      expect(mockState.renamedFiles.get('MYDB.sqlite')).toBe('MYDB (conflict-2).sqlite');
+      expect(mockState.renamedFiles.has('mydb.sqlite')).toBe(false); // Winner not renamed
+
+      // Should have resolved 2 collisions
+      expect(result.caseCollisionsResolved).toBe(2);
+
+      // Should discover all 3 files (1 original + 2 conflicts)
+      expect(result.discovered.length).toBe(3);
+
+      consoleSpy.mockRestore();
+    });
+  });
+
+  describe('Orphaned Sidecar Cleanup', () => {
+    it('should delete .erd.json sidecar without matching .sqlite file', async () => {
+      mockState.registryData = { databases: [] };
+      mockState.fileList = ['existing.sqlite'];
+      mockState.allFiles = ['existing.sqlite', 'existing.erd.json', 'orphan.erd.json'];
+      mockState.opfsAvailable = true;
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      const result = await registry.init();
+
+      // orphan.erd.json should be deleted (no orphan.sqlite exists)
+      expect(mockState.deletedRawFiles.has('orphan.erd.json')).toBe(true);
+      // existing.erd.json should NOT be deleted
+      expect(mockState.deletedRawFiles.has('existing.erd.json')).toBe(false);
+      expect(result.orphanedSidecarsRemoved).toContain('orphan.erd.json');
+    });
+
+    it('should handle case-insensitive sidecar matching', async () => {
+      mockState.registryData = { databases: [] };
+      mockState.fileList = ['MyDB.sqlite'];
+      mockState.allFiles = ['MyDB.sqlite', 'mydb.erd.json'];
+      mockState.opfsAvailable = true;
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      const result = await registry.init();
+
+      // mydb.erd.json should NOT be deleted because MyDB.sqlite exists (case-insensitive match)
+      expect(mockState.deletedRawFiles.has('mydb.erd.json')).toBe(false);
+      expect(result.orphanedSidecarsRemoved?.length ?? 0).toBe(0);
+    });
+  });
+
+  describe('Orphaned Journal Cleanup', () => {
+    it('should delete orphaned -wal file without matching .sqlite', async () => {
+      mockState.registryData = { databases: [] };
+      mockState.fileList = ['existing.sqlite'];
+      mockState.allFiles = ['existing.sqlite', 'existing.sqlite-wal', 'orphan.sqlite-wal'];
+      mockState.opfsAvailable = true;
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      const result = await registry.init();
+
+      expect(mockState.deletedRawFiles.has('orphan.sqlite-wal')).toBe(true);
+      expect(mockState.deletedRawFiles.has('existing.sqlite-wal')).toBe(false);
+      expect(result.orphanedJournalsRemoved).toContain('orphan.sqlite-wal');
+    });
+
+    it('should delete orphaned -shm file without matching .sqlite', async () => {
+      mockState.registryData = { databases: [] };
+      mockState.fileList = ['existing.sqlite'];
+      mockState.allFiles = ['existing.sqlite', 'orphan.sqlite-shm'];
+      mockState.opfsAvailable = true;
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      const result = await registry.init();
+
+      expect(mockState.deletedRawFiles.has('orphan.sqlite-shm')).toBe(true);
+      expect(result.orphanedJournalsRemoved).toContain('orphan.sqlite-shm');
+    });
+
+    it('should delete orphaned -journal file without matching .sqlite', async () => {
+      mockState.registryData = { databases: [] };
+      mockState.fileList = ['existing.sqlite'];
+      mockState.allFiles = ['existing.sqlite', 'orphan.sqlite-journal'];
+      mockState.opfsAvailable = true;
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      const result = await registry.init();
+
+      expect(mockState.deletedRawFiles.has('orphan.sqlite-journal')).toBe(true);
+      expect(result.orphanedJournalsRemoved).toContain('orphan.sqlite-journal');
+    });
+
+    it('should not delete journal files that have matching .sqlite files', async () => {
+      mockState.registryData = { databases: [] };
+      mockState.fileList = ['test.sqlite'];
+      mockState.allFiles = ['test.sqlite', 'test.sqlite-wal', 'test.sqlite-shm', 'test.sqlite-journal'];
+      mockState.opfsAvailable = true;
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      const result = await registry.init();
+
+      expect(mockState.deletedRawFiles.size).toBe(0);
+      expect(result.orphanedJournalsRemoved?.length ?? 0).toBe(0);
+    });
+
+    it('should handle all journal types together', async () => {
+      mockState.registryData = { databases: [] };
+      // No .sqlite files
+      mockState.fileList = [];
+      // But there are orphaned journal files
+      mockState.allFiles = [
+        'orphan.sqlite-wal',
+        'orphan.sqlite-shm',
+        'orphan.sqlite-journal',
+      ];
+      mockState.opfsAvailable = true;
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      const result = await registry.init();
+
+      expect(mockState.deletedRawFiles.has('orphan.sqlite-wal')).toBe(true);
+      expect(mockState.deletedRawFiles.has('orphan.sqlite-shm')).toBe(true);
+      expect(mockState.deletedRawFiles.has('orphan.sqlite-journal')).toBe(true);
+      expect(result.orphanedJournalsRemoved?.length).toBe(3);
+    });
+  });
+
+  describe('Combined Self-Heal Scenarios', () => {
+    it('should handle mixed scenario: case collision + orphan sidecars + orphan journals', async () => {
+      mockState.registryData = { databases: [] };
+      mockState.fileList = ['mydb.sqlite', 'MyDB.sqlite'];
+      mockState.allFiles = [
+        'mydb.sqlite',
+        'MyDB.sqlite',
+        'mydb.erd.json',
+        'orphan.erd.json',
+        'orphan.sqlite-wal',
+      ];
+      mockState.opfsAvailable = true;
+      mockState.fileLastModified.set('mydb.sqlite', 2000);
+      mockState.fileLastModified.set('MyDB.sqlite', 1000);
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      const result = await registry.init();
+
+      // Case collision resolved - MyDB.sqlite renamed preserving its case
+      expect(mockState.renamedFiles.get('MyDB.sqlite')).toBe('MyDB (conflict-1).sqlite');
+      expect(result.caseCollisionsResolved).toBe(1);
+
+      // Orphan sidecar cleaned
+      expect(mockState.deletedRawFiles.has('orphan.erd.json')).toBe(true);
+
+      // Orphan journal cleaned
+      expect(mockState.deletedRawFiles.has('orphan.sqlite-wal')).toBe(true);
+
+      // Valid sidecar NOT deleted
+      expect(mockState.deletedRawFiles.has('mydb.erd.json')).toBe(false);
+    });
+  });
+
+  describe('healFileOperationFailures', () => {
+    it('should clean up orphaned .sqlite files not in registry', async () => {
+      mockState.opfsAvailable = true;
+      mockState.registryData = {
+        databases: [
+          {
+            id: 'db1',
+            name: 'registered',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            lastOpenedAt: '2026-01-01T00:00:00.000Z',
+            storageType: 'opfs',
+          },
+        ],
+      };
+      mockState.fileList = ['registered.sqlite'];
+      mockState.allFiles = ['registered.sqlite'];
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      // Simulate a scenario where files appeared after init (e.g., failed delete left orphans)
+      // Add orphan files AFTER init to simulate leftover from failed operation
+      mockState.allFiles.push('orphan.sqlite', 'orphan.erd.json');
+
+      // Run heal after file operation failures
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const result = await registry.healFileOperationFailures();
+
+      // Should delete the orphaned file and its sidecar
+      expect(mockState.deletedRawFiles.has('orphan.sqlite')).toBe(true);
+      expect(mockState.deletedRawFiles.has('orphan.erd.json')).toBe(true);
+      expect(result.orphansRemoved).toContain('orphan.sqlite');
+      expect(result.orphanedSidecarsRemoved).toContain('orphan.erd.json');
+
+      // Should NOT delete registered file
+      expect(mockState.deletedRawFiles.has('registered.sqlite')).toBe(false);
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should clean up orphaned journal files', async () => {
+      mockState.opfsAvailable = true;
+      mockState.registryData = { databases: [] };
+      mockState.fileList = [];
+      mockState.allFiles = [];
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      // Add orphan journal files AFTER init (simulating leftover from crash/failed op)
+      mockState.allFiles.push('orphan.sqlite-wal', 'orphan.sqlite-shm', 'orphan.sqlite-journal');
+
+      const result = await registry.healFileOperationFailures();
+
+      expect(mockState.deletedRawFiles.has('orphan.sqlite-wal')).toBe(true);
+      expect(mockState.deletedRawFiles.has('orphan.sqlite-shm')).toBe(true);
+      expect(mockState.deletedRawFiles.has('orphan.sqlite-journal')).toBe(true);
+      expect(result.orphanedJournalsRemoved.length).toBe(3);
+    });
+
+    it('should return empty result for IDB mode', async () => {
+      mockState.opfsAvailable = false; // IDB mode
+      mockState.registryData = { databases: [] };
+      mockState.fileList = [];
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const result = await registry.healFileOperationFailures();
+
+      // No cleanup in IDB mode
+      expect(result.orphansRemoved.length).toBe(0);
+      expect(result.orphanedSidecarsRemoved.length).toBe(0);
+      expect(result.orphanedJournalsRemoved.length).toBe(0);
     });
   });
 });

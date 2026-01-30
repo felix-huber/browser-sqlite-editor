@@ -93,6 +93,12 @@ export interface HealingResult {
   discovered: string[];
   /** Whether JSON was corrupted and reset */
   wasCorrupted: boolean;
+  /** Number of case collisions resolved */
+  caseCollisionsResolved: number;
+  /** Orphaned .erd.json sidecar files removed */
+  orphanedSidecarsRemoved: string[];
+  /** Orphaned journal files removed (-wal, -shm, -journal) */
+  orphanedJournalsRemoved: string[];
 }
 
 /**
@@ -106,6 +112,14 @@ export interface StorageAdapter {
   renameFile?: (mode: StorageMode, oldName: string, newName: string) => Promise<void>;
   fileExists?: (mode: StorageMode, name: string) => Promise<boolean>;
   deleteFile?: (mode: StorageMode, name: string) => Promise<void>;
+  /** Get the lastModified timestamp of a file (for case collision resolution) */
+  getFileLastModified?: (mode: StorageMode, filename: string) => Promise<number>;
+  /** List ALL files in the databases directory (including sidecars, journals) */
+  listAllFiles?: () => Promise<string[]>;
+  /** Delete a raw file by filename (for orphan cleanup) */
+  deleteRawFile?: (filename: string) => Promise<void>;
+  /** Rename a raw file by filename (for case collision resolution) */
+  renameRawFile?: (oldFilename: string, newFilename: string) => Promise<void>;
 }
 
 // =============================================================================
@@ -545,6 +559,79 @@ async function deleteOpfsSidecar(basename: string): Promise<void> {
   } catch {
     // Sidecar doesn't exist, that's fine
   }
+}
+
+/**
+ * Get the lastModified timestamp of a file in OPFS databases/ subdirectory
+ */
+async function getOpfsFileLastModified(filename: string): Promise<number> {
+  try {
+    const dir = await getOpfsDatabasesDir();
+    const fileHandle = await dir.getFileHandle(filename);
+    const file = await fileHandle.getFile();
+    return file.lastModified;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * List ALL files in OPFS databases/ subdirectory (including sidecars, journals)
+ */
+async function listOpfsAllFiles(): Promise<string[]> {
+  const files: string[] = [];
+  try {
+    const dir = await getOpfsDatabasesDir();
+    const entries = (dir as unknown as AsyncIterable<[string, FileSystemHandle]>)[Symbol.asyncIterator]();
+    for await (const [name, handle] of { [Symbol.asyncIterator]: () => entries }) {
+      if (handle.kind === 'file') {
+        files.push(name);
+      }
+    }
+  } catch {
+    // Directory doesn't exist or can't be read
+  }
+  return files;
+}
+
+/**
+ * Delete a raw file in OPFS databases/ subdirectory by filename
+ */
+async function deleteOpfsRawFile(filename: string): Promise<void> {
+  const dir = await getOpfsDatabasesDir();
+  try {
+    await dir.removeEntry(filename);
+  } catch (err) {
+    // If file doesn't exist, that's okay
+    if (err instanceof DOMException && err.name === 'NotFoundError') {
+      return;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Rename a raw file in OPFS databases/ subdirectory
+ */
+async function renameOpfsRawFile(oldFilename: string, newFilename: string): Promise<void> {
+  const dir = await getOpfsDatabasesDir();
+
+  // Get the old file
+  const oldHandle = await dir.getFileHandle(oldFilename);
+  const file = await oldHandle.getFile();
+  const data = await file.arrayBuffer();
+
+  // Create the new file and write data
+  const newHandle = await dir.getFileHandle(newFilename, { create: true });
+  const writable = await newHandle.createWritable();
+  try {
+    await writable.write(data);
+  } finally {
+    await writable.close();
+  }
+
+  // Delete the old file
+  await dir.removeEntry(oldFilename);
 }
 
 // =============================================================================
@@ -1023,6 +1110,22 @@ const defaultStorageAdapter: StorageAdapter = {
       await deleteIdbDatabase(name);
     }
   },
+  getFileLastModified: async (mode, filename) => {
+    if (mode === 'opfs') {
+      return getOpfsFileLastModified(filename);
+    }
+    // IDB doesn't have lastModified in the same way; return 0
+    return 0;
+  },
+  listAllFiles: async () => {
+    return listOpfsAllFiles();
+  },
+  deleteRawFile: async (filename) => {
+    await deleteOpfsRawFile(filename);
+  },
+  renameRawFile: async (oldFilename, newFilename) => {
+    await renameOpfsRawFile(oldFilename, newFilename);
+  },
 };
 
 // =============================================================================
@@ -1075,6 +1178,9 @@ export class DatabaseRegistry {
       orphansRemoved: [],
       discovered: [],
       wasCorrupted: false,
+      caseCollisionsResolved: 0,
+      orphanedSidecarsRemoved: [],
+      orphanedJournalsRemoved: [],
     };
 
     // Load registry data
@@ -1098,8 +1204,13 @@ export class DatabaseRegistry {
       this.data = { databases: [] };
     }
 
-    // Get actual files
-    const actualFiles = await this.adapter.listFiles(this.storageMode);
+    // Get actual database files
+    let actualFiles = await this.adapter.listFiles(this.storageMode);
+
+    // === CASE COLLISION RESOLUTION (OPFS only) ===
+    if (this.storageMode === 'opfs' && this.adapter.getFileLastModified && this.adapter.renameRawFile) {
+      actualFiles = await this.resolveCaseCollisions(actualFiles, result);
+    }
 
     // Find orphans (registry has entry, no file)
     const validEntries: RegistryEntry[] = [];
@@ -1113,6 +1224,9 @@ export class DatabaseRegistry {
         validEntries.push(entry);
       } else {
         result.orphansRemoved.push(entry.id);
+        console.log(
+          `[DatabaseRegistry] Orphan DB detected: id="${entry.id}", name="${entry.name}" (no corresponding file found)`
+        );
       }
     }
 
@@ -1144,12 +1258,163 @@ export class DatabaseRegistry {
     // Update registry with healed data
     this.data.databases = validEntries;
 
+    // === ORPHANED SIDECAR AND JOURNAL CLEANUP (OPFS only) ===
+    if (this.storageMode === 'opfs' && this.adapter.listAllFiles && this.adapter.deleteRawFile) {
+      await this.cleanOrphanedFiles(actualFiles, result);
+    }
+
     // Persist if any changes were made
-    if (result.wasCorrupted || result.orphansRemoved.length > 0 || result.discovered.length > 0) {
+    const hasChanges = result.wasCorrupted ||
+      result.orphansRemoved.length > 0 ||
+      result.discovered.length > 0 ||
+      result.caseCollisionsResolved > 0 ||
+      result.orphanedSidecarsRemoved.length > 0 ||
+      result.orphanedJournalsRemoved.length > 0;
+
+    if (hasChanges) {
       await this.save();
     }
 
     return result;
+  }
+
+  /**
+   * Resolve case collisions among database files.
+   * Groups files by lowercase name and renames all but the most recently modified
+   * (or lexicographically first on tie) to include a "(conflict)" suffix.
+   */
+  private async resolveCaseCollisions(
+    files: string[],
+    result: HealingResult
+  ): Promise<string[]> {
+    // Group files by their lowercase name
+    const groups = new Map<string, string[]>();
+    for (const filename of files) {
+      const key = filename.toLowerCase();
+      const group = groups.get(key) ?? [];
+      group.push(filename);
+      groups.set(key, group);
+    }
+
+    const updatedFiles: string[] = [];
+
+    for (const [, group] of groups) {
+      if (group.length === 1) {
+        // No collision
+        updatedFiles.push(group[0]);
+        continue;
+      }
+
+      // Get lastModified for each file
+      const filesWithMtime: Array<{ filename: string; mtime: number }> = [];
+      for (const filename of group) {
+        const mtime = await this.adapter.getFileLastModified!(this.storageMode, filename);
+        filesWithMtime.push({ filename, mtime });
+      }
+
+      // Sort: most recent first, then lexicographically first as tie-breaker
+      filesWithMtime.sort((a, b) => {
+        if (b.mtime !== a.mtime) {
+          return b.mtime - a.mtime; // Most recent first
+        }
+        // Locale-independent byte-wise comparison for deterministic ordering
+        return a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0;
+      });
+
+      // Keep the first one (winner), rename the rest
+      const winner = filesWithMtime[0];
+      updatedFiles.push(winner.filename);
+
+      // Build set of already-used filenames (case-insensitive) for conflict checks
+      const usedFilenames = new Set(files.map(f => f.toLowerCase()));
+      for (const f of updatedFiles) {
+        usedFilenames.add(f.toLowerCase());
+      }
+
+      for (let i = 1; i < filesWithMtime.length; i++) {
+        const loser = filesWithMtime[i];
+        // Generate conflict name: mydb.sqlite -> mydb (conflict-1).sqlite
+        // Find a unique suffix to avoid overwriting existing files
+        const baseName = loser.filename.replace(/\.sqlite$/, '');
+        let conflictIndex = i;
+        let conflictName = `${baseName} (conflict-${conflictIndex}).sqlite`;
+        while (usedFilenames.has(conflictName.toLowerCase())) {
+          conflictIndex++;
+          conflictName = `${baseName} (conflict-${conflictIndex}).sqlite`;
+        }
+
+        try {
+          await this.adapter.renameRawFile!(loser.filename, conflictName);
+          updatedFiles.push(conflictName);
+          usedFilenames.add(conflictName.toLowerCase());
+          result.caseCollisionsResolved++;
+
+          console.log(
+            `[DatabaseRegistry] Case collision resolved: kept "${winner.filename}" (mtime: ${winner.mtime}), ` +
+            `renamed "${loser.filename}" → "${conflictName}"`
+          );
+        } catch (err) {
+          // If rename fails, keep original file in list
+          updatedFiles.push(loser.filename);
+          console.warn(
+            `[DatabaseRegistry] Failed to resolve case collision for "${loser.filename}":`,
+            err
+          );
+        }
+      }
+    }
+
+    return updatedFiles;
+  }
+
+  /**
+   * Clean orphaned sidecar and journal files.
+   * Deletes .erd.json files and -wal/-shm/-journal files that don't have
+   * a corresponding .sqlite file.
+   */
+  private async cleanOrphanedFiles(
+    sqliteFiles: string[],
+    result: HealingResult
+  ): Promise<void> {
+    const allFiles = await this.adapter.listAllFiles!();
+
+    // Build a set of base names from sqlite files (case-insensitive)
+    const sqliteBaseNames = new Set(
+      sqliteFiles.map((f) => f.replace(/\.sqlite$/, '').toLowerCase())
+    );
+
+    for (const filename of allFiles) {
+      // Check for orphaned .erd.json sidecars
+      if (filename.endsWith('.erd.json')) {
+        const baseName = filename.replace(/\.erd\.json$/, '').toLowerCase();
+        if (!sqliteBaseNames.has(baseName)) {
+          try {
+            await this.adapter.deleteRawFile!(filename);
+            result.orphanedSidecarsRemoved.push(filename);
+          } catch (err) {
+            console.warn(`[DatabaseRegistry] Failed to delete orphaned sidecar "${filename}":`, err);
+          }
+        }
+        continue;
+      }
+
+      // Check for orphaned journal files (-wal, -shm, -journal)
+      const journalSuffixes = ['-wal', '-shm', '-journal'];
+      for (const suffix of journalSuffixes) {
+        if (filename.endsWith(`.sqlite${suffix}`)) {
+          const baseName = filename.replace(new RegExp(`\\.sqlite${suffix}$`), '').toLowerCase();
+          if (!sqliteBaseNames.has(baseName)) {
+            try {
+              await this.adapter.deleteRawFile!(filename);
+              result.orphanedJournalsRemoved.push(filename);
+            } catch (err) {
+              console.warn(`[DatabaseRegistry] Failed to delete orphaned journal "${filename}":`, err);
+            }
+          }
+          break;
+        }
+      }
+    }
   }
 
   /**
@@ -1371,6 +1636,108 @@ export class DatabaseRegistry {
   }
 
   /**
+   * Self-heal after file operation failures
+   *
+   * Call this method after operations that return warnings (e.g., deleteDatabase
+   * with file deletion failure). It will attempt to clean up orphaned files
+   * that couldn't be deleted previously.
+   *
+   * @returns HealingResult with cleanup details
+   */
+  async healFileOperationFailures(): Promise<HealingResult> {
+    const result: HealingResult = {
+      orphansRemoved: [],
+      discovered: [],
+      wasCorrupted: false,
+      caseCollisionsResolved: 0,
+      orphanedSidecarsRemoved: [],
+      orphanedJournalsRemoved: [],
+    };
+
+    // Only run on OPFS mode where file cleanup is applicable
+    if (this.storageMode !== 'opfs' || !this.adapter.listAllFiles || !this.adapter.deleteRawFile) {
+      return result;
+    }
+
+    // Get current registered database filenames
+    const registeredFilenames = new Set(
+      this.data.databases.map((e) => _testing.toFilename(e.name).toLowerCase())
+    );
+
+    // List all files and find orphans
+    const allFiles = await this.adapter.listAllFiles();
+
+    for (const filename of allFiles) {
+      // Check for orphaned .sqlite files (file exists but not in registry)
+      if (filename.endsWith('.sqlite')) {
+        const lowerFilename = filename.toLowerCase();
+        if (!registeredFilenames.has(lowerFilename)) {
+          try {
+            await this.adapter.deleteRawFile(filename);
+            result.orphansRemoved.push(filename);
+            console.log(
+              `[DatabaseRegistry] Self-heal: deleted orphaned database file "${filename}"`
+            );
+          } catch (err) {
+            console.warn(
+              `[DatabaseRegistry] Self-heal: failed to delete orphaned file "${filename}":`,
+              err
+            );
+          }
+        }
+        continue;
+      }
+
+      // Check for orphaned sidecars
+      if (filename.endsWith('.erd.json')) {
+        const baseName = filename.replace(/\.erd\.json$/, '').toLowerCase();
+        const expectedSqlite = `${baseName}.sqlite`;
+        if (!registeredFilenames.has(expectedSqlite)) {
+          try {
+            await this.adapter.deleteRawFile(filename);
+            result.orphanedSidecarsRemoved.push(filename);
+            console.log(
+              `[DatabaseRegistry] Self-heal: deleted orphaned sidecar "${filename}"`
+            );
+          } catch (err) {
+            console.warn(
+              `[DatabaseRegistry] Self-heal: failed to delete orphaned sidecar "${filename}":`,
+              err
+            );
+          }
+        }
+        continue;
+      }
+
+      // Check for orphaned journal files
+      const journalSuffixes = ['-wal', '-shm', '-journal'];
+      for (const suffix of journalSuffixes) {
+        if (filename.endsWith(`.sqlite${suffix}`)) {
+          const baseName = filename.replace(new RegExp(`\\.sqlite${suffix}$`), '').toLowerCase();
+          const expectedSqlite = `${baseName}.sqlite`;
+          if (!registeredFilenames.has(expectedSqlite)) {
+            try {
+              await this.adapter.deleteRawFile(filename);
+              result.orphanedJournalsRemoved.push(filename);
+              console.log(
+                `[DatabaseRegistry] Self-heal: deleted orphaned journal "${filename}"`
+              );
+            } catch (err) {
+              console.warn(
+                `[DatabaseRegistry] Self-heal: failed to delete orphaned journal "${filename}":`,
+                err
+              );
+            }
+          }
+          break;
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * Clear all entries (for testing)
    */
   async clear(): Promise<void> {
@@ -1522,6 +1889,10 @@ export const _testing = {
   renameOpfsSidecar,
   deleteOpfsFile,
   deleteOpfsSidecar,
+  getOpfsFileLastModified,
+  listOpfsAllFiles,
+  deleteOpfsRawFile,
+  renameOpfsRawFile,
   readIdbRegistry,
   writeIdbRegistry,
   listIdbDatabases,

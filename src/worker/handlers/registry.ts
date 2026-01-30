@@ -102,6 +102,10 @@ export async function handleDeleteDbRequest(
       }, id);
       return;
     }
+    // If file deletion failed, attempt self-healing cleanup
+    if (result.warnings && result.warnings.length > 0) {
+      await registry.healFileOperationFailures();
+    }
     postResponse({
       type: 'success',
       data: result.warnings ? { warnings: result.warnings } : undefined,

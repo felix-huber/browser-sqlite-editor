@@ -1,16 +1,16 @@
 {
   "runId": "2026-01-30T22:53:41+01:00",
-  "updatedAt": "2026-01-30T23:02:43+01:00",
+  "updatedAt": "2026-01-30T23:19:12+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-fec",
-    "subject": "P1-02: Enforce PRD naming rules",
+    "id": "bd-lx0",
+    "subject": "P1-03: Registry self-heal",
     "status": "completed",
     "phase": "review",
-    "attempt": 1
+    "attempt": 3
   },
   "tools": {
     "implementer": "claude",
