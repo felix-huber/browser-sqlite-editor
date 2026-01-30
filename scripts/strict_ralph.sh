@@ -274,7 +274,10 @@ select_next_task() {
     require_beads
     require_cmd jq
     local ready
-    ready=$(br ready --json 2>&1) || { log "Warning: br ready failed"; ready="[]"; }
+    local br_stderr
+    br_stderr=$(mktemp)
+    ready=$(br ready --json 2>"$br_stderr") || { log "Warning: br ready failed: $(cat "$br_stderr")"; ready="[]"; }
+    rm -f "$br_stderr"
     TASK_ID=$(echo "$ready" | jq -r '.[0].id // empty')
   else
     require_cmd jq
@@ -374,7 +377,10 @@ load_task() {
     require_beads
     require_cmd jq
     local bead
-    bead=$(br show "$TASK_ID" --json 2>&1) || { log "Warning: br show failed for $TASK_ID"; bead="[]"; }
+    local br_stderr
+    br_stderr=$(mktemp)
+    bead=$(br show "$TASK_ID" --json 2>"$br_stderr") || { log "Warning: br show failed for $TASK_ID: $(cat "$br_stderr")"; bead="[]"; }
+    rm -f "$br_stderr"
     # br show --json returns an array, extract first element
     SUBJECT=$(echo "$bead" | jq -r '.[0].title // ""')
     DESCRIPTION=$(echo "$bead" | jq -r '.[0].description // ""')
@@ -647,6 +653,11 @@ Strict requirements:
 - No fake/tautological tests. Every test must exercise real behavior and assert state/output changes.
 - If integration is not ready, add a minimal test harness (UI route, CLI fixture, API runner).
 - Run the verification commands provided by the plan.
+
+Tool recommendations:
+- Use context7 MCP tool to fetch latest documentation for any libraries you use.
+- Before implementing, search for existing patterns in the codebase.
+- Read related files to understand conventions before writing code.
 
 When done, do NOT add extra commentary. Keep changes minimal and correct.
 EOF
