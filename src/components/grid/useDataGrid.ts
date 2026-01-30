@@ -14,6 +14,7 @@ import {
   getCoreRowModel,
   type ColumnDef,
   type Table,
+  type Row,
   type RowData,
 } from '@tanstack/react-table';
 import type { TableInfo, ColumnInfo } from '../../types';
@@ -40,6 +41,9 @@ export type CellValue = null | number | string | Uint8Array;
 
 /** A row of data as a record of column name -> value */
 export type DataRow = Record<string, CellValue>;
+
+/** Row type from TanStack table for DataGrid */
+export type DataGridRow = Row<DataRow>;
 
 /** Cursor-based pagination state */
 export interface PaginationState {
