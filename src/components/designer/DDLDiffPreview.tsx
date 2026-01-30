@@ -15,6 +15,7 @@
 
 import { useMemo } from 'react';
 import type { TableInfo, DesignerColumnDraft } from '../../types';
+import { escapeIdentifier } from '../../lib/sql/escape';
 
 // =============================================================================
 // Types
@@ -77,14 +78,6 @@ export interface ValidationResult {
 // SQL Generation Helpers
 // =============================================================================
 
-/** Escape a SQL identifier (double quotes for names with special chars) */
-function escapeIdentifier(name: string): string {
-  if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
-    return name;
-  }
-  return `"${name.replace(/"/g, '""')}"`;
-}
-
 /** Generate column definition SQL */
 function generateColumnDef(col: DesignerColumnDraft): string {
   let def = `${escapeIdentifier(col.name)} ${col.type}`;
@@ -108,6 +101,10 @@ function generateColumnDef(col: DesignerColumnDraft): string {
   }
 
   return def;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /** Generate CREATE TABLE statement */
@@ -382,10 +379,10 @@ export function generateRebuildPlan(
       let indexSql = idx.createSql;
       if (existingTable.name !== newTableName) {
         // Simple replacement - may need more sophisticated parsing for complex cases
-        indexSql = indexSql.replace(
-          new RegExp(`\\b${escapeIdentifier(existingTable.name)}\\b`, 'gi'),
-          escapedNew
-        );
+        const rawName = escapeRegExp(existingTable.name);
+        const quotedName = escapeRegExp(escapeIdentifier(existingTable.name));
+        indexSql = indexSql.replace(new RegExp(`\\b${rawName}\\b`, 'gi'), escapedNew);
+        indexSql = indexSql.replace(new RegExp(quotedName, 'gi'), escapedNew);
       }
       steps.push({
         step: stepNum++,

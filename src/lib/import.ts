@@ -4,6 +4,10 @@
  * progress tracking, and full rollback on error.
  */
 
+import { escapeIdentifier } from './sql/escape';
+
+export { escapeIdentifier };
+
 export type ColumnType = 'INTEGER' | 'REAL' | 'TEXT' | 'BLOB' | 'NULL';
 
 export interface ColumnDef {
@@ -55,14 +59,6 @@ export interface DatabaseExecutor {
 }
 
 const DEFAULT_BATCH_SIZE = 100;
-
-/**
- * Escapes a SQL identifier (table/column name) by wrapping in double quotes
- * and doubling any existing double quotes.
- */
-export function escapeIdentifier(name: string): string {
-  return `"${name.replace(/"/g, '""')}"`;
-}
 
 /**
  * Maps a column type to SQLite type for CREATE TABLE.

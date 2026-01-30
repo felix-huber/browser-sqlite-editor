@@ -7,6 +7,7 @@ import {
   type JSONExportOptions,
   type DDLTableInfo,
 } from '../../lib/export'
+import { escapeIdentifier } from '../../lib/sql/escape'
 
 export type ExportFormat = 'csv' | 'json' | 'sql'
 export type CSVDelimiter = ',' | ';' | '\t'
@@ -80,9 +81,6 @@ function generateSQLInserts(
   rows: unknown[][]
 ): string {
   if (rows.length === 0) return ''
-
-  const escapeIdentifier = (name: string): string =>
-    `"${name.replace(/"/g, '""')}"`
 
   const escapeValue = (value: unknown): string => {
     if (value === null || value === undefined) return 'NULL'

@@ -16,6 +16,9 @@ import { memo, useState, useMemo, useCallback } from 'react';
 import type { QueryResult, SqlError, TableInfo, ColumnInfo } from '../../types';
 import { DataGrid } from '../grid';
 import type { DataRow } from '../grid';
+import { formatExecutionTime } from '../../lib/format/time';
+
+export { formatExecutionTime };
 
 // =============================================================================
 // Types
@@ -76,19 +79,6 @@ export function classifyStatement(sql: string): ResultType {
   }
   // DDL and other statements
   return 'ddl';
-}
-
-/**
- * Format execution time for display
- */
-export function formatExecutionTime(ms: number): string {
-  if (ms < 1) {
-    return `${ms.toFixed(2)}ms`;
-  }
-  if (ms < 1000) {
-    return `${ms.toFixed(0)}ms`;
-  }
-  return `${(ms / 1000).toFixed(2)}s`;
 }
 
 /**

@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useRef, useEffect } from 'react';
+import { isMac } from '../../lib/platform/keyboard';
 
 // File System Access API types (not in standard TypeScript lib)
 interface FilePickerAcceptType {
@@ -71,10 +72,6 @@ export interface OpenDatabaseButtonProps {
 /**
  * Detects if running on macOS (for keyboard shortcut display)
  */
-function isMac(): boolean {
-  return typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
-}
-
 /**
  * Check if File System Access API is available
  */

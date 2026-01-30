@@ -11,6 +11,8 @@
  * - Accessible with ARIA attributes
  */
 
+import { formatBytes } from '../../lib/format/bytes';
+
 export interface ProgressBarProps {
   /** Progress percentage (0-100) */
   percent: number;
@@ -26,15 +28,6 @@ export interface ProgressBarProps {
   onCancel?: () => void;
   /** Additional CSS classes */
   className?: string;
-}
-
-/**
- * Format bytes as human-readable string
- */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /**

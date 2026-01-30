@@ -32,6 +32,9 @@
  */
 
 import { useEffect, useCallback, useRef } from 'react';
+import { isMac } from '../lib/platform/keyboard';
+
+export { isMac };
 
 // =============================================================================
 // Types
@@ -74,14 +77,6 @@ interface ShortcutMatch {
 // =============================================================================
 // Platform Detection
 // =============================================================================
-
-/**
- * Check if the current platform is macOS
- */
-export function isMac(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return navigator.platform.includes('Mac') || navigator.userAgent.includes('Mac');
-}
 
 /**
  * Get the modifier key label for display

@@ -4,6 +4,7 @@
  */
 
 import Papa from 'papaparse';
+import { escapeIdentifier } from './sql/escape';
 
 /** UTF-8 BOM for Excel compatibility */
 const UTF8_BOM = '\uFEFF';
@@ -165,15 +166,6 @@ export interface DDLTableInfo {
   columns: DDLColumnInfo[];
   /** Whether this is WITHOUT ROWID table */
   withoutRowid?: boolean;
-}
-
-/**
- * Escape SQL identifier (table/column name).
- * Uses double-quote escaping per SQL standard.
- */
-function escapeIdentifier(name: string): string {
-  // Always quote identifiers to handle reserved words and special characters
-  return `"${name.replace(/"/g, '""')}"`;
 }
 
 /**

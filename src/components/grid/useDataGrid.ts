@@ -17,6 +17,9 @@ import {
   type RowData,
 } from '@tanstack/react-table';
 import type { TableInfo, ColumnInfo } from '../../types';
+import { escapeLike } from '../../lib/sql/escape';
+
+export { escapeLike };
 
 // =============================================================================
 // Constants
@@ -313,17 +316,6 @@ export function generatePaginatedQuery(
 // =============================================================================
 // Filter Utilities
 // =============================================================================
-
-/**
- * Escape special characters in LIKE patterns
- * SQLite LIKE special chars: % (any chars), _ (single char), \ (escape char)
- */
-export function escapeLike(value: string): string {
-  return value
-    .replace(/\\/g, '\\\\') // Escape backslash first
-    .replace(/%/g, '\\%')   // Escape percent
-    .replace(/_/g, '\\_');  // Escape underscore
-}
 
 /**
  * Generate WHERE clause fragment for a single filter

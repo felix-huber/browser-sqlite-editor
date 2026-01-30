@@ -15,6 +15,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { ProgressBar } from '../common/ProgressBar';
+import { formatBytes } from '../../lib/format/bytes';
 
 /** Threshold for large file warning (100MB) */
 const LARGE_FILE_THRESHOLD = 100 * 1024 * 1024;
@@ -50,16 +51,6 @@ export interface ImportProgressProps {
   onDismiss: () => void;
   /** Storage quota estimate (optional) */
   storageEstimate?: { quota?: number; usage?: number };
-}
-
-/**
- * Format bytes as human-readable string
- */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 /**

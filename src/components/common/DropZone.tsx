@@ -12,6 +12,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { formatBytes } from '../../lib/format/bytes';
 
 /** Maximum file size in bytes (500MB) */
 const MAX_FILE_SIZE = 500 * 1024 * 1024;
@@ -67,15 +68,6 @@ function getFileCategory(file: File): FileCategory {
     return 'json';
   }
   return 'unsupported';
-}
-
-/**
- * Format bytes as human-readable string
- */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /**

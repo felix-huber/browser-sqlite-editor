@@ -14,6 +14,7 @@
 import { memo, useState, useCallback, useMemo, useRef } from 'react'
 import { SqlResultsDisplay, type StatementResult } from '../sql/SqlResultsDisplay'
 import type { QueryResult, SqlError } from '../../types'
+import { formatExecutionTime } from '../../lib/format/time'
 
 /** Props for SqlPreviewPanel */
 export interface SqlPreviewPanelProps {
@@ -35,17 +36,6 @@ export interface SqlPreviewPanelProps {
   className?: string
   /** Height of the panel (default: 100%) */
   height?: number | string
-}
-
-/** Format execution time for display */
-function formatExecutionTime(ms: number): string {
-  if (ms < 1) {
-    return `${ms.toFixed(2)}ms`
-  }
-  if (ms < 1000) {
-    return `${ms.toFixed(0)}ms`
-  }
-  return `${(ms / 1000).toFixed(2)}s`
 }
 
 /** Copy icon */

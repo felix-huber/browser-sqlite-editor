@@ -15,6 +15,10 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDatabaseStore, useStorageMode, useActiveDb } from '../../store';
 import { getWorkerClient } from '../../lib/worker-client';
 import { deleteHistory } from '../../lib/history';
+import { formatBytes } from '../../lib/format/bytes';
+import { isMac } from '../../lib/platform/keyboard';
+
+export { formatBytes };
 
 // =============================================================================
 // Types
@@ -88,17 +92,6 @@ export function saveGlobalSettings(settings: GlobalSettings): void {
   } catch {
     // Ignore storage errors
   }
-}
-
-/**
- * Format bytes to human readable string
- */
-export function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  const value = bytes / Math.pow(1024, i);
-  return `${value.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
 /**
@@ -228,7 +221,7 @@ interface ShortcutRowProps {
 }
 
 function ShortcutRow({ label, keys, meta }: ShortcutRowProps) {
-  const isMacPlatform = typeof navigator !== 'undefined' && navigator.platform.includes('Mac');
+  const isMacPlatform = isMac();
   const modifier = isMacPlatform ? '⌘' : 'Ctrl';
 
   return (
@@ -608,8 +601,8 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
 export function useSettingsShortcut(onOpen: () => void): void {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const isMac = navigator.platform.includes('Mac');
-      const modifier = isMac ? e.metaKey : e.ctrlKey;
+      const isMacPlatform = isMac();
+      const modifier = isMacPlatform ? e.metaKey : e.ctrlKey;
 
       if (modifier && e.key === ',') {
         e.preventDefault();

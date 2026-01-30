@@ -12,6 +12,7 @@ import { useCallback, useRef, useEffect, useState } from 'react';
 import { useDatabases } from '../../store';
 import { DropZone } from '../common/DropZone';
 import { OpenDatabaseButton } from '../layout/OpenDatabaseButton';
+import { isMac } from '../../lib/platform/keyboard';
 
 /** MIME types for file input accept attribute */
 const ACCEPTED_MIME_TYPES =
@@ -45,13 +46,6 @@ export interface WelcomeProps {
 function isValidFile(file: File): boolean {
   const name = file.name.toLowerCase();
   return ACCEPTED_EXTENSIONS.some((ext) => name.endsWith(ext));
-}
-
-/**
- * Detects if running on macOS (for keyboard shortcut display)
- */
-function isMac(): boolean {
-  return typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
 }
 
 export function Welcome({

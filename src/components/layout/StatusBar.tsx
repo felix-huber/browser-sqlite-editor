@@ -20,6 +20,7 @@ import {
   usePersistenceStatus,
   usePersistenceError,
 } from '../../store';
+import { formatBytes } from '../../lib/format/bytes';
 
 /**
  * Props for StatusBar
@@ -31,18 +32,6 @@ export interface StatusBarProps {
   currentTableRowCount?: number | null;
   /** Database file size in bytes */
   dbFileSize?: number | null;
-}
-
-/**
- * Format bytes to human-readable string
- */
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  const size = bytes / Math.pow(k, i);
-  return `${size.toFixed(i > 0 ? 1 : 0)} ${sizes[i]}`;
 }
 
 /**
