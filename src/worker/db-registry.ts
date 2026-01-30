@@ -4,7 +4,7 @@
  * Manages a registry of all known databases with CRUD operations and self-healing.
  *
  * Storage:
- * - Primary: OPFS /sqlite-editor/registry.json
+ * - Primary: OPFS /wasm-sqlite-editor/registry.json
  * - Fallback: IndexedDB "sqlite-editor-registry" store
  *
  * Schema: { databases: [{ id, name, createdAt, lastOpenedAt, storageType }] }

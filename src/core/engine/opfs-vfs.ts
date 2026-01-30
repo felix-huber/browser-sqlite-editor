@@ -41,7 +41,9 @@ interface FileSystemFileHandleWithSync extends FileSystemFileHandle {
 // =============================================================================
 
 /** Application directory within OPFS root */
-const APP_DIR = 'sqlite-editor';
+const APP_DIR = 'wasm-sqlite-editor';
+/** Databases subdirectory within app directory */
+const DATABASES_SUBDIR = 'databases';
 /** VFS name for OPFS */
 export const OPFS_VFS_NAME = 'opfs-coop-sync';
 
@@ -158,9 +160,9 @@ export async function checkOPFSAvailability(): Promise<OPFSAvailability> {
 /**
  * Ensure the application directory structure exists in OPFS
  *
- * Creates: /sqlite-editor/
+ * Creates: /wasm-sqlite-editor/databases/
  *
- * @returns The app directory handle
+ * @returns The databases directory handle
  * @throws Error if directory creation fails
  */
 export async function ensureAppDirectories(): Promise<FileSystemDirectoryHandle> {
@@ -169,7 +171,10 @@ export async function ensureAppDirectories(): Promise<FileSystemDirectoryHandle>
   // Create app directory
   const appDir = await root.getDirectoryHandle(APP_DIR, { create: true });
 
-  return appDir;
+  // Create databases subdirectory
+  const dbDir = await appDir.getDirectoryHandle(DATABASES_SUBDIR, { create: true });
+
+  return dbDir;
 }
 
 /**
@@ -180,7 +185,7 @@ export async function ensureAppDirectories(): Promise<FileSystemDirectoryHandle>
  */
 export function getOPFSPath(dbName: string): string {
   // Ensure consistent path format for OPFSCoopSyncVFS
-  return `/${APP_DIR}/${dbName}`;
+  return `/${APP_DIR}/${DATABASES_SUBDIR}/${dbName}`;
 }
 
 /**
@@ -290,7 +295,7 @@ export async function initializeVFS(
       return {
         vfs,
         mode: 'opfs',
-        basePath: `/${APP_DIR}`,
+        basePath: `/${APP_DIR}/${DATABASES_SUBDIR}`,
       };
     } catch (err) {
       // OPFS VFS creation failed, fall back to IDB
