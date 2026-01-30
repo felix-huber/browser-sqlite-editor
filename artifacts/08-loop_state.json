@@ -1,16 +1,16 @@
 {
   "runId": "2026-01-31T00:28:10+01:00",
-  "updatedAt": "2026-01-31T00:34:12+01:00",
+  "updatedAt": "2026-01-31T00:40:27+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-33g",
-    "subject": "P1-04: ERD layout OPFS sidecar",
+    "id": "bd-1xr",
+    "subject": "P5-02: Stable ordering with tie-breakers",
     "status": "completed",
     "phase": "review",
-    "attempt": 1
+    "attempt": 2
   },
   "tools": {
     "implementer": "claude",

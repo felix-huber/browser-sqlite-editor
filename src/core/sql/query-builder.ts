@@ -7,6 +7,7 @@ import type { JoinType } from '../../features/query-builder/JoinEdge'
 import type { SortCondition } from '../../features/query-builder/OrderByBuilder'
 import type { WhereCondition } from '../../features/query-builder/WhereBuilder'
 import { generateWhereClause } from '../../features/query-builder/WhereBuilder'
+import type { TableInfo } from '../../types'
 
 /** Table on the canvas with its selection state */
 export interface QueryTable {
@@ -236,14 +237,92 @@ function generateWhere(
 }
 
 /**
- * Generate ORDER BY clause.
+ * Generate tie-breaker columns for stable ordering.
+ *
+ * - For rowid tables: returns ['rowid']
+ * - For WITHOUT ROWID tables: returns PK columns in pk order, quoted
+ * - For views/virtual tables: returns [] (no tie-breaker possible)
+ *
+ * @param tableInfo - Table information
+ * @returns Array of column references to append to ORDER BY
  */
-function generateOrderBy(conditions: SortCondition[]): string {
+export function generateTieBreakerColumns(tableInfo: TableInfo): string[] {
+  // Views and virtual tables don't support stable ordering
+  if (tableInfo.isView || tableInfo.isVirtual) {
+    return []
+  }
+
+  // For WITHOUT ROWID tables, use PK columns
+  if (tableInfo.withoutRowid) {
+    const pkColumns = tableInfo.columns
+      .filter(c => c.pk > 0)
+      .sort((a, b) => a.pk - b.pk)
+
+    return pkColumns.map(c => quoteIdentifier(c.name))
+  }
+
+  // For regular rowid tables, use rowid
+  return ['rowid']
+}
+
+/**
+ * Generate ORDER BY clause with optional tie-breaker for stable ordering.
+ *
+ * @param conditions - Sort conditions from the UI
+ * @param tableAlias - Table alias to qualify tie-breaker columns
+ * @param tieBreakerColumns - Tie-breaker columns from generateTieBreakerColumns (already quoted)
+ */
+function generateOrderBy(
+  conditions: SortCondition[],
+  tableAlias?: string,
+  tieBreakerColumns?: string[]
+): string {
   const valid = conditions.filter(c => c.column)
   if (valid.length === 0) {
     return ''
   }
-  const parts = valid.map(c => `${c.column} ${c.direction}`)
+
+  const quotedAlias = tableAlias ? quoteIdentifier(tableAlias) : undefined
+
+  // Extract column names from user's sort conditions for deduplication
+  // Format is "alias.column" - extract the column part after the dot
+  const userSortColumns = new Set(
+    valid.map(c => {
+      const dotIndex = c.column.lastIndexOf('.')
+      return dotIndex >= 0 ? c.column.slice(dotIndex + 1) : c.column
+    })
+  )
+
+  const parts = valid.map(c => {
+    // Parse alias.column format to quote consistently
+    const dotIndex = c.column.lastIndexOf('.')
+    if (dotIndex >= 0) {
+      const alias = c.column.slice(0, dotIndex)
+      const col = c.column.slice(dotIndex + 1)
+      return `${quoteIdentifier(alias)}.${quoteIdentifier(col)} ${c.direction}`
+    }
+    return `${quoteIdentifier(c.column)} ${c.direction}`
+  })
+
+  // Append tie-breaker columns if provided, skipping those already in user's sort
+  if (tieBreakerColumns && tieBreakerColumns.length > 0 && quotedAlias) {
+    for (const col of tieBreakerColumns) {
+      // col is already quoted (e.g., '"key"' or 'rowid')
+      // Extract unquoted name to check for duplicates
+      const unquotedCol = col.startsWith('"') && col.endsWith('"')
+        ? col.slice(1, -1).replace(/""/g, '"')
+        : col
+
+      // Skip if this column is already in the user's sort order
+      if (userSortColumns.has(unquotedCol)) {
+        continue
+      }
+
+      // Tie-breaker columns always sort ASC for deterministic ordering
+      parts.push(`${quotedAlias}.${col} ASC`)
+    }
+  }
+
   return `ORDER BY ${parts.join(', ')}`
 }
 
@@ -260,8 +339,14 @@ function generateLimit(limit: number | null): string {
 /**
  * Generate a complete SELECT query from builder state.
  * Produces deterministic output - same state always yields same SQL.
+ *
+ * @param state - Query builder state
+ * @param tableInfoMap - Optional map of table names to TableInfo for stable ordering tie-breakers
  */
-export function generateSelectQuery(state: QueryBuilderState): GeneratedQuery {
+export function generateSelectQuery(
+  state: QueryBuilderState,
+  tableInfoMap?: Map<string, TableInfo>
+): GeneratedQuery {
   const { tables, joins, whereConditions, whereLogic, sortConditions, limit } = state
 
   if (tables.length === 0) {
@@ -288,8 +373,22 @@ export function generateSelectQuery(state: QueryBuilderState): GeneratedQuery {
     parts.push(whereResult.clause)
   }
 
-  // ORDER BY
-  const orderBy = generateOrderBy(sortConditions)
+  // ORDER BY with tie-breakers
+  // Get tie-breaker columns from the first table if tableInfo is available
+  let tieBreakerColumns: string[] | undefined
+  let tieBreakerAlias: string | undefined
+
+  const validSortConditions = sortConditions.filter(c => c.column)
+  if (tableInfoMap && tables.length > 0 && validSortConditions.length > 0) {
+    const firstTable = tables[0]
+    const tableInfo = tableInfoMap.get(firstTable.name)
+    if (tableInfo) {
+      tieBreakerColumns = generateTieBreakerColumns(tableInfo)
+      tieBreakerAlias = firstTable.alias
+    }
+  }
+
+  const orderBy = generateOrderBy(sortConditions, tieBreakerAlias, tieBreakerColumns)
   if (orderBy) {
     parts.push(orderBy)
   }

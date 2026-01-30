@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest'
 import {
   generateSelectQuery,
   quoteIdentifier,
+  generateTieBreakerColumns,
   type QueryBuilderState,
 } from '../sql/query-builder'
+import type { TableInfo, ColumnInfo } from '../../types'
 
 describe('quoteIdentifier', () => {
   it('quotes simple identifier', () => {
@@ -339,7 +341,7 @@ describe('generateSelectQuery', () => {
 
       const result = generateSelectQuery(state)
 
-      expect(result.sql).toContain('ORDER BY t1.name ASC')
+      expect(result.sql).toContain('ORDER BY "t1"."name" ASC')
     })
 
     it('handles multiple ORDER BY columns', () => {
@@ -359,7 +361,7 @@ describe('generateSelectQuery', () => {
 
       const result = generateSelectQuery(state)
 
-      expect(result.sql).toContain('ORDER BY t1.name ASC, t1.id DESC')
+      expect(result.sql).toContain('ORDER BY "t1"."name" ASC, "t1"."id" DESC')
     })
 
     it('skips empty column in ORDER BY', () => {
@@ -379,7 +381,7 @@ describe('generateSelectQuery', () => {
 
       const result = generateSelectQuery(state)
 
-      expect(result.sql).toContain('ORDER BY t1.id DESC')
+      expect(result.sql).toContain('ORDER BY "t1"."id" DESC')
       expect(result.sql).not.toContain('ORDER BY ,')
     })
   })
@@ -475,7 +477,7 @@ describe('generateSelectQuery', () => {
       expect(result.sql).toContain('FROM "users" "t1"')
       expect(result.sql).toContain('LEFT JOIN "orders" "t2" ON "t1"."id" = "t2"."user_id"')
       expect(result.sql).toContain('WHERE t1.name = ? AND t2.total > ?')
-      expect(result.sql).toContain('ORDER BY t2.total DESC')
+      expect(result.sql).toContain('ORDER BY "t2"."total" DESC')
       expect(result.sql).toContain('LIMIT 50')
 
       expect(result.params).toEqual(['John', '100'])
@@ -682,5 +684,415 @@ describe('generateSelectQuery', () => {
 
       expect(result.sql).not.toContain('LIMIT')
     })
+  })
+})
+
+// =============================================================================
+// Tie-Breaker Column Generation Tests
+// =============================================================================
+
+describe('generateTieBreakerColumns', () => {
+  const createColumnInfo = (
+    name: string,
+    pk: number = 0,
+    cid: number = 0
+  ): ColumnInfo => ({
+    cid,
+    name,
+    type: 'INTEGER',
+    notnull: false,
+    dfltValue: null,
+    pk,
+    generated: null,
+    hidden: false,
+  })
+
+  describe('rowid tables', () => {
+    it('returns rowid for regular table', () => {
+      const tableInfo: TableInfo = {
+        name: 'users',
+        isView: false,
+        isVirtual: false,
+        withoutRowid: false,
+        columns: [
+          createColumnInfo('id', 1, 0),
+          createColumnInfo('name', 0, 1),
+        ],
+        indexes: [],
+        createSql: 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)',
+      }
+
+      const result = generateTieBreakerColumns(tableInfo)
+
+      expect(result).toEqual(['rowid'])
+    })
+
+    it('returns rowid for table without explicit PK', () => {
+      const tableInfo: TableInfo = {
+        name: 'items',
+        isView: false,
+        isVirtual: false,
+        withoutRowid: false,
+        columns: [
+          createColumnInfo('name', 0, 0),
+          createColumnInfo('value', 0, 1),
+        ],
+        indexes: [],
+        createSql: 'CREATE TABLE items (name TEXT, value REAL)',
+      }
+
+      const result = generateTieBreakerColumns(tableInfo)
+
+      expect(result).toEqual(['rowid'])
+    })
+  })
+
+  describe('WITHOUT ROWID tables', () => {
+    it('returns single PK column for simple PK', () => {
+      const tableInfo: TableInfo = {
+        name: 'kv',
+        isView: false,
+        isVirtual: false,
+        withoutRowid: true,
+        columns: [
+          createColumnInfo('key', 1, 0),
+          createColumnInfo('value', 0, 1),
+        ],
+        indexes: [],
+        createSql: 'CREATE TABLE kv (key TEXT PRIMARY KEY, value BLOB) WITHOUT ROWID',
+      }
+
+      const result = generateTieBreakerColumns(tableInfo)
+
+      expect(result).toEqual(['"key"'])
+    })
+
+    it('returns composite PK columns in pk order', () => {
+      const tableInfo: TableInfo = {
+        name: 'composite',
+        isView: false,
+        isVirtual: false,
+        withoutRowid: true,
+        columns: [
+          createColumnInfo('tenant_id', 2, 0),
+          createColumnInfo('user_id', 1, 1),
+          createColumnInfo('data', 0, 2),
+        ],
+        indexes: [],
+        createSql: 'CREATE TABLE composite (tenant_id INT, user_id INT, data TEXT, PRIMARY KEY (user_id, tenant_id)) WITHOUT ROWID',
+      }
+
+      const result = generateTieBreakerColumns(tableInfo)
+
+      // Should be sorted by pk field (1, 2) => user_id, tenant_id
+      expect(result).toEqual(['"user_id"', '"tenant_id"'])
+    })
+
+    it('quotes column names with special characters', () => {
+      const tableInfo: TableInfo = {
+        name: 'special',
+        isView: false,
+        isVirtual: false,
+        withoutRowid: true,
+        columns: [
+          createColumnInfo('my key', 1, 0),
+          createColumnInfo('value', 0, 1),
+        ],
+        indexes: [],
+        createSql: 'CREATE TABLE special ("my key" TEXT PRIMARY KEY, value BLOB) WITHOUT ROWID',
+      }
+
+      const result = generateTieBreakerColumns(tableInfo)
+
+      expect(result).toEqual(['"my key"'])
+    })
+
+    it('escapes double quotes in column names', () => {
+      const tableInfo: TableInfo = {
+        name: 'quoted',
+        isView: false,
+        isVirtual: false,
+        withoutRowid: true,
+        columns: [
+          createColumnInfo('key"name', 1, 0),
+          createColumnInfo('value', 0, 1),
+        ],
+        indexes: [],
+        createSql: 'CREATE TABLE quoted ("key""name" TEXT PRIMARY KEY, value BLOB) WITHOUT ROWID',
+      }
+
+      const result = generateTieBreakerColumns(tableInfo)
+
+      expect(result).toEqual(['"key""name"'])
+    })
+  })
+
+  describe('views', () => {
+    it('returns empty array for views', () => {
+      const tableInfo: TableInfo = {
+        name: 'user_view',
+        isView: true,
+        isVirtual: false,
+        withoutRowid: false,
+        columns: [
+          createColumnInfo('id', 0, 0),
+          createColumnInfo('name', 0, 1),
+        ],
+        indexes: [],
+        createSql: 'CREATE VIEW user_view AS SELECT id, name FROM users',
+      }
+
+      const result = generateTieBreakerColumns(tableInfo)
+
+      expect(result).toEqual([])
+    })
+  })
+
+  describe('virtual tables', () => {
+    it('returns empty array for virtual tables', () => {
+      const tableInfo: TableInfo = {
+        name: 'fts_search',
+        isView: false,
+        isVirtual: true,
+        withoutRowid: false,
+        columns: [
+          createColumnInfo('content', 0, 0),
+        ],
+        indexes: [],
+        createSql: 'CREATE VIRTUAL TABLE fts_search USING fts5(content)',
+      }
+
+      const result = generateTieBreakerColumns(tableInfo)
+
+      expect(result).toEqual([])
+    })
+  })
+})
+
+// =============================================================================
+// Stable Ordering Integration Tests
+// =============================================================================
+
+describe('generateSelectQuery with stable ordering', () => {
+  const createTableInfo = (
+    withoutRowid: boolean,
+    pkColumns: { name: string; pk: number }[]
+  ): TableInfo => ({
+    name: 'test_table',
+    isView: false,
+    isVirtual: false,
+    withoutRowid,
+    columns: pkColumns.map((col, i) => ({
+      cid: i,
+      name: col.name,
+      type: 'INTEGER',
+      notnull: false,
+      dfltValue: null,
+      pk: col.pk,
+      generated: null,
+      hidden: false,
+    })),
+    indexes: [],
+    createSql: '',
+  })
+
+  it('appends rowid tie-breaker for rowid table with single sort', () => {
+    const state: QueryBuilderState = {
+      tables: [
+        { name: 'users', alias: 't1', selectedColumns: [], allColumns: ['id', 'name'] },
+      ],
+      joins: [],
+      whereConditions: [],
+      whereLogic: 'AND',
+      sortConditions: [
+        { id: 's1', column: 't1.name', direction: 'ASC' },
+      ],
+      limit: null,
+    }
+
+    const tableInfoMap = new Map<string, TableInfo>([
+      ['users', createTableInfo(false, [{ name: 'id', pk: 1 }])],
+    ])
+
+    const result = generateSelectQuery(state, tableInfoMap)
+
+    expect(result.sql).toContain('ORDER BY "t1"."name" ASC, "t1".rowid ASC')
+  })
+
+  it('appends PK tie-breaker for WITHOUT ROWID table', () => {
+    const state: QueryBuilderState = {
+      tables: [
+        { name: 'kv', alias: 't1', selectedColumns: [], allColumns: ['key', 'value'] },
+      ],
+      joins: [],
+      whereConditions: [],
+      whereLogic: 'AND',
+      sortConditions: [
+        { id: 's1', column: 't1.value', direction: 'DESC' },
+      ],
+      limit: null,
+    }
+
+    const tableInfoMap = new Map<string, TableInfo>([
+      ['kv', createTableInfo(true, [{ name: 'key', pk: 1 }])],
+    ])
+
+    const result = generateSelectQuery(state, tableInfoMap)
+
+    expect(result.sql).toContain('ORDER BY "t1"."value" DESC, "t1"."key" ASC')
+  })
+
+  it('appends composite PK columns for WITHOUT ROWID table', () => {
+    const state: QueryBuilderState = {
+      tables: [
+        { name: 'composite', alias: 't1', selectedColumns: [], allColumns: ['a', 'b', 'data'] },
+      ],
+      joins: [],
+      whereConditions: [],
+      whereLogic: 'AND',
+      sortConditions: [
+        { id: 's1', column: 't1.data', direction: 'ASC' },
+      ],
+      limit: null,
+    }
+
+    const tableInfoMap = new Map<string, TableInfo>([
+      ['composite', createTableInfo(true, [
+        { name: 'a', pk: 1 },
+        { name: 'b', pk: 2 },
+        { name: 'data', pk: 0 },
+      ])],
+    ])
+
+    const result = generateSelectQuery(state, tableInfoMap)
+
+    expect(result.sql).toContain('ORDER BY "t1"."data" ASC, "t1"."a" ASC, "t1"."b" ASC')
+  })
+
+  it('skips PK tie-breaker for WITHOUT ROWID table when PK already in sort', () => {
+    const state: QueryBuilderState = {
+      tables: [
+        { name: 'kv', alias: 't1', selectedColumns: [], allColumns: ['key', 'value'] },
+      ],
+      joins: [],
+      whereConditions: [],
+      whereLogic: 'AND',
+      sortConditions: [
+        { id: 's1', column: 't1.value', direction: 'DESC' },
+        { id: 's2', column: 't1.key', direction: 'ASC' },
+      ],
+      limit: null,
+    }
+
+    const tableInfoMap = new Map<string, TableInfo>([
+      ['kv', createTableInfo(true, [{ name: 'key', pk: 1 }])],
+    ])
+
+    const result = generateSelectQuery(state, tableInfoMap)
+
+    // PK column 'key' already in sort - should not be duplicated
+    expect(result.sql).toContain('ORDER BY "t1"."value" DESC, "t1"."key" ASC')
+    expect(result.sql).not.toMatch(/"key" ASC, "t1"\."key" ASC/)
+  })
+
+  it('does not duplicate tie-breaker columns already in sort', () => {
+    const state: QueryBuilderState = {
+      tables: [
+        { name: 'users', alias: 't1', selectedColumns: [], allColumns: ['id', 'name'] },
+      ],
+      joins: [],
+      whereConditions: [],
+      whereLogic: 'AND',
+      sortConditions: [
+        { id: 's1', column: 't1.name', direction: 'ASC' },
+        { id: 's2', column: 't1.id', direction: 'DESC' },
+      ],
+      limit: null,
+    }
+
+    const tableInfoMap = new Map<string, TableInfo>([
+      ['users', createTableInfo(false, [{ name: 'id', pk: 1 }])],
+    ])
+
+    const result = generateSelectQuery(state, tableInfoMap)
+
+    // rowid should still be appended since id column != rowid
+    expect(result.sql).toContain('ORDER BY "t1"."name" ASC, "t1"."id" DESC, "t1".rowid ASC')
+  })
+
+  it('works without tableInfoMap (no tie-breakers)', () => {
+    const state: QueryBuilderState = {
+      tables: [
+        { name: 'users', alias: 't1', selectedColumns: [], allColumns: ['id', 'name'] },
+      ],
+      joins: [],
+      whereConditions: [],
+      whereLogic: 'AND',
+      sortConditions: [
+        { id: 's1', column: 't1.name', direction: 'ASC' },
+      ],
+      limit: null,
+    }
+
+    const result = generateSelectQuery(state)
+
+    expect(result.sql).toContain('ORDER BY "t1"."name" ASC')
+    expect(result.sql).not.toContain('rowid')
+  })
+
+  it('handles multiple tables - uses first table for tie-breaker', () => {
+    const state: QueryBuilderState = {
+      tables: [
+        { name: 'users', alias: 't1', selectedColumns: [], allColumns: ['id', 'name'] },
+        { name: 'orders', alias: 't2', selectedColumns: [], allColumns: ['id', 'user_id'] },
+      ],
+      joins: [
+        {
+          sourceAlias: 't1',
+          sourceColumn: 'id',
+          targetAlias: 't2',
+          targetColumn: 'user_id',
+          joinType: 'INNER',
+        },
+      ],
+      whereConditions: [],
+      whereLogic: 'AND',
+      sortConditions: [
+        { id: 's1', column: 't1.name', direction: 'ASC' },
+      ],
+      limit: null,
+    }
+
+    const tableInfoMap = new Map<string, TableInfo>([
+      ['users', createTableInfo(false, [{ name: 'id', pk: 1 }])],
+      ['orders', createTableInfo(false, [{ name: 'id', pk: 1 }])],
+    ])
+
+    const result = generateSelectQuery(state, tableInfoMap)
+
+    // Tie-breaker should be from first table (t1)
+    expect(result.sql).toContain('ORDER BY "t1"."name" ASC, "t1".rowid ASC')
+  })
+
+  it('does not add tie-breaker when no sort conditions', () => {
+    const state: QueryBuilderState = {
+      tables: [
+        { name: 'users', alias: 't1', selectedColumns: [], allColumns: ['id', 'name'] },
+      ],
+      joins: [],
+      whereConditions: [],
+      whereLogic: 'AND',
+      sortConditions: [],
+      limit: null,
+    }
+
+    const tableInfoMap = new Map<string, TableInfo>([
+      ['users', createTableInfo(false, [{ name: 'id', pk: 1 }])],
+    ])
+
+    const result = generateSelectQuery(state, tableInfoMap)
+
+    expect(result.sql).not.toContain('ORDER BY')
+    expect(result.sql).not.toContain('rowid')
   })
 })
