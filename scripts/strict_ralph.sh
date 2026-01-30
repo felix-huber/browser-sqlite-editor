@@ -18,6 +18,7 @@ LOOP_MODE="false"
 USE_BEADS="false"
 ALLOW_DIRTY="false"
 CONTINUE_ON_ERROR="false"
+MAX_TASKS=0
 AUTO_COMMIT="true"
 AUTO_PUSH="false"
 COMMIT_PREFIX="feat"
@@ -270,7 +271,7 @@ select_next_task() {
     require_beads
     require_cmd jq
     local ready
-    ready=$(br ready --json 2>/dev/null || echo "[]")
+    ready=$(br ready --json 2>&1) || { log "Warning: br ready failed"; ready="[]"; }
     TASK_ID=$(echo "$ready" | jq -r '.[0].id // empty')
   else
     require_cmd jq
@@ -313,16 +314,16 @@ update_task_status() {
   if [[ "$USE_BEADS" == "true" ]]; then
     case "$status" in
       running)
-        br update "$id" --status in_progress 2>/dev/null || true
+        br update "$id" --status in_progress 2>&1 || log "Warning: br update to in_progress failed for $id"
         ;;
       committed|complete)
-        br close "$id" --reason "completed" 2>/dev/null || true
+        br close "$id" --reason "completed" 2>&1 || log "Warning: br close failed for $id"
         ;;
       error)
-        br update "$id" --status blocked --comment "Failed during strict loop" 2>/dev/null || true
+        br update "$id" --status blocked --comment "Failed during strict loop" 2>&1 || log "Warning: br update to blocked failed for $id"
         ;;
       *)
-        br update "$id" --status "$status" 2>/dev/null || true
+        br update "$id" --status "$status" 2>&1 || log "Warning: br update to $status failed for $id"
         ;;
     esac
     return 0
@@ -370,7 +371,7 @@ load_task() {
     require_beads
     require_cmd jq
     local bead
-    bead=$(br show "$TASK_ID" --json 2>/dev/null || echo "[]")
+    bead=$(br show "$TASK_ID" --json 2>&1) || { log "Warning: br show failed for $TASK_ID"; bead="[]"; }
     # br show --json returns an array, extract first element
     SUBJECT=$(echo "$bead" | jq -r '.[0].title // ""')
     DESCRIPTION=$(echo "$bead" | jq -r '.[0].description // ""')
