@@ -300,11 +300,19 @@ export async function streamFileChunks(
 // =============================================================================
 
 /**
- * Get the OPFS root directory for sqlite-editor
+ * Get the OPFS root directory for wasm-sqlite-editor
  */
 async function getOpfsRoot(): Promise<FileSystemDirectoryHandle> {
   const root = await navigator.storage.getDirectory();
-  return root.getDirectoryHandle('sqlite-editor', { create: true });
+  return root.getDirectoryHandle('wasm-sqlite-editor', { create: true });
+}
+
+/**
+ * Get or create the OPFS databases subdirectory
+ */
+async function getOpfsDatabasesDir(): Promise<FileSystemDirectoryHandle> {
+  const root = await getOpfsRoot();
+  return root.getDirectoryHandle('databases', { create: true });
 }
 
 /**
@@ -315,7 +323,7 @@ async function writeToOpfs(
   data: Uint8Array,
   onProgress?: ProgressCallback
 ): Promise<void> {
-  const dir = await getOpfsRoot();
+  const dir = await getOpfsDatabasesDir();
   const file = await dir.getFileHandle(filename, { create: true });
   const writable = await file.createWritable();
 
@@ -342,11 +350,11 @@ async function writeToOpfs(
 }
 
 /**
- * Delete file from OPFS
+ * Delete file from OPFS databases/ subdirectory
  */
 async function deleteFromOpfs(filename: string): Promise<void> {
   try {
-    const dir = await getOpfsRoot();
+    const dir = await getOpfsDatabasesDir();
     await dir.removeEntry(filename);
   } catch {
     // Ignore if file doesn't exist
@@ -354,12 +362,12 @@ async function deleteFromOpfs(filename: string): Promise<void> {
 }
 
 /**
- * List database files in OPFS
+ * List database files in OPFS databases/ subdirectory
  */
 async function listOpfsFiles(): Promise<string[]> {
   const files: string[] = [];
   try {
-    const dir = await getOpfsRoot();
+    const dir = await getOpfsDatabasesDir();
     const entries = (dir as unknown as AsyncIterable<[string, FileSystemHandle]>)[
       Symbol.asyncIterator
     ]();
@@ -848,6 +856,7 @@ export const _testing = {
   SQLITE_MAGIC,
   MIN_SQLITE_SIZE,
   getOpfsRoot,
+  getOpfsDatabasesDir,
   writeToOpfs,
   deleteFromOpfs,
   listOpfsFiles,
