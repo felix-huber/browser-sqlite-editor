@@ -25,7 +25,7 @@ import {
   type ColumnMeta,
 } from '../query-pagination';
 import type { QueryResult } from '../../types';
-import type { DatabaseEngine } from '../../lib/db-engine';
+import type { DatabaseEngine } from '../../core/engine/db-engine';
 
 type QueryHandler = (sql: string, params?: unknown[]) => QueryResult;
 

@@ -23,7 +23,7 @@ import {
   alterTableDropColumn,
   type TableDefinition,
   type ColumnDefinition,
-} from '../lib/ddl'
+} from '../core/db/ddl'
 import type { QueryResult, ForeignKeyInfo } from '../types'
 
 // =============================================================================

@@ -8,7 +8,7 @@
  * Handles NULL values correctly using IS NULL in WHERE clauses.
  */
 
-import { quoteIdentifier } from '../lib/ddl'
+import { quoteIdentifier } from '../core/db/ddl'
 import type { ColumnInfo, TableInfo } from '../types'
 
 /**

@@ -9,24 +9,24 @@
  */
 
 import { useEffect, useState, useCallback, useRef, Suspense, lazy } from 'react';
-import { UpdateBanner } from './components/common/UpdateBanner';
-import { ReadOnlyBanner } from './components/common/ReadOnlyBanner';
-import { StorageFullBanner } from './components/common/StorageFullBanner';
-import { PersistenceErrorBanner } from './components/common/PersistenceErrorBanner';
-import { QuotaExceededModal } from './components/common/QuotaExceededModal';
-import { PersistenceErrorModal } from './components/common/PersistenceErrorModal';
-import { UnsavedPrompt, type UnsavedPromptAction } from './components/common/UnsavedPrompt';
-import { useFocusTrap } from './hooks/useFocusTrap';
-import { NewDatabaseDialog } from './components/common/NewDatabaseDialog';
-import { ConfirmDialog } from './components/common/ConfirmDialog';
-import { Welcome } from './components/welcome/Welcome';
-import { Sidebar } from './components/sidebar';
-import type { GridEditActions } from './components/grid/DataGrid';
-import { ImportDialog } from './components/import/ImportDialog';
-import { StatusBar } from './components/layout/StatusBar';
-import { OpenDatabaseButton } from './components/layout/OpenDatabaseButton';
-import { importData, createTableAndImport, type ColumnType } from './lib/import';
-import { sanitizeDbName, validateDbName, isNameAvailable } from './lib/db-name';
+import { UpdateBanner } from './shared/components/UpdateBanner';
+import { ReadOnlyBanner } from './shared/components/ReadOnlyBanner';
+import { StorageFullBanner } from './shared/components/StorageFullBanner';
+import { PersistenceErrorBanner } from './shared/components/PersistenceErrorBanner';
+import { QuotaExceededModal } from './shared/components/QuotaExceededModal';
+import { PersistenceErrorModal } from './shared/components/PersistenceErrorModal';
+import { UnsavedPrompt, type UnsavedPromptAction } from './shared/components/UnsavedPrompt';
+import { useFocusTrap } from './shared/hooks/useFocusTrap';
+import { NewDatabaseDialog } from './shared/components/NewDatabaseDialog';
+import { ConfirmDialog } from './shared/components/ConfirmDialog';
+import { Welcome } from './features/welcome/Welcome';
+import { Sidebar } from './features/sidebar';
+import type { GridEditActions } from './features/grid/DataGrid';
+import { ImportDialog } from './features/import/ImportDialog';
+import { StatusBar } from './shared/layout/StatusBar';
+import { OpenDatabaseButton } from './shared/layout/OpenDatabaseButton';
+import { importData, createTableAndImport, type ColumnType } from './core/io/import';
+import { sanitizeDbName, validateDbName, isNameAvailable } from './core/db/db-name';
 import {
   useDatabaseStore,
   useDatabases,
@@ -40,17 +40,17 @@ import {
   closeDb,
   refreshSchema,
 } from './store';
-import { getWorkerClient, WorkerClient } from './lib/worker-client';
-import { useGlobalShortcutHandlers } from './hooks/useKeyboardShortcuts';
-import { useUnsavedPrompt, type DirtyState } from './hooks/useUnsavedPrompt';
-import { loadHistory, addToHistory } from './lib/history';
+import { getWorkerClient, WorkerClient } from './core/worker/client';
+import { useGlobalShortcutHandlers } from './shared/hooks/useKeyboardShortcuts';
+import { useUnsavedPrompt, type DirtyState } from './shared/hooks/useUnsavedPrompt';
+import { loadHistory, addToHistory } from './core/sql/history';
 import type { QueryResult, QueryHistoryItem, DatabaseRegistry } from './types';
 
-const ERDView = lazy(() => import('./components/erd/ERDView'));
-const QueryBuilderView = lazy(() => import('./components/query-builder/QueryBuilderView'));
-const SqlEditorPanel = lazy(() => import('./components/sql/SqlEditorPanel'));
-const TableView = lazy(() => import('./components/table/TableView'));
-const TableDesignerView = lazy(() => import('./components/designer/TableDesignerView'));
+const ERDView = lazy(() => import('./features/erd/ERDView'));
+const QueryBuilderView = lazy(() => import('./features/query-builder/QueryBuilderView'));
+const SqlEditorPanel = lazy(() => import('./features/sql/SqlEditorPanel'));
+const TableView = lazy(() => import('./features/table/TableView'));
+const TableDesignerView = lazy(() => import('./features/designer/TableDesignerView'));
 
 /** View types for the main content area */
 type ViewType = 'welcome' | 'table' | 'sql' | 'erd' | 'designer' | 'query-builder';

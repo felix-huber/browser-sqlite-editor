@@ -3,7 +3,7 @@
  */
 
 import type { WorkerRequest, WorkerResponse, WorkerErrorCode } from '../../types';
-import { getEngine } from '../../lib/db-engine';
+import { getEngine } from '../../core/engine/db-engine';
 import { registerQuery, requestCancellation } from '../query-cancel';
 
 export type PostResponse = (response: WorkerResponse, requestId?: number) => void;

@@ -11,7 +11,7 @@
  */
 
 import type { StorageMode, WorkerErrorCode } from '../types';
-import { IDB_VFS_NAME } from '../lib/opfs-vfs';
+import { IDB_VFS_NAME } from '../core/engine/opfs-vfs';
 import { checkStorageAvailable } from './quota-errors';
 
 // =============================================================================

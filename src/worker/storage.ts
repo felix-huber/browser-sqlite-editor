@@ -2,7 +2,7 @@
  * Storage utilities for worker operations.
  */
 
-import { getEngine } from '../lib/db-engine';
+import { getEngine } from '../core/engine/db-engine';
 import {
   checkOPFSAvailability,
   databaseExistsInOPFS,
@@ -11,7 +11,7 @@ import {
   IDB_VFS_NAME,
   readOPFSDatabase,
   deleteOPFSDatabase,
-} from '../lib/opfs-vfs';
+} from '../core/engine/opfs-vfs';
 import { getIDBStorage } from './idb-storage';
 import { getRegistry, toFilename } from './db-registry';
 

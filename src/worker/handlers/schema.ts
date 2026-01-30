@@ -3,14 +3,14 @@
  */
 
 import type { WorkerRequest, WorkerResponse, WorkerErrorCode } from '../../types';
-import { getEngine } from '../../lib/db-engine';
-import { getSchemaInfo, getTableInfo, getAllForeignKeys } from '../../lib/schema';
+import { getEngine } from '../../core/engine/db-engine';
+import { getSchemaInfo, getTableInfo, getAllForeignKeys } from '../../core/db/schema';
 import {
   executeRebuildPlan,
   extractTableDependents,
   generateRebuildPlanWithColumnMapping,
   type SqliteMasterObject,
-} from '../../lib/rebuild';
+} from '../../core/rebuild';
 import {
   handleCreateTable,
   handleAlterTable,

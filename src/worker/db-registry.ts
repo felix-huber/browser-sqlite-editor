@@ -17,7 +17,7 @@
  */
 
 import type { StorageMode } from '../types';
-import { checkOPFSAvailability, IDB_VFS_NAME } from '../lib/opfs-vfs';
+import { checkOPFSAvailability, IDB_VFS_NAME } from '../core/engine/opfs-vfs';
 
 // =============================================================================
 // Constants

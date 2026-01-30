@@ -1,1 +1,1 @@
-export { escapeLike, getEscapeClause } from './sql/escape';
+export { escapeLike, getEscapeClause } from '../core/sql/escape';

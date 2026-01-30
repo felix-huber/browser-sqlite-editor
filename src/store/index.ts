@@ -19,9 +19,9 @@ import type {
   LockHolder,
   PersistenceStatus,
 } from '../types';
-import { getWorkerClient, type WorkerClient } from '../lib/worker-client';
+import { getWorkerClient, type WorkerClient } from '../core/worker/client';
 import { getLockManager, type WebLockManager } from '../worker/web-locks';
-import { migrateHistory, deleteHistory } from '../lib/history';
+import { migrateHistory, deleteHistory } from '../core/sql/history';
 
 // =============================================================================
 // Store State Types

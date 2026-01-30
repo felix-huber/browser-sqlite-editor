@@ -6,7 +6,7 @@
  */
 
 import type { QueryRow } from '../types';
-import type { DatabaseEngine } from '../lib/db-engine';
+import type { DatabaseEngine } from '../core/engine/db-engine';
 
 // =============================================================================
 // Types

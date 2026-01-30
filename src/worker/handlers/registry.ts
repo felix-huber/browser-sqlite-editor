@@ -3,8 +3,8 @@
  */
 
 import type { WorkerRequest, WorkerResponse, WorkerErrorCode } from '../../types';
-import { getEngine } from '../../lib/db-engine';
-import { OPFS_VFS_NAME } from '../../lib/opfs-vfs';
+import { getEngine } from '../../core/engine/db-engine';
+import { OPFS_VFS_NAME } from '../../core/engine/opfs-vfs';
 import { getRegistry, toFilename } from '../db-registry';
 import { resolveDbPath } from '../storage';
 
