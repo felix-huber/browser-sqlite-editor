@@ -41,8 +41,14 @@ export const test = base.extend<{
       if (navigator.storage?.getDirectory) {
         try {
           const root = await navigator.storage.getDirectory();
+          // Remove both old and new layout directories
           try {
             await root.removeEntry('sqlite-editor', { recursive: true });
+          } catch {
+            // ignore missing dir
+          }
+          try {
+            await root.removeEntry('wasm-sqlite-editor', { recursive: true });
           } catch {
             // ignore missing dir
           }

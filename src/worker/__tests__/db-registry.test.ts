@@ -21,6 +21,7 @@ import {
   type RegistryEntry,
   type RegistryData,
   type StorageAdapter,
+  type WalVerificationResult,
 } from '../db-registry';
 
 // =============================================================================
@@ -1368,6 +1369,192 @@ describe('Rename Constants', () => {
 // Delete Database Tests
 // =============================================================================
 
+// =============================================================================
+// WAL/SHM File Verification Tests
+// =============================================================================
+
+describe('DatabaseRegistry - verifyNoWalFiles', () => {
+  describe('OPFS mode', () => {
+    it('should return success when no WAL/SHM files exist for a database', async () => {
+      mockState.opfsAvailable = true;
+      mockState.registryData = {
+        databases: [
+          {
+            id: 'db1',
+            name: 'mydb',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            lastOpenedAt: '2026-01-01T00:00:00.000Z',
+            storageType: 'opfs',
+          },
+        ],
+      };
+      mockState.fileList = ['mydb.sqlite'];
+      mockState.allFiles = ['mydb.sqlite']; // No WAL/SHM files
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const result = await registry.verifyNoWalFiles('mydb');
+
+      expect(result.success).toBe(true);
+      expect(result.walFilesFound).toHaveLength(0);
+    });
+
+    it('should return failure when WAL file exists', async () => {
+      mockState.opfsAvailable = true;
+      mockState.registryData = {
+        databases: [
+          {
+            id: 'db1',
+            name: 'mydb',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            lastOpenedAt: '2026-01-01T00:00:00.000Z',
+            storageType: 'opfs',
+          },
+        ],
+      };
+      mockState.fileList = ['mydb.sqlite'];
+      mockState.allFiles = ['mydb.sqlite', 'mydb.sqlite-wal'];
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const result = await registry.verifyNoWalFiles('mydb');
+
+      expect(result.success).toBe(false);
+      expect(result.walFilesFound).toContain('mydb.sqlite-wal');
+    });
+
+    it('should return failure when SHM file exists', async () => {
+      mockState.opfsAvailable = true;
+      mockState.registryData = {
+        databases: [
+          {
+            id: 'db1',
+            name: 'mydb',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            lastOpenedAt: '2026-01-01T00:00:00.000Z',
+            storageType: 'opfs',
+          },
+        ],
+      };
+      mockState.fileList = ['mydb.sqlite'];
+      mockState.allFiles = ['mydb.sqlite', 'mydb.sqlite-shm'];
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const result = await registry.verifyNoWalFiles('mydb');
+
+      expect(result.success).toBe(false);
+      expect(result.walFilesFound).toContain('mydb.sqlite-shm');
+    });
+
+    it('should detect both WAL and SHM files', async () => {
+      mockState.opfsAvailable = true;
+      mockState.registryData = {
+        databases: [
+          {
+            id: 'db1',
+            name: 'mydb',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            lastOpenedAt: '2026-01-01T00:00:00.000Z',
+            storageType: 'opfs',
+          },
+        ],
+      };
+      mockState.fileList = ['mydb.sqlite'];
+      mockState.allFiles = ['mydb.sqlite', 'mydb.sqlite-wal', 'mydb.sqlite-shm'];
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const result = await registry.verifyNoWalFiles('mydb');
+
+      expect(result.success).toBe(false);
+      expect(result.walFilesFound).toHaveLength(2);
+      expect(result.walFilesFound).toContain('mydb.sqlite-wal');
+      expect(result.walFilesFound).toContain('mydb.sqlite-shm');
+    });
+
+    it('should not flag -journal files (DELETE mode uses -journal)', async () => {
+      mockState.opfsAvailable = true;
+      mockState.registryData = {
+        databases: [
+          {
+            id: 'db1',
+            name: 'mydb',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            lastOpenedAt: '2026-01-01T00:00:00.000Z',
+            storageType: 'opfs',
+          },
+        ],
+      };
+      mockState.fileList = ['mydb.sqlite'];
+      // -journal is expected in DELETE mode during a transaction
+      mockState.allFiles = ['mydb.sqlite', 'mydb.sqlite-journal'];
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const result = await registry.verifyNoWalFiles('mydb');
+
+      // -journal files are okay in DELETE mode (they indicate rollback journal, not WAL)
+      expect(result.success).toBe(true);
+      expect(result.walFilesFound).toHaveLength(0);
+    });
+
+    it('should handle database not found', async () => {
+      mockState.opfsAvailable = true;
+      mockState.registryData = { databases: [] };
+      mockState.fileList = [];
+      mockState.allFiles = [];
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const result = await registry.verifyNoWalFiles('nonexistent');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Database not found');
+    });
+  });
+
+  describe('IDB mode', () => {
+    it('should always return success for IDB mode (WAL not applicable)', async () => {
+      mockState.opfsAvailable = false; // IDB mode
+      mockState.registryData = {
+        databases: [
+          {
+            id: 'db1',
+            name: 'mydb',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            lastOpenedAt: '2026-01-01T00:00:00.000Z',
+            storageType: 'idb',
+          },
+        ],
+      };
+      mockState.fileList = ['mydb'];
+
+      const adapter = createMockAdapter(mockState);
+      const registry = new DatabaseRegistry(adapter);
+      await registry.init();
+
+      const result = await registry.verifyNoWalFiles('mydb');
+
+      // IDB mode doesn't use file-based WAL, so always success
+      expect(result.success).toBe(true);
+      expect(result.walFilesFound).toHaveLength(0);
+    });
+  });
+});
+
 describe('DatabaseRegistry - deleteDatabase', () => {
   describe('successful deletion', () => {
     it('should delete a closed database: all artifacts removed', async () => {
@@ -1479,6 +1666,219 @@ describe('DatabaseRegistry - deleteDatabase', () => {
       expect(mockState.deletedFiles.has('db2')).toBe(true);
       expect(mockState.deletedFiles.has('db1')).toBe(false);
       expect(mockState.deletedFiles.has('db3')).toBe(false);
+    });
+  });
+});
+
+// =============================================================================
+// Layout Migration Tests (bd-2am: P1-06)
+// =============================================================================
+
+describe('DatabaseRegistry - Legacy Layout Migration', () => {
+  /**
+   * Extended mock state for migration testing
+   */
+  interface MigrationMockState extends MockStorageState {
+    /** Files in the legacy /sqlite-editor/ directory */
+    legacyFiles: Map<string, ArrayBuffer>;
+    /** Registry data in legacy /sqlite-editor/registry.json */
+    legacyRegistryData: RegistryData | null;
+    /** Whether legacy directory exists */
+    legacyDirExists: boolean;
+    /** Whether new directory exists */
+    newDirExists: boolean;
+    /** Track files that have been copied */
+    copiedFiles: Set<string>;
+  }
+
+  let migrationMockState: MigrationMockState;
+
+  function createMigrationMockAdapter(state: MigrationMockState): StorageAdapter {
+    const baseAdapter = createMockAdapter(state);
+    return {
+      ...baseAdapter,
+      checkLegacyLayout: vi.fn(async () => state.legacyDirExists),
+      readLegacyRegistry: vi.fn(async () => state.legacyRegistryData),
+      listLegacyFiles: vi.fn(async () => [...state.legacyFiles.keys()]),
+      copyLegacyFile: vi.fn(async (filename: string) => {
+        const data = state.legacyFiles.get(filename);
+        if (data && !state.fileList.includes(filename)) {
+          state.fileList.push(filename);
+          state.allFiles.push(filename);
+          state.copiedFiles.add(filename);
+        }
+      }),
+    };
+  }
+
+  beforeEach(() => {
+    migrationMockState = {
+      registryData: null,
+      fileList: [],
+      opfsAvailable: true,
+      throwOnRead: false,
+      existingFiles: new Set(),
+      renamedFiles: new Map(),
+      throwOnRename: false,
+      deletedFiles: new Set(),
+      throwOnDelete: false,
+      fileLastModified: new Map(),
+      allFiles: [],
+      deletedRawFiles: new Set(),
+      // Migration-specific state
+      legacyFiles: new Map(),
+      legacyRegistryData: null,
+      legacyDirExists: false,
+      newDirExists: false,
+      copiedFiles: new Set(),
+    };
+  });
+
+  describe('DatabaseRegistry.init() with legacy layout', () => {
+    it('should migrate legacy files when legacy directory exists (OPFS mode)', async () => {
+      migrationMockState.legacyDirExists = true;
+      migrationMockState.legacyFiles.set('mydb.sqlite', new ArrayBuffer(16));
+      migrationMockState.legacyFiles.set('another.sqlite', new ArrayBuffer(16));
+
+      const adapter = createMigrationMockAdapter(migrationMockState);
+      const registry = new DatabaseRegistry(adapter);
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      const result = await registry.init();
+
+      // Should have migrated the files
+      expect(result.migratedFiles).toContain('mydb.sqlite');
+      expect(result.migratedFiles).toContain('another.sqlite');
+      expect(result.migratedFiles).toHaveLength(2);
+
+      // Should log migration
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Legacy layout detected')
+      );
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should migrate legacy registry.json when new registry does not exist', async () => {
+      migrationMockState.legacyDirExists = true;
+      migrationMockState.legacyRegistryData = {
+        databases: [
+          {
+            id: 'legacy-db-1',
+            name: 'My Legacy DB',
+            createdAt: '2025-01-01T00:00:00.000Z',
+            lastOpenedAt: '2025-12-01T00:00:00.000Z',
+            storageType: 'opfs',
+          },
+        ],
+      };
+      // Add the file so it matches the registry
+      migrationMockState.legacyFiles.set('my_legacy_db.sqlite', new ArrayBuffer(16));
+
+      const adapter = createMigrationMockAdapter(migrationMockState);
+      const registry = new DatabaseRegistry(adapter);
+
+      const result = await registry.init();
+
+      expect(result.migratedRegistry).toBe(true);
+      // After init, the registry should have the migrated entry
+      expect(registry.count()).toBe(1);
+      expect(registry.getDatabaseByName('My Legacy DB')).not.toBeNull();
+    });
+
+    it('should NOT migrate when legacy directory does not exist', async () => {
+      migrationMockState.legacyDirExists = false;
+
+      const adapter = createMigrationMockAdapter(migrationMockState);
+      const registry = new DatabaseRegistry(adapter);
+
+      const result = await registry.init();
+
+      expect(result.migratedFiles).toHaveLength(0);
+      expect(result.migratedRegistry).toBe(false);
+    });
+
+    it('should NOT overwrite new registry if it already exists', async () => {
+      migrationMockState.legacyDirExists = true;
+      migrationMockState.legacyRegistryData = {
+        databases: [{ id: 'old', name: 'Old', createdAt: '2025-01-01T00:00:00.000Z', lastOpenedAt: '2025-01-01T00:00:00.000Z', storageType: 'opfs' }],
+      };
+      migrationMockState.registryData = {
+        databases: [{ id: 'new', name: 'New', createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: '2026-01-01T00:00:00.000Z', storageType: 'opfs' }],
+      };
+      // Add file for new registry entry
+      migrationMockState.fileList = ['new.sqlite'];
+      migrationMockState.allFiles = ['new.sqlite'];
+
+      const adapter = createMigrationMockAdapter(migrationMockState);
+      const registry = new DatabaseRegistry(adapter);
+
+      const result = await registry.init();
+
+      // Should not migrate registry
+      expect(result.migratedRegistry).toBe(false);
+      // Registry should still have the "New" entry
+      expect(registry.getDatabaseByName('New')).not.toBeNull();
+    });
+
+    it('should be idempotent: re-running migration does not duplicate files', async () => {
+      migrationMockState.legacyDirExists = true;
+      migrationMockState.legacyFiles.set('test.sqlite', new ArrayBuffer(16));
+      // Simulate file already exists in new location
+      migrationMockState.fileList = ['test.sqlite'];
+      migrationMockState.allFiles = ['test.sqlite'];
+
+      const adapter = createMigrationMockAdapter(migrationMockState);
+      const registry = new DatabaseRegistry(adapter);
+
+      const result = await registry.init();
+
+      // File should not be migrated (already exists)
+      expect(result.migratedFiles).not.toContain('test.sqlite');
+      expect(result.migratedFiles).toHaveLength(0);
+    });
+
+    it('should resume migration when both directories exist (interrupted migration)', async () => {
+      migrationMockState.legacyDirExists = true;
+      migrationMockState.newDirExists = true;
+      // Legacy has 3 files, new already has 1 (partial migration)
+      migrationMockState.legacyFiles.set('db1.sqlite', new ArrayBuffer(16));
+      migrationMockState.legacyFiles.set('db2.sqlite', new ArrayBuffer(16));
+      migrationMockState.legacyFiles.set('db3.sqlite', new ArrayBuffer(16));
+      migrationMockState.fileList = ['db1.sqlite']; // Already migrated
+      migrationMockState.allFiles = ['db1.sqlite'];
+
+      const adapter = createMigrationMockAdapter(migrationMockState);
+      const registry = new DatabaseRegistry(adapter);
+
+      const result = await registry.init();
+
+      // Should migrate only the missing files
+      expect(result.migratedFiles).toContain('db2.sqlite');
+      expect(result.migratedFiles).toContain('db3.sqlite');
+      expect(result.migratedFiles).not.toContain('db1.sqlite');
+      expect(result.migratedFiles).toHaveLength(2);
+    });
+
+    it('should NOT run migration in IDB mode', async () => {
+      migrationMockState.opfsAvailable = false; // IDB mode
+      migrationMockState.legacyDirExists = true;
+      migrationMockState.legacyFiles.set('test.sqlite', new ArrayBuffer(16));
+
+      const adapter = createMigrationMockAdapter(migrationMockState);
+      const registry = new DatabaseRegistry(adapter);
+
+      const result = await registry.init();
+
+      // Should not migrate - migration only runs in OPFS mode
+      expect(result.migratedFiles).toHaveLength(0);
+      expect(result.migratedRegistry).toBe(false);
+    });
+  });
+
+  describe('Constants', () => {
+    it('should have correct legacy OPFS directory constant', () => {
+      expect(_testing.LEGACY_OPFS_DIR).toBe('sqlite-editor');
     });
   });
 });

@@ -1,13 +1,13 @@
 {
   "runId": "2026-01-31T00:28:10+01:00",
-  "updatedAt": "2026-01-31T02:15:52+01:00",
+  "updatedAt": "2026-01-31T02:53:47+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-1x1",
-    "subject": "P5-04: Row identity strategy for UPDATE/DELETE",
+    "id": "bd-2am",
+    "subject": "P1-06: Storage layout migration safety",
     "status": "completed",
     "phase": "review",
     "attempt": 1

@@ -26,6 +26,9 @@ import { checkOPFSAvailability, IDB_VFS_NAME } from '../core/engine/opfs-vfs';
 /** OPFS root directory for SQLite editor */
 const OPFS_DIR = '/wasm-sqlite-editor';
 
+/** Legacy OPFS root directory (pre-migration layout) */
+const LEGACY_OPFS_DIR = 'sqlite-editor';
+
 /** OPFS subdirectory for database files */
 const DATABASES_SUBDIR = 'databases';
 
@@ -99,6 +102,22 @@ export interface HealingResult {
   orphanedSidecarsRemoved: string[];
   /** Orphaned journal files removed (-wal, -shm, -journal) */
   orphanedJournalsRemoved: string[];
+  /** Files migrated from legacy layout (/sqlite-editor/ → /wasm-sqlite-editor/databases/) */
+  migratedFiles: string[];
+  /** Whether registry was migrated from legacy layout */
+  migratedRegistry: boolean;
+}
+
+/**
+ * Result of WAL/SHM file verification
+ */
+export interface WalVerificationResult {
+  /** Whether verification passed (no WAL/SHM files found) */
+  success: boolean;
+  /** List of WAL/SHM files found (if any) */
+  walFilesFound: string[];
+  /** Error message if verification could not be performed */
+  error?: string;
 }
 
 /**
@@ -120,6 +139,14 @@ export interface StorageAdapter {
   deleteRawFile?: (filename: string) => Promise<void>;
   /** Rename a raw file by filename (for case collision resolution) */
   renameRawFile?: (oldFilename: string, newFilename: string) => Promise<void>;
+  /** Check if legacy /sqlite-editor/ directory exists (for migration) */
+  checkLegacyLayout?: () => Promise<boolean>;
+  /** Read registry from legacy /sqlite-editor/registry.json */
+  readLegacyRegistry?: () => Promise<RegistryData | null>;
+  /** List files in legacy /sqlite-editor/ directory */
+  listLegacyFiles?: () => Promise<string[]>;
+  /** Copy a file from legacy to new layout (preserves original for rollback) */
+  copyLegacyFile?: (filename: string) => Promise<void>;
 }
 
 // =============================================================================
@@ -635,6 +662,88 @@ async function renameOpfsRawFile(oldFilename: string, newFilename: string): Prom
 }
 
 // =============================================================================
+// Legacy Layout Migration (OPFS)
+// =============================================================================
+
+/**
+ * Check if legacy /sqlite-editor/ directory exists
+ */
+async function checkLegacyLayoutExists(): Promise<boolean> {
+  try {
+    const root = await navigator.storage.getDirectory();
+    await root.getDirectoryHandle(LEGACY_OPFS_DIR);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read registry from legacy /sqlite-editor/registry.json
+ */
+async function readLegacyRegistry(): Promise<RegistryData | null> {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const legacyDir = await root.getDirectoryHandle(LEGACY_OPFS_DIR);
+    const file = await legacyDir.getFileHandle('registry.json');
+    const blob = await file.getFile();
+    const text = await blob.text();
+    return JSON.parse(text) as RegistryData;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'NotFoundError') {
+      return null;
+    }
+    // Log but don't throw - registry might not exist in old layout
+    console.warn('[DatabaseRegistry] Failed to read legacy registry:', err);
+    return null;
+  }
+}
+
+/**
+ * List all .sqlite files in legacy /sqlite-editor/ directory
+ */
+async function listLegacyFiles(): Promise<string[]> {
+  const files: string[] = [];
+  try {
+    const root = await navigator.storage.getDirectory();
+    const legacyDir = await root.getDirectoryHandle(LEGACY_OPFS_DIR);
+    const entries = (legacyDir as unknown as AsyncIterable<[string, FileSystemHandle]>)[Symbol.asyncIterator]();
+    for await (const [name, handle] of { [Symbol.asyncIterator]: () => entries }) {
+      if (handle.kind === 'file' && name.endsWith('.sqlite')) {
+        files.push(name);
+      }
+    }
+  } catch {
+    // Directory doesn't exist or can't be read
+  }
+  return files;
+}
+
+/**
+ * Copy a file from legacy /sqlite-editor/ to new /wasm-sqlite-editor/databases/
+ * Note: Does NOT delete the original (kept for rollback during one release cycle)
+ */
+async function copyLegacyFile(filename: string): Promise<void> {
+  const root = await navigator.storage.getDirectory();
+  const legacyDir = await root.getDirectoryHandle(LEGACY_OPFS_DIR);
+  const newDir = await getOpfsDatabasesDir();
+
+  // Read from legacy location
+  const oldHandle = await legacyDir.getFileHandle(filename);
+  const file = await oldHandle.getFile();
+  const data = await file.arrayBuffer();
+
+  // Write to new location
+  const newHandle = await newDir.getFileHandle(filename, { create: true });
+  const writable = await newHandle.createWritable();
+  try {
+    await writable.write(data);
+  } finally {
+    await writable.close();
+  }
+}
+
+// =============================================================================
 // IndexedDB Operations
 // =============================================================================
 
@@ -1126,6 +1235,10 @@ const defaultStorageAdapter: StorageAdapter = {
   renameRawFile: async (oldFilename, newFilename) => {
     await renameOpfsRawFile(oldFilename, newFilename);
   },
+  checkLegacyLayout: checkLegacyLayoutExists,
+  readLegacyRegistry: readLegacyRegistry,
+  listLegacyFiles: listLegacyFiles,
+  copyLegacyFile: copyLegacyFile,
 };
 
 // =============================================================================
@@ -1181,7 +1294,15 @@ export class DatabaseRegistry {
       caseCollisionsResolved: 0,
       orphanedSidecarsRemoved: [],
       orphanedJournalsRemoved: [],
+      migratedFiles: [],
+      migratedRegistry: false,
     };
+
+    // === LEGACY LAYOUT MIGRATION (OPFS only) ===
+    // Check for legacy /sqlite-editor/ directory and migrate to new layout
+    if (this.storageMode === 'opfs') {
+      await this.migrateLegacyLayout(result);
+    }
 
     // Load registry data
     try {
@@ -1269,13 +1390,88 @@ export class DatabaseRegistry {
       result.discovered.length > 0 ||
       result.caseCollisionsResolved > 0 ||
       result.orphanedSidecarsRemoved.length > 0 ||
-      result.orphanedJournalsRemoved.length > 0;
+      result.orphanedJournalsRemoved.length > 0 ||
+      result.migratedFiles.length > 0 ||
+      result.migratedRegistry;
 
     if (hasChanges) {
       await this.save();
     }
 
     return result;
+  }
+
+  /**
+   * Migrate legacy /sqlite-editor/ layout to new /wasm-sqlite-editor/databases/ layout.
+   *
+   * Migration logic:
+   * 1. Check for legacy /sqlite-editor/ directory
+   * 2. If found, copy files to new layout (preserving originals for rollback)
+   * 3. Copy registry if new one doesn't exist
+   * 4. Migration is idempotent - safe to re-run
+   * 5. Old directory is NOT deleted (kept for one release cycle)
+   */
+  private async migrateLegacyLayout(result: HealingResult): Promise<void> {
+    // Check if adapter supports migration
+    if (!this.adapter.checkLegacyLayout || !this.adapter.listLegacyFiles || !this.adapter.copyLegacyFile) {
+      console.log('[DatabaseRegistry] Migration: adapter does not support migration');
+      return;
+    }
+
+    // Check if legacy directory exists
+    const legacyExists = await this.adapter.checkLegacyLayout();
+    console.log('[DatabaseRegistry] Migration: legacy layout exists =', legacyExists);
+    if (!legacyExists) {
+      return;
+    }
+
+    console.log('[DatabaseRegistry] Legacy layout detected at /sqlite-editor/, starting migration...');
+
+    // Get list of files in legacy directory
+    const legacyFiles = await this.adapter.listLegacyFiles();
+
+    // Get list of files already in new location
+    const existingFiles = new Set(await this.adapter.listFiles(this.storageMode));
+
+    // Migrate each file if not already present
+    for (const filename of legacyFiles) {
+      if (existingFiles.has(filename)) {
+        // File already migrated, skip
+        continue;
+      }
+
+      try {
+        await this.adapter.copyLegacyFile(filename);
+        result.migratedFiles.push(filename);
+        console.log(`[DatabaseRegistry] Migrated: ${filename}`);
+      } catch (err) {
+        console.warn(`[DatabaseRegistry] Failed to migrate "${filename}":`, err);
+      }
+    }
+
+    // Migrate registry if new one doesn't exist
+    if (this.adapter.readLegacyRegistry) {
+      try {
+        const newRegistry = await this.adapter.readRegistry(this.storageMode);
+        if (!newRegistry) {
+          const legacyRegistry = await this.adapter.readLegacyRegistry();
+          if (legacyRegistry && Array.isArray(legacyRegistry.databases)) {
+            await this.adapter.writeRegistry(this.storageMode, legacyRegistry);
+            result.migratedRegistry = true;
+            console.log('[DatabaseRegistry] Migrated registry.json');
+          }
+        }
+      } catch (err) {
+        console.warn('[DatabaseRegistry] Failed to migrate registry:', err);
+      }
+    }
+
+    if (result.migratedFiles.length > 0 || result.migratedRegistry) {
+      console.log(
+        `[DatabaseRegistry] Migration complete: ${result.migratedFiles.length} files, ` +
+        `registry: ${result.migratedRegistry ? 'yes' : 'no'}`
+      );
+    }
   }
 
   /**
@@ -1652,6 +1848,8 @@ export class DatabaseRegistry {
       caseCollisionsResolved: 0,
       orphanedSidecarsRemoved: [],
       orphanedJournalsRemoved: [],
+      migratedFiles: [],
+      migratedRegistry: false,
     };
 
     // Only run on OPFS mode where file cleanup is applicable
@@ -1836,6 +2034,70 @@ export class DatabaseRegistry {
 
     return { success: true };
   }
+
+  /**
+   * Verify no WAL or SHM files exist for a database
+   *
+   * This verifies that journal_mode=DELETE is working correctly and no WAL-mode
+   * files have been created. Per PRD requirements, OPFS mode should not create
+   * WAL/SHM files.
+   *
+   * Note: This method only verifies - it does NOT clean up orphaned files.
+   * Cleanup is owned by the self-healing mechanism (bd-lx0).
+   *
+   * @param name Database name to check
+   * @returns Verification result with list of any WAL/SHM files found
+   */
+  async verifyNoWalFiles(name: string): Promise<WalVerificationResult> {
+    // Find the entry
+    const entry = this.data.databases.find((e) => e.name === name);
+    if (!entry) {
+      return {
+        success: false,
+        walFilesFound: [],
+        error: 'Database not found',
+      };
+    }
+
+    // IDB mode: WAL files are not applicable (snapshot-based storage)
+    if (this.storageMode === 'idb' || entry.storageType === 'idb') {
+      return {
+        success: true,
+        walFilesFound: [],
+      };
+    }
+
+    // OPFS mode: Check for WAL/SHM files
+    if (!this.adapter.listAllFiles) {
+      return {
+        success: true,
+        walFilesFound: [],
+        error: 'File listing not supported',
+      };
+    }
+
+    const filename = toFilename(name);
+    const allFiles = await this.adapter.listAllFiles();
+
+    // WAL mode creates -wal and -shm files
+    // DELETE mode uses -journal (which is acceptable)
+    const walSuffixes = ['-wal', '-shm'];
+    const walFilesFound: string[] = [];
+
+    for (const file of allFiles) {
+      for (const suffix of walSuffixes) {
+        // Check if file matches: mydb.sqlite-wal or mydb.sqlite-shm
+        if (file === `${filename}${suffix}`) {
+          walFilesFound.push(file);
+        }
+      }
+    }
+
+    return {
+      success: walFilesFound.length === 0,
+      walFilesFound,
+    };
+  }
 }
 
 // =============================================================================
@@ -1867,6 +2129,7 @@ export function resetRegistry(): void {
 
 export const _testing = {
   OPFS_DIR,
+  LEGACY_OPFS_DIR,
   DATABASES_SUBDIR,
   OPFS_REGISTRY_PATH,
   IDB_REGISTRY_DB,
@@ -1900,4 +2163,8 @@ export const _testing = {
   renameIdbDatabase,
   deleteIdbDatabase,
   defaultStorageAdapter,
+  checkLegacyLayoutExists,
+  readLegacyRegistry,
+  listLegacyFiles,
+  copyLegacyFile,
 };

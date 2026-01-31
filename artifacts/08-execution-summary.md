@@ -21,3 +21,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-2c2 | P6-02: Transaction edge case handling | FAILED | - | review/verification failure |
 | bd-hws | P7-01: CSP implementation | FAILED | - | review/verification failure |
 | bd-1x1 | P5-04: Row identity strategy for UPDATE/DELETE | DONE | 92de92f4fdf577cb75add16bbdbeb8692820efc5 | clean review |
+| bd-2eq | P1-05: Enforce PRAGMA journal_mode=DELETE | FAILED | - | review/verification failure |
