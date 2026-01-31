@@ -709,6 +709,25 @@ export class IDBStorage {
 let _storageInstance: IDBStorage | null = null;
 
 /**
+ * Get the size of a database stored in IndexedDB
+ *
+ * Flushes pending writes before reading to ensure accurate size.
+ *
+ * @param name Database name
+ * @returns Size in bytes, or 0 if not found
+ */
+export async function getIdbDbSize(name: string): Promise<number> {
+  const storage = getIDBStorage();
+  // Flush pending writes to ensure accurate size measurement
+  await storage.flush();
+  const blob = await storage.load(name);
+  if (!blob) {
+    return 0;
+  }
+  return blob.size;
+}
+
+/**
  * Get the singleton IDB storage instance
  *
  * Creates the instance on first call. Safe to call multiple times.

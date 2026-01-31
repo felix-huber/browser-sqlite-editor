@@ -1,13 +1,13 @@
 {
   "runId": "2026-01-31T00:28:10+01:00",
-  "updatedAt": "2026-01-31T02:53:47+01:00",
+  "updatedAt": "2026-01-31T04:04:18+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-2am",
-    "subject": "P1-06: Storage layout migration safety",
+    "id": "bd-1ig",
+    "subject": "P3-01a: DDL parser for CREATE TABLE (AST)",
     "status": "completed",
     "phase": "review",
     "attempt": 1

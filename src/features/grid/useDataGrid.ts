@@ -18,9 +18,9 @@ import {
   type RowData,
 } from '@tanstack/react-table';
 import type { TableInfo, ColumnInfo } from '../../types';
-import { escapeLike } from '../../core/sql/escape';
+import { quoteIdentifier, escapeLikePattern, getEscapeClause } from '../../core/sql/helpers';
 
-export { escapeLike };
+export { escapeLikePattern as escapeLike };
 
 // =============================================================================
 // Constants
@@ -230,8 +230,7 @@ export function generateOrderByClause(sortState: SortState): string {
 
   return sortState
     .map(({ column, direction }) => {
-      const escapedColumn = `"${column.replace(/"/g, '""')}"`;
-      return `${escapedColumn} ${direction.toUpperCase()}`;
+      return `${quoteIdentifier(column)} ${direction.toUpperCase()}`;
     })
     .join(', ');
 }
@@ -278,8 +277,8 @@ export function generatePaginatedQuery(
   withoutRowid: boolean = false,
   sortState: SortState = [],
 ): { sql: string; params: unknown[] } {
-  const escapedTable = `"${tableName.replace(/"/g, '""')}"`;
-  const escapedColumns = columns.map((c) => `"${c.replace(/"/g, '""')}"`).join(', ');
+  const escapedTable = quoteIdentifier(tableName);
+  const escapedColumns = columns.map((c) => quoteIdentifier(c)).join(', ');
 
   const { sql: paginationSql, params } = generatePaginationClause(
     pagination,
@@ -326,14 +325,15 @@ export function generatePaginatedQuery(
  * Returns the SQL condition and any parameter values
  */
 export function generateFilterClause(filter: ColumnFilter): { sql: string; params: unknown[] } {
-  const escapedColumn = `"${filter.column.replace(/"/g, '""')}"`;
+  const escapedColumn = quoteIdentifier(filter.column);
+  const escapeClause = getEscapeClause();
 
   switch (filter.operator) {
     // Text operators
     case 'contains':
       return {
-        sql: `${escapedColumn} LIKE ? ESCAPE '\\'`,
-        params: [`%${escapeLike(String(filter.value ?? ''))}%`],
+        sql: `${escapedColumn} LIKE ? ${escapeClause}`,
+        params: [`%${escapeLikePattern(String(filter.value ?? ''))}%`],
       };
     case 'equals':
       return {
@@ -342,13 +342,13 @@ export function generateFilterClause(filter: ColumnFilter): { sql: string; param
       };
     case 'starts_with':
       return {
-        sql: `${escapedColumn} LIKE ? ESCAPE '\\'`,
-        params: [`${escapeLike(String(filter.value ?? ''))}%`],
+        sql: `${escapedColumn} LIKE ? ${escapeClause}`,
+        params: [`${escapeLikePattern(String(filter.value ?? ''))}%`],
       };
     case 'ends_with':
       return {
-        sql: `${escapedColumn} LIKE ? ESCAPE '\\'`,
-        params: [`%${escapeLike(String(filter.value ?? ''))}`],
+        sql: `${escapedColumn} LIKE ? ${escapeClause}`,
+        params: [`%${escapeLikePattern(String(filter.value ?? ''))}`],
       };
     case 'is_empty':
       return {

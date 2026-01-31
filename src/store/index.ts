@@ -24,6 +24,16 @@ import { getLockManager, type WebLockManager } from '../worker/web-locks';
 import { migrateHistory, deleteHistory } from '../core/sql/history';
 
 // =============================================================================
+// Size Warning Constants
+// =============================================================================
+
+/** Size threshold for OPFS mode warnings (100MB) */
+export const SIZE_THRESHOLD_OPFS = 100 * 1024 * 1024;
+
+/** Size threshold for IndexedDB mode warnings (50MB) */
+export const SIZE_THRESHOLD_IDB = 50 * 1024 * 1024;
+
+// =============================================================================
 // Store State Types
 // =============================================================================
 
@@ -34,6 +44,20 @@ export interface SchemaState {
   tables: string[];
   views: string[];
   indexes: string[];
+}
+
+/**
+ * Size warning state
+ */
+export interface SizeWarningState {
+  /** Database ID that triggered the warning */
+  dbId: string;
+  /** Current size in bytes */
+  sizeBytes: number;
+  /** Storage mode when warning was triggered */
+  storageMode: StorageMode;
+  /** Threshold that was exceeded */
+  threshold: number;
 }
 
 /**
@@ -62,6 +86,12 @@ export interface DatabaseStoreState {
   failedSaveAttempts: number;
   /** Timestamp of last successful save (ISO 8601) */
   lastSuccessfulSave: string | null;
+  /** Current size warning (for toast display) */
+  sizeWarning: SizeWarningState | null;
+  /** Set of DB IDs that currently exceed size threshold (for badge display) */
+  dbsExceedingThreshold: Set<string>;
+  /** Set of DB IDs already warned this session (to prevent re-warning) */
+  warnedDbsThisSession: Set<string>;
 }
 
 /**
@@ -88,6 +118,14 @@ export interface DatabaseStoreActions {
   incrementFailedSaveAttempts: () => void;
   /** Clear failed save attempts and update last successful save timestamp */
   clearFailedSaveAttempts: () => void;
+  /** Set size warning state */
+  setSizeWarning: (warning: SizeWarningState | null) => void;
+  /** Add a DB to the exceeding threshold set */
+  addDbExceedingThreshold: (dbId: string) => void;
+  /** Remove a DB from the exceeding threshold set */
+  removeDbExceedingThreshold: (dbId: string) => void;
+  /** Mark a DB as warned this session */
+  markDbWarned: (dbId: string, storageMode: StorageMode) => void;
   /** Reset the store to initial state */
   reset: () => void;
 }
@@ -116,6 +154,9 @@ const initialState: DatabaseStoreState = {
   persistenceError: null,
   failedSaveAttempts: 0,
   lastSuccessfulSave: null,
+  sizeWarning: null,
+  dbsExceedingThreshold: new Set<string>(),
+  warnedDbsThisSession: new Set<string>(),
 };
 
 // =============================================================================
@@ -158,7 +199,37 @@ export const useDatabaseStore = create<DatabaseStore>((set) => ({
   clearFailedSaveAttempts: () =>
     set({ failedSaveAttempts: 0, lastSuccessfulSave: new Date().toISOString() }),
 
-  reset: () => set(initialState),
+  setSizeWarning: (sizeWarning) => set({ sizeWarning }),
+
+  addDbExceedingThreshold: (dbId) =>
+    set((state) => {
+      const newSet = new Set(state.dbsExceedingThreshold);
+      newSet.add(dbId);
+      return { dbsExceedingThreshold: newSet };
+    }),
+
+  removeDbExceedingThreshold: (dbId) =>
+    set((state) => {
+      const newSet = new Set(state.dbsExceedingThreshold);
+      newSet.delete(dbId);
+      return { dbsExceedingThreshold: newSet };
+    }),
+
+  markDbWarned: (dbId, storageMode) =>
+    set((state) => {
+      const key = `${dbId}:${storageMode}`;
+      const newSet = new Set(state.warnedDbsThisSession);
+      newSet.add(key);
+      return { warnedDbsThisSession: newSet };
+    }),
+
+  reset: () =>
+    set({
+      ...initialState,
+      // Create fresh Set instances to avoid mutations
+      dbsExceedingThreshold: new Set<string>(),
+      warnedDbsThisSession: new Set<string>(),
+    }),
 }));
 
 // =============================================================================
@@ -283,6 +354,95 @@ export function useIsDegradedPersistence(): boolean {
   return useDatabaseStore((state) => state.storageStatus === 'degraded');
 }
 
+/**
+ * Get the current size warning (for toast display)
+ */
+export function useSizeWarning(): SizeWarningState | null {
+  return useDatabaseStore((state) => state.sizeWarning);
+}
+
+/**
+ * Get the set of DBs currently exceeding threshold (for badge display)
+ */
+export function useDbsExceedingThreshold(): Set<string> {
+  return useDatabaseStore((state) => state.dbsExceedingThreshold);
+}
+
+// =============================================================================
+// Size Warning Functions
+// =============================================================================
+
+/**
+ * Check if a database size exceeds the threshold and trigger warning if needed.
+ *
+ * This function:
+ * 1. Determines the threshold based on storage mode
+ * 2. Updates the dbsExceedingThreshold set
+ * 3. Shows a warning toast if first time for this DB+mode this session
+ *
+ * @param dbId Database ID
+ * @param sizeBytes Current size in bytes
+ * @param storageMode Current storage mode
+ */
+export function checkSizeWarning(
+  dbId: string,
+  sizeBytes: number,
+  storageMode: StorageMode
+): void {
+  const store = useDatabaseStore.getState();
+  const threshold = storageMode === 'opfs' ? SIZE_THRESHOLD_OPFS : SIZE_THRESHOLD_IDB;
+  const exceedsThreshold = sizeBytes > threshold;
+
+  if (exceedsThreshold) {
+    // Add to badge set
+    store.addDbExceedingThreshold(dbId);
+
+    // Check if we've already warned for this DB+mode this session
+    const key = `${dbId}:${storageMode}`;
+    if (!store.warnedDbsThisSession.has(key)) {
+      // Show warning toast
+      store.setSizeWarning({
+        dbId,
+        sizeBytes,
+        storageMode,
+        threshold,
+      });
+      // Mark as warned
+      store.markDbWarned(dbId, storageMode);
+    }
+  } else {
+    // Remove from badge set if under threshold
+    store.removeDbExceedingThreshold(dbId);
+  }
+}
+
+/**
+ * Clear the current size warning (after toast is dismissed)
+ */
+export function clearSizeWarning(): void {
+  useDatabaseStore.getState().setSizeWarning(null);
+}
+
+/**
+ * Refresh the size warning check for the active database
+ * Call this after operations that may grow the database (imports, inserts)
+ */
+export async function refreshSizeWarning(): Promise<void> {
+  const store = useDatabaseStore.getState();
+  const activeDbId = store.activeDbId;
+
+  if (!activeDbId) {
+    return;
+  }
+
+  try {
+    const sizeInfo = await _deps.workerClient.getDbSize(activeDbId);
+    checkSizeWarning(activeDbId, sizeInfo.sizeBytes, sizeInfo.storageMode);
+  } catch {
+    // Size check is non-critical, don't fail the operation
+  }
+}
+
 // =============================================================================
 // Non-hook Accessors (for use outside React components)
 // =============================================================================
@@ -395,6 +555,15 @@ export async function openDb(id: string): Promise<void> {
     views: schema.views,
     indexes: schema.indexes,
   });
+
+  // Check size warning after database is opened
+  try {
+    const sizeInfo = await _deps.workerClient.getDbSize(id);
+    store.setStorageMode(sizeInfo.storageMode);
+    checkSizeWarning(id, sizeInfo.sizeBytes, sizeInfo.storageMode);
+  } catch {
+    // Size check is non-critical, don't fail the open
+  }
 }
 
 /**

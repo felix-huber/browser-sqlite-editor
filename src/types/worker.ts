@@ -58,7 +58,8 @@ export type WorkerRequest =
       newColumns: string[];
       columnRenames?: ColumnRenameInput[];
       isReadOnly: boolean;
-    };
+    }
+  | { type: 'getDbSize'; dbName: string };
 
 /**
  * Table definition input for createTable worker request
@@ -157,7 +158,8 @@ export type WorkerResponse =
   | { type: 'foreignKeysResult'; foreignKeys: ForeignKeyInfo[] }
   | { type: 'registryResult'; registry: DatabaseRegistry }
   | { type: 'flushAndCloseResult'; success: boolean; error?: FlushAndCloseError }
-  | { type: 'schemaModificationResult'; success: boolean; error?: SchemaModificationErrorInfo };
+  | { type: 'schemaModificationResult'; success: boolean; error?: SchemaModificationErrorInfo }
+  | { type: 'dbSizeResult'; sizeBytes: number; storageMode: 'opfs' | 'idb' };
 
 /**
  * Error from flushAndClose operation - deterministic for UI prompt

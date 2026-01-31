@@ -1,13 +1,12 @@
 /**
- * Performance Regression Test Suite
+ * Performance & Memory Regression Test Suite
  *
  * Chromium-only tests using Chrome DevTools Protocol (CDP) for:
- * - Grid scroll frame timing
- * - Large file import timing
- * - Heap memory usage
- * - Query latency
+ * - Import heap sampling (100MB fixture, peak <= 250MB)
+ * - Export memory (no OOM)
+ * - Trace + metrics artifacts for CI
  *
- * Run with: npx playwright test e2e/perf/
+ * Run with: npm run test:perf -- --project=chromium
  */
 
 import { test, expect, type Page, type CDPSession } from '@playwright/test';
@@ -15,166 +14,204 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
-// ES Module compatible __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // =============================================================================
-// Configuration
+// Configuration - per acceptance criteria
 // =============================================================================
 
-/** Thresholds for performance regression detection */
 const THRESHOLDS = {
-  /** Maximum p95 frame time during scroll (ms) - 16ms = 60fps */
-  GRID_SCROLL_P95_FRAME_MS: 16,
-  /** Maximum time to import 100MB SQLite file (ms) */
-  LARGE_IMPORT_MS: 30000,
-  /** Maximum peak heap usage when viewing 100k rows (MB) */
-  HEAP_USAGE_MB: 500,
-  /** Maximum time from query execute to first row rendered (ms) */
-  QUERY_LATENCY_MS: 100,
+  /** Maximum peak heap during 100MB import (MB) - per acceptance criteria */
+  IMPORT_PEAK_HEAP_MB: 250,
+  /** Maximum peak heap during export (MB) */
+  EXPORT_PEAK_HEAP_MB: 500,
 };
 
-/** Test data sizes */
-const SIZES = {
-  /** Number of rows for scroll and heap tests */
-  LARGE_ROW_COUNT: 100000,
-  /** Target size for large import test (bytes) */
-  LARGE_IMPORT_BYTES: 100 * 1024 * 1024, // 100MB per plan requirement
+const FIXTURE_SIZES = {
+  SMALL_MB: 10,
+  LARGE_MB: 100,
 };
 
-/** Results file path */
 const RESULTS_DIR = path.join(__dirname, 'results');
-const RESULTS_FILE = path.join(RESULTS_DIR, 'results.json');
 
 // =============================================================================
 // Types
 // =============================================================================
 
-interface PerfMetrics {
-  timestamp: string;
-  tests: {
-    gridScroll?: {
-      p95FrameTimeMs: number;
-      passed: boolean;
-      frameCount: number;
-      avgFrameTimeMs: number;
-    };
-    largeImport?: {
-      importTimeMs: number;
-      passed: boolean;
-      fileSizeBytes: number;
-    };
-    heapUsage?: {
-      peakHeapMB: number;
-      passed: boolean;
-      rowCount: number;
-    };
-    queryLatency?: {
-      latencyMs: number;
-      passed: boolean;
-    };
-  };
-  summary: {
-    passed: boolean;
-    failedTests: string[];
-  };
+interface HeapSample {
+  timestamp: number;
+  usedHeapSizeMB: number;
+  totalHeapSizeMB: number;
 }
 
-interface _FrameTiming {
-  timestamp: number;
-  duration: number;
+interface PerfResult {
+  timestamp: string;
+  test: string;
+  peakHeapMB: number;
+  threshold: number;
+  passed: boolean;
+  samples: HeapSample[];
+  fixtureSizeMB: number;
 }
 
 // =============================================================================
 // Helpers
 // =============================================================================
 
-/**
- * SQLite magic header bytes
- */
-const _SQLITE_MAGIC = [
-  0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, // "SQLite f"
-  0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00, // "ormat 3\0"
-];
-
-/**
- * Create a valid SQLite database file with test data
- */
-function _createValidSqliteBytes(pageSize = 4096): Uint8Array {
-  const bytes = new Uint8Array(pageSize);
-
-  // SQLite file header (first 100 bytes)
-  for (let i = 0; i < _SQLITE_MAGIC.length; i++) {
-    bytes[i] = _SQLITE_MAGIC[i];
+function ensureResultsDir(): void {
+  if (!fs.existsSync(RESULTS_DIR)) {
+    fs.mkdirSync(RESULTS_DIR, { recursive: true });
   }
-  // Page size (bytes 16-17): 4096 = 0x1000 (big-endian)
-  bytes[16] = 0x10;
-  bytes[17] = 0x00;
-  bytes[18] = 0x01; // File format write version
-  bytes[19] = 0x01; // File format read version
-  bytes[20] = 0x00; // Reserved
-  bytes[21] = 0x40; // Max payload fraction
-  bytes[22] = 0x20; // Min payload fraction
-  bytes[23] = 0x20; // Leaf payload fraction
-  bytes[27] = 0x01; // File change counter
-  bytes[31] = 0x01; // Database size in pages
-  bytes[43] = 0x01; // Schema cookie
-  bytes[47] = 0x04; // Schema format
-  bytes[59] = 0x01; // Text encoding: UTF-8
-  bytes[96] = 0x00;
-  bytes[97] = 0x2e;
-  bytes[98] = 0x68;
-  bytes[99] = 0x18;
+}
 
-  // B-tree page header
-  bytes[100] = 0x0d; // Leaf table b-tree page
-  bytes[105] = 0x10; // Cell content area
-  bytes[106] = 0x00;
+function saveResult(result: PerfResult): void {
+  ensureResultsDir();
+  const filename = `${result.test}-${Date.now()}.json`;
+  fs.writeFileSync(path.join(RESULTS_DIR, filename), JSON.stringify(result, null, 2));
+}
 
-  return bytes;
+function saveTrace(traceName: string, traceData: unknown): void {
+  ensureResultsDir();
+  fs.writeFileSync(path.join(RESULTS_DIR, `${traceName}-trace.json`), JSON.stringify(traceData));
 }
 
 /**
- * Create a large SQLite file for import testing
- * This creates a file with proper SQLite header but minimal valid structure
+ * Create a CDP session and start heap profiler sampling
  */
-function _createLargeSqliteFile(targetSizeBytes: number): Uint8Array {
-  const pageSize = 4096;
-  const numPages = Math.ceil(targetSizeBytes / pageSize);
-  const bytes = new Uint8Array(numPages * pageSize);
+async function startHeapSampling(page: Page): Promise<{ client: CDPSession; samples: HeapSample[] }> {
+  const client = await page.context().newCDPSession(page);
+  const samples: HeapSample[] = [];
 
-  // SQLite file header
-  for (let i = 0; i < _SQLITE_MAGIC.length; i++) {
-    bytes[i] = _SQLITE_MAGIC[i];
+  await client.send('HeapProfiler.enable');
+  await client.send('Performance.enable');
+
+  // Collect baseline
+  await client.send('HeapProfiler.collectGarbage');
+  const baselineMetrics = await client.send('Performance.getMetrics');
+  const baselineUsed = baselineMetrics.metrics.find((m) => m.name === 'JSHeapUsedSize')?.value || 0;
+  const baselineTotal = baselineMetrics.metrics.find((m) => m.name === 'JSHeapTotalSize')?.value || 0;
+
+  samples.push({
+    timestamp: Date.now(),
+    usedHeapSizeMB: baselineUsed / (1024 * 1024),
+    totalHeapSizeMB: baselineTotal / (1024 * 1024),
+  });
+
+  return { client, samples };
+}
+
+/**
+ * Sample heap during operation (call periodically)
+ */
+async function sampleHeap(client: CDPSession, samples: HeapSample[]): Promise<void> {
+  const metrics = await client.send('Performance.getMetrics');
+  const used = metrics.metrics.find((m) => m.name === 'JSHeapUsedSize')?.value || 0;
+  const total = metrics.metrics.find((m) => m.name === 'JSHeapTotalSize')?.value || 0;
+
+  samples.push({
+    timestamp: Date.now(),
+    usedHeapSizeMB: used / (1024 * 1024),
+    totalHeapSizeMB: total / (1024 * 1024),
+  });
+}
+
+/**
+ * Stop heap sampling and return peak usage
+ */
+async function stopHeapSampling(
+  client: CDPSession,
+  samples: HeapSample[]
+): Promise<{ peakHeapMB: number; samples: HeapSample[] }> {
+  // Final sample after GC
+  await client.send('HeapProfiler.collectGarbage');
+  await sampleHeap(client, samples);
+
+  await client.send('HeapProfiler.disable');
+  await client.send('Performance.disable');
+  await client.detach();
+
+  const peakHeapMB = Math.max(...samples.map((s) => s.usedHeapSizeMB));
+  return { peakHeapMB, samples };
+}
+
+/**
+ * Sample heap concurrently while an async operation runs.
+ * This is critical for catching peak memory during long-running browser operations.
+ * Samples every intervalMs, targeting minSamples during the operation.
+ */
+async function sampleHeapDuring<T>(
+  client: CDPSession,
+  samples: HeapSample[],
+  operation: Promise<T>,
+  intervalMs = 50,
+  minSamples = 20
+): Promise<T> {
+  let samplingActive = true;
+  let sampleCount = 0;
+
+  // Start concurrent sampling loop
+  const samplingLoop = (async () => {
+    while (samplingActive) {
+      await sampleHeap(client, samples);
+      sampleCount++;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  })();
+
+  try {
+    // Run the operation
+    const result = await operation;
+
+    // Ensure minimum samples even if operation was fast
+    while (sampleCount < minSamples && samplingActive) {
+      await sampleHeap(client, samples);
+      sampleCount++;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+
+    return result;
+  } finally {
+    samplingActive = false;
+    // Let the sampling loop finish its current iteration
+    await samplingLoop.catch(() => {});
   }
-  // Page size
-  bytes[16] = 0x10;
-  bytes[17] = 0x00;
-  bytes[18] = 0x01;
-  bytes[19] = 0x01;
-  bytes[20] = 0x00;
-  bytes[21] = 0x40;
-  bytes[22] = 0x20;
-  bytes[23] = 0x20;
-  // Database size in pages (big-endian 4 bytes at offset 28)
-  const dbSizePages = numPages;
-  bytes[28] = (dbSizePages >> 24) & 0xff;
-  bytes[29] = (dbSizePages >> 16) & 0xff;
-  bytes[30] = (dbSizePages >> 8) & 0xff;
-  bytes[31] = dbSizePages & 0xff;
-  bytes[43] = 0x01;
-  bytes[47] = 0x04;
-  bytes[59] = 0x01;
-  bytes[96] = 0x00;
-  bytes[97] = 0x2e;
-  bytes[98] = 0x68;
-  bytes[99] = 0x18;
-  bytes[100] = 0x0d;
-  bytes[105] = 0x10;
-  bytes[106] = 0x00;
+}
 
-  return bytes;
+/**
+ * Start Chrome tracing for detailed timeline (returns client with handler already attached)
+ */
+async function startTracingWithHandler(page: Page): Promise<{ client: CDPSession; traceChunks: unknown[] }> {
+  const client = await page.context().newCDPSession(page);
+  const traceChunks: unknown[] = [];
+
+  // Attach handler BEFORE starting tracing to avoid missing events
+  client.on('Tracing.dataCollected', (event) => {
+    traceChunks.push(...(event.value as unknown[]));
+  });
+
+  await client.send('Tracing.start', {
+    traceConfig: {
+      includedCategories: ['devtools.timeline', 'v8.execute', 'blink.user_timing', 'v8.gc'],
+      excludedCategories: ['*'],
+    },
+  });
+
+  return { client, traceChunks };
+}
+
+/**
+ * Stop tracing and return trace events
+ */
+async function stopTracing(client: CDPSession, traceChunks: unknown[]): Promise<unknown[]> {
+  await client.send('Tracing.end');
+
+  await new Promise<void>((resolve) => {
+    client.once('Tracing.tracingComplete', () => resolve());
+  });
+
+  await client.detach();
+  return traceChunks;
 }
 
 /**
@@ -204,6 +241,11 @@ async function clearAllStorage(page: Page): Promise<void> {
         } catch {
           /* ignore */
         }
+        try {
+          await root.removeEntry('wasm-sqlite-editor', { recursive: true });
+        } catch {
+          /* ignore */
+        }
       }
     } catch {
       /* ignore */
@@ -211,230 +253,13 @@ async function clearAllStorage(page: Page): Promise<void> {
   });
 }
 
-/**
- * Create a test database with a specified number of rows
- */
-async function createTestDatabase(page: Page, rowCount: number): Promise<void> {
-  await page.evaluate(async (count: number) => {
-    // Create registry entry
-    const registryDb = await new Promise<IDBDatabase>((resolve, reject) => {
-      const req = indexedDB.open('sqlite-editor-registry', 1);
-      req.onerror = () => reject(req.error);
-      req.onsuccess = () => resolve(req.result);
-      req.onupgradeneeded = (event) => {
-        const database = (event.target as IDBOpenDBRequest).result;
-        if (!database.objectStoreNames.contains('registry')) {
-          database.createObjectStore('registry', { keyPath: 'key' });
-        }
-      };
-    });
-
-    const dbName = 'perf-test-db';
-    const id = `${Date.now().toString(36)}-perf`;
-
-    const tx = registryDb.transaction('registry', 'readwrite');
-    const store = tx.objectStore('registry');
-    await new Promise<void>((resolve, reject) => {
-      const req = store.put({
-        key: 'registry',
-        data: {
-          databases: [
-            {
-              id,
-              name: dbName,
-              storageType: 'idb',
-              createdAt: new Date().toISOString(),
-              lastOpenedAt: new Date().toISOString(),
-            },
-          ],
-        },
-      });
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
-    registryDb.close();
-
-    // Store test database with rows in IDB
-    // Note: For perf tests we create a minimal structure that the app can work with
-    const sqliteDb = await new Promise<IDBDatabase>((resolve, reject) => {
-      const req = indexedDB.open('idb-sqlite', 1);
-      req.onerror = () => reject(req.error);
-      req.onsuccess = () => resolve(req.result);
-      req.onupgradeneeded = (event) => {
-        const database = (event.target as IDBOpenDBRequest).result;
-        if (!database.objectStoreNames.contains('databases')) {
-          database.createObjectStore('databases', { keyPath: 'name' });
-        }
-      };
-    });
-
-    // Create minimal valid SQLite bytes
-    const magic = 'SQLite format 3\0';
-    const pageSize = 4096;
-    const bytes = new Uint8Array(pageSize);
-    for (let i = 0; i < magic.length; i++) {
-      bytes[i] = magic.charCodeAt(i);
-    }
-    bytes[16] = 0x10;
-    bytes[17] = 0x00;
-    bytes[18] = 0x01;
-    bytes[19] = 0x01;
-    bytes[21] = 0x40;
-    bytes[22] = 0x20;
-    bytes[23] = 0x20;
-    bytes[31] = 0x01;
-    bytes[43] = 0x01;
-    bytes[47] = 0x04;
-    bytes[59] = 0x01;
-    bytes[100] = 0x0d;
-    bytes[105] = 0x10;
-
-    const sqliteTx = sqliteDb.transaction('databases', 'readwrite');
-    const sqliteStore = sqliteTx.objectStore('databases');
-    await new Promise<void>((resolve, reject) => {
-      const blob = new Blob([bytes], { type: 'application/x-sqlite3' });
-      const req = sqliteStore.put({
-        name: dbName,
-        blob,
-        updatedAt: new Date().toISOString(),
-      });
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
-
-    sqliteDb.close();
-
-    // Store row count for later use
-    (window as unknown as { __perfTestRowCount: number }).__perfTestRowCount = count;
-  }, rowCount);
-}
-
-/**
- * Calculate percentile from an array of numbers
- */
-function percentile(arr: number[], p: number): number {
-  const sorted = [...arr].sort((a, b) => a - b);
-  const index = Math.ceil((p / 100) * sorted.length) - 1;
-  return sorted[Math.max(0, index)];
-}
-
-/**
- * Save metrics to JSON file
- */
-function saveMetrics(metrics: PerfMetrics): void {
-  // Ensure results directory exists
-  if (!fs.existsSync(RESULTS_DIR)) {
-    fs.mkdirSync(RESULTS_DIR, { recursive: true });
-  }
-
-  // Load existing results if any
-  let allResults: PerfMetrics[] = [];
-  if (fs.existsSync(RESULTS_FILE)) {
-    try {
-      allResults = JSON.parse(fs.readFileSync(RESULTS_FILE, 'utf-8'));
-    } catch {
-      allResults = [];
-    }
-  }
-
-  // Append new results
-  allResults.push(metrics);
-
-  // Keep only last 100 results
-  if (allResults.length > 100) {
-    allResults = allResults.slice(-100);
-  }
-
-  fs.writeFileSync(RESULTS_FILE, JSON.stringify(allResults, null, 2));
-}
-
-/**
- * Start Chrome tracing via CDP
- */
-async function startTracing(page: Page): Promise<CDPSession> {
-  const client = await page.context().newCDPSession(page);
-  await client.send('Tracing.start', {
-    traceConfig: {
-      includedCategories: ['devtools.timeline', 'v8.execute', 'blink.user_timing'],
-      excludedCategories: ['*'],
-    },
-  });
-  return client;
-}
-
-/**
- * Stop tracing and get trace data
- */
-async function stopTracing(client: CDPSession, outputPath: string): Promise<void> {
-  const traceChunks: string[] = [];
-
-  client.on('Tracing.dataCollected', (event) => {
-    traceChunks.push(...event.value);
-  });
-
-  await client.send('Tracing.end');
-
-  // Wait for trace data
-  await new Promise<void>((resolve) => {
-    client.once('Tracing.tracingComplete', () => resolve());
-  });
-
-  // Save trace file
-  const traceData = { traceEvents: traceChunks };
-  if (!fs.existsSync(RESULTS_DIR)) {
-    fs.mkdirSync(RESULTS_DIR, { recursive: true });
-  }
-  fs.writeFileSync(outputPath, JSON.stringify(traceData));
-}
-
-/**
- * Get heap usage via CDP
- */
-async function _getHeapUsage(page: Page): Promise<number> {
-  const client = await page.context().newCDPSession(page);
-
-  // Force garbage collection before measuring
-  await client.send('HeapProfiler.collectGarbage');
-
-  // Get heap stats
-  const metrics = await client.send('Performance.getMetrics');
-  const heapMetric = metrics.metrics.find((m) => m.name === 'JSHeapUsedSize');
-
-  await client.detach();
-
-  return heapMetric ? heapMetric.value / (1024 * 1024) : 0; // Convert to MB
-}
-
 // =============================================================================
-// Test Configuration
+// Tests
 // =============================================================================
 
-// Only run on Chromium (CDP required)
-test.describe.serial('Performance Regression Tests', () => {
-  test.beforeAll(async () => {
-    // Ensure results directory exists
-    if (!fs.existsSync(RESULTS_DIR)) {
-      fs.mkdirSync(RESULTS_DIR, { recursive: true });
-    }
-  });
-
+test.describe.serial('Performance & Memory Regression', () => {
   test.beforeEach(async ({ page, browserName }) => {
-    // Skip non-Chromium browsers
-    test.skip(browserName !== 'chromium', 'Performance tests require Chromium (CDP)');
-
-    // Disable animations for consistent measurements
-    await page.addInitScript(() => {
-      const style = document.createElement('style');
-      style.textContent = `
-        *, *::before, *::after {
-          animation-duration: 0s !important;
-          animation-delay: 0s !important;
-          transition-duration: 0s !important;
-          transition-delay: 0s !important;
-        }
-      `;
-      document.head.appendChild(style);
-    });
+    test.skip(browserName !== 'chromium', 'CDP heap sampling requires Chromium');
 
     await page.goto('/');
     await expect(page).toHaveTitle(/SQLite Editor/);
@@ -443,156 +268,258 @@ test.describe.serial('Performance Regression Tests', () => {
     await expect(page).toHaveTitle(/SQLite Editor/);
   });
 
-  // ===========================================================================
-  // Test: Grid Scroll Performance (100k rows, p95 frame time <16ms)
-  // ===========================================================================
-  test('grid scroll: 100k rows, p95 frame time <16ms', async ({ page }) => {
-    const metrics: PerfMetrics = {
+  test('import 10MB fixture: heap sampling baseline', async ({ page }) => {
+    const sizeMB = FIXTURE_SIZES.SMALL_MB;
+
+    // Start heap sampling
+    const { client: heapClient, samples } = await startHeapSampling(page);
+
+    // Start tracing with handler attached before tracing starts
+    const { client: traceClient, traceChunks } = await startTracingWithHandler(page);
+
+    // Sample heap DURING the import operation by running sampling concurrently
+    const importResult = await sampleHeapDuring(
+      heapClient,
+      samples,
+      page.evaluate(
+        async ({ sizeMB: size }) => {
+          const pageSize = 4096;
+          const totalBytes = size * 1024 * 1024;
+          const numPages = Math.ceil(totalBytes / pageSize);
+          const bytes = new Uint8Array(numPages * pageSize);
+
+          // SQLite header
+          const magic = 'SQLite format 3\0';
+          for (let i = 0; i < magic.length; i++) {
+            bytes[i] = magic.charCodeAt(i);
+          }
+          bytes[16] = (pageSize >> 8) & 0xff;
+          bytes[17] = pageSize & 0xff;
+          bytes[18] = 0x01;
+          bytes[19] = 0x01;
+          bytes[21] = 0x40;
+          bytes[22] = 0x20;
+          bytes[23] = 0x20;
+          bytes[28] = (numPages >> 24) & 0xff;
+          bytes[29] = (numPages >> 16) & 0xff;
+          bytes[30] = (numPages >> 8) & 0xff;
+          bytes[31] = numPages & 0xff;
+          bytes[43] = 0x01;
+          bytes[47] = 0x04;
+          bytes[59] = 0x01;
+          bytes[100] = 0x0d;
+          bytes[105] = 0x10;
+
+          const startMs = performance.now();
+
+          // Simulate import to IDB
+          const db = await new Promise<IDBDatabase>((resolve, reject) => {
+            const req = indexedDB.open('idb-sqlite', 1);
+            req.onerror = () => reject(req.error);
+            req.onsuccess = () => resolve(req.result);
+            req.onupgradeneeded = (event) => {
+              const database = (event.target as IDBOpenDBRequest).result;
+              if (!database.objectStoreNames.contains('databases')) {
+                database.createObjectStore('databases', { keyPath: 'name' });
+              }
+            };
+          });
+
+          const tx = db.transaction('databases', 'readwrite');
+          const store = tx.objectStore('databases');
+          await new Promise<void>((resolve, reject) => {
+            const blob = new Blob([bytes], { type: 'application/x-sqlite3' });
+            const req = store.put({
+              name: `perf-test-${size}mb`,
+              blob,
+              updatedAt: new Date().toISOString(),
+            });
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+          });
+          db.close();
+
+          return { timeMs: performance.now() - startMs, sizeBytes: bytes.length };
+        },
+        { sizeMB }
+      ),
+      50, // sample every 50ms
+      10 // minimum 10 samples
+    );
+
+    // Stop sampling
+    const { peakHeapMB } = await stopHeapSampling(heapClient, samples);
+
+    // Stop tracing
+    const traceEvents = await stopTracing(traceClient, traceChunks);
+    saveTrace(`import-${sizeMB}mb`, { traceEvents });
+
+    // Save result
+    const result: PerfResult = {
       timestamp: new Date().toISOString(),
-      tests: {},
-      summary: { passed: true, failedTests: [] },
+      test: `import-${sizeMB}mb`,
+      peakHeapMB,
+      threshold: THRESHOLDS.IMPORT_PEAK_HEAP_MB,
+      passed: peakHeapMB <= THRESHOLDS.IMPORT_PEAK_HEAP_MB,
+      samples,
+      fixtureSizeMB: sizeMB,
     };
+    saveResult(result);
 
-    // Start tracing
-    const traceClient = await startTracing(page);
-
-    // Create test database with synthetic large data
-    await page.evaluate(async (rowCount: number) => {
-      // Create a large synthetic dataset directly in the page
-      // This simulates what the grid would display
-
-      // Store row count for later verification
-      (window as unknown as { __perfTestRowCount: number }).__perfTestRowCount = rowCount;
-
-      // Create large array to simulate grid data
-      const data: { id: number; name: string; value: number }[] = [];
-      for (let i = 0; i < rowCount; i++) {
-        data.push({
-          id: i + 1,
-          name: `Item ${i + 1}`,
-          value: Math.random() * 10000,
-        });
-      }
-      (window as unknown as { __perfTestData: typeof data }).__perfTestData = data;
-    }, SIZES.LARGE_ROW_COUNT);
-
-    // Warm-up: scroll a bit first to ensure JIT compilation
-    await page.evaluate(async () => {
-      // Simulate scroll warm-up by triggering scroll events
-      for (let i = 0; i < 5; i++) {
-        window.scrollTo(0, i * 100);
-        await new Promise((r) => setTimeout(r, 16));
-      }
-      window.scrollTo(0, 0);
-    });
-
-    // Measure frame times during continuous scroll
-    const frameTimes: number[] = await page.evaluate(async () => {
-      return new Promise<number[]>((resolve) => {
-        const times: number[] = [];
-        let lastTime = performance.now();
-        let frameCount = 0;
-        const maxFrames = 120; // ~2 seconds at 60fps
-
-        const scrollContainer = document.querySelector('.overflow-auto') || window;
-        let scrollY = 0;
-
-        const measure = () => {
-          const now = performance.now();
-          times.push(now - lastTime);
-          lastTime = now;
-          frameCount++;
-
-          // Scroll down gradually
-          scrollY += 50;
-          if (scrollContainer === window) {
-            window.scrollTo(0, scrollY);
-          } else {
-            (scrollContainer as HTMLElement).scrollTop = scrollY;
-          }
-
-          if (frameCount < maxFrames) {
-            requestAnimationFrame(measure);
-          } else {
-            resolve(times);
-          }
-        };
-
-        requestAnimationFrame(measure);
-      });
-    });
-
-    // Stop tracing and save
-    const tracePath = path.join(RESULTS_DIR, 'grid-scroll-trace.json');
-    await stopTracing(traceClient, tracePath);
-
-    // Calculate p95 frame time
-    const p95FrameTime = percentile(frameTimes, 95);
-    const avgFrameTime = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
-
-    metrics.tests.gridScroll = {
-      p95FrameTimeMs: p95FrameTime,
-      passed: p95FrameTime <= THRESHOLDS.GRID_SCROLL_P95_FRAME_MS,
-      frameCount: frameTimes.length,
-      avgFrameTimeMs: avgFrameTime,
-    };
-
-    if (!metrics.tests.gridScroll.passed) {
-      metrics.summary.passed = false;
-      metrics.summary.failedTests.push('gridScroll');
-    }
-
-    saveMetrics(metrics);
-
-    // Log results for CI visibility
-    console.log(`Grid Scroll: p95=${p95FrameTime.toFixed(2)}ms, avg=${avgFrameTime.toFixed(2)}ms`);
-    console.log(`Trace saved to: ${tracePath}`);
-
-    expect(p95FrameTime).toBeLessThanOrEqual(THRESHOLDS.GRID_SCROLL_P95_FRAME_MS);
+    console.log(`Import ${sizeMB}MB: peak heap = ${peakHeapMB.toFixed(2)}MB, time = ${importResult.timeMs.toFixed(0)}ms`);
+    expect(peakHeapMB).toBeLessThanOrEqual(THRESHOLDS.IMPORT_PEAK_HEAP_MB);
   });
 
-  // ===========================================================================
-  // Test: Large Import Performance (100MB SQLite, <30s)
-  // ===========================================================================
-  test('large import: 100MB SQLite file, <30s', async ({ page }) => {
-    const metrics: PerfMetrics = {
+  test('import 100MB fixture: peak JS heap <= 250MB', async ({ page }) => {
+    test.setTimeout(120000); // 2 min timeout for large fixture
+
+    const sizeMB = FIXTURE_SIZES.LARGE_MB;
+
+    // Start heap sampling
+    const { client: heapClient, samples } = await startHeapSampling(page);
+
+    // Start tracing with handler attached before tracing starts
+    const { client: traceClient, traceChunks } = await startTracingWithHandler(page);
+
+    // Sample heap DURING the import operation by running sampling concurrently
+    const importResult = await sampleHeapDuring(
+      heapClient,
+      samples,
+      page.evaluate(
+        async ({ sizeMB: size }) => {
+          const pageSize = 4096;
+          const totalBytes = size * 1024 * 1024;
+          const numPages = Math.ceil(totalBytes / pageSize);
+
+          // Generate in chunks to avoid single large allocation
+          const chunkSize = 10 * 1024 * 1024; // 10MB chunks
+          const chunks: Uint8Array[] = [];
+          let remaining = totalBytes;
+          let isFirst = true;
+
+          while (remaining > 0) {
+            const thisChunkSize = Math.min(chunkSize, remaining);
+            const chunk = new Uint8Array(thisChunkSize);
+
+            if (isFirst) {
+              // SQLite header in first chunk
+              const magic = 'SQLite format 3\0';
+              for (let i = 0; i < magic.length; i++) {
+                chunk[i] = magic.charCodeAt(i);
+              }
+              chunk[16] = (pageSize >> 8) & 0xff;
+              chunk[17] = pageSize & 0xff;
+              chunk[18] = 0x01;
+              chunk[19] = 0x01;
+              chunk[21] = 0x40;
+              chunk[22] = 0x20;
+              chunk[23] = 0x20;
+              chunk[28] = (numPages >> 24) & 0xff;
+              chunk[29] = (numPages >> 16) & 0xff;
+              chunk[30] = (numPages >> 8) & 0xff;
+              chunk[31] = numPages & 0xff;
+              chunk[43] = 0x01;
+              chunk[47] = 0x04;
+              chunk[59] = 0x01;
+              chunk[100] = 0x0d;
+              chunk[105] = 0x10;
+              isFirst = false;
+            }
+
+            chunks.push(chunk);
+            remaining -= thisChunkSize;
+          }
+
+          const startMs = performance.now();
+
+          // Import to IDB
+          const db = await new Promise<IDBDatabase>((resolve, reject) => {
+            const req = indexedDB.open('idb-sqlite', 1);
+            req.onerror = () => reject(req.error);
+            req.onsuccess = () => resolve(req.result);
+            req.onupgradeneeded = (event) => {
+              const database = (event.target as IDBOpenDBRequest).result;
+              if (!database.objectStoreNames.contains('databases')) {
+                database.createObjectStore('databases', { keyPath: 'name' });
+              }
+            };
+          });
+
+          const tx = db.transaction('databases', 'readwrite');
+          const store = tx.objectStore('databases');
+          await new Promise<void>((resolve, reject) => {
+            const blob = new Blob(chunks, { type: 'application/x-sqlite3' });
+            const req = store.put({
+              name: `perf-test-${size}mb`,
+              blob,
+              updatedAt: new Date().toISOString(),
+            });
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+          });
+          db.close();
+
+          // Clear chunks to allow GC
+          chunks.length = 0;
+
+          return { timeMs: performance.now() - startMs, sizeBytes: totalBytes };
+        },
+        { sizeMB }
+      ),
+      50, // sample every 50ms
+      30 // minimum 30 samples for 100MB operation
+    );
+
+    // Stop sampling
+    const { peakHeapMB } = await stopHeapSampling(heapClient, samples);
+
+    // Stop tracing
+    const traceEvents = await stopTracing(traceClient, traceChunks);
+    saveTrace(`import-${sizeMB}mb`, { traceEvents });
+
+    // Save result
+    const result: PerfResult = {
       timestamp: new Date().toISOString(),
-      tests: {},
-      summary: { passed: true, failedTests: [] },
+      test: `import-${sizeMB}mb`,
+      peakHeapMB,
+      threshold: THRESHOLDS.IMPORT_PEAK_HEAP_MB,
+      passed: peakHeapMB <= THRESHOLDS.IMPORT_PEAK_HEAP_MB,
+      samples,
+      fixtureSizeMB: sizeMB,
     };
+    saveResult(result);
 
-    const fileSizeBytes = SIZES.LARGE_IMPORT_BYTES;
+    console.log(
+      `Import ${sizeMB}MB: peak heap = ${peakHeapMB.toFixed(2)}MB (threshold: ${THRESHOLDS.IMPORT_PEAK_HEAP_MB}MB), time = ${importResult.timeMs.toFixed(0)}ms`
+    );
 
-    // Start tracing
-    const traceClient = await startTracing(page);
+    // CRITICAL: This is the main acceptance criterion
+    expect(peakHeapMB).toBeLessThanOrEqual(THRESHOLDS.IMPORT_PEAK_HEAP_MB);
+  });
 
-    // Measure import time
-    // Import the file directly via page.evaluate (generate bytes in-browser to avoid serialization overhead)
-    const importResult = await page.evaluate(
-      async ({ byteLength }) => {
-        const bytes = new Uint8Array(byteLength);
-        const sqliteMagic = [
-          0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66,
-          0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00,
-        ];
+  test('export large DB: no OOM', async ({ page }) => {
+    test.setTimeout(120000);
 
-        for (let i = 0; i < sqliteMagic.length; i++) {
-          bytes[i] = sqliteMagic[i];
-        }
-
+    // First import a 100MB fixture
+    const sizeMB = FIXTURE_SIZES.LARGE_MB;
+    await page.evaluate(
+      async ({ sizeMB: size }) => {
         const pageSize = 4096;
-        const numPages = Math.ceil(byteLength / pageSize);
+        const totalBytes = size * 1024 * 1024;
+        const numPages = Math.ceil(totalBytes / pageSize);
+        const bytes = new Uint8Array(numPages * pageSize);
 
-        // Page size and header fields
-        bytes[16] = 0x10;
-        bytes[17] = 0x00;
+        const magic = 'SQLite format 3\0';
+        for (let i = 0; i < magic.length; i++) {
+          bytes[i] = magic.charCodeAt(i);
+        }
+        bytes[16] = (pageSize >> 8) & 0xff;
+        bytes[17] = pageSize & 0xff;
         bytes[18] = 0x01;
         bytes[19] = 0x01;
-        bytes[20] = 0x00;
         bytes[21] = 0x40;
         bytes[22] = 0x20;
         bytes[23] = 0x20;
-        // Database size in pages (big-endian)
         bytes[28] = (numPages >> 24) & 0xff;
         bytes[29] = (numPages >> 16) & 0xff;
         bytes[30] = (numPages >> 8) & 0xff;
@@ -600,17 +527,10 @@ test.describe.serial('Performance Regression Tests', () => {
         bytes[43] = 0x01;
         bytes[47] = 0x04;
         bytes[59] = 0x01;
-        bytes[96] = 0x00;
-        bytes[97] = 0x2e;
-        bytes[98] = 0x68;
-        bytes[99] = 0x18;
         bytes[100] = 0x0d;
         bytes[105] = 0x10;
-        bytes[106] = 0x00;
 
-        const startMs = performance.now();
-
-        // Create registry entry
+        // Store in registry
         const registryDb = await new Promise<IDBDatabase>((resolve, reject) => {
           const req = indexedDB.open('sqlite-editor-registry', 1);
           req.onerror = () => reject(req.error);
@@ -623,8 +543,8 @@ test.describe.serial('Performance Regression Tests', () => {
           };
         });
 
-        const dbName = 'large-import-test';
-        const id = `${Date.now().toString(36)}-import`;
+        const dbName = 'export-test-db';
+        const id = `${Date.now().toString(36)}-export`;
 
         const tx = registryDb.transaction('registry', 'readwrite');
         const store = tx.objectStore('registry');
@@ -663,7 +583,6 @@ test.describe.serial('Performance Regression Tests', () => {
 
         const sqliteTx = sqliteDb.transaction('databases', 'readwrite');
         const sqliteStore = sqliteTx.objectStore('databases');
-
         await new Promise<void>((resolve, reject) => {
           const blob = new Blob([bytes], { type: 'application/x-sqlite3' });
           const req = sqliteStore.put({
@@ -674,244 +593,114 @@ test.describe.serial('Performance Regression Tests', () => {
           req.onsuccess = () => resolve();
           req.onerror = () => reject(req.error);
         });
-
         sqliteDb.close();
 
-        const endMs = performance.now();
-        return {
-          success: true,
-          timeMs: endMs - startMs,
-          sizeBytes: bytes.length,
-        };
+        return { sizeBytes: bytes.length };
       },
-      { byteLength: fileSizeBytes }
+      { sizeMB }
     );
 
-    const importTimeMs = importResult.timeMs;
+    // Start heap sampling for export
+    const { client: heapClient, samples } = await startHeapSampling(page);
+    const { client: traceClient, traceChunks } = await startTracingWithHandler(page);
 
-    // Stop tracing
-    const tracePath = path.join(RESULTS_DIR, 'large-import-trace.json');
-    await stopTracing(traceClient, tracePath);
+    // Sample heap DURING the export operation by running sampling concurrently
+    const exportResult = await sampleHeapDuring(
+      heapClient,
+      samples,
+      page.evaluate(async () => {
+        const startMs = performance.now();
 
-    metrics.tests.largeImport = {
-      importTimeMs,
-      passed: importTimeMs <= THRESHOLDS.LARGE_IMPORT_MS,
-      fileSizeBytes,
-    };
-
-    if (!metrics.tests.largeImport.passed) {
-      metrics.summary.passed = false;
-      metrics.summary.failedTests.push('largeImport');
-    }
-
-    saveMetrics(metrics);
-
-    // Log results
-    console.log(`Large Import: time=${importTimeMs}ms, size=${(fileSizeBytes / 1024 / 1024).toFixed(2)}MB`);
-    console.log(`Trace saved to: ${tracePath}`);
-
-    expect(importTimeMs).toBeLessThanOrEqual(THRESHOLDS.LARGE_IMPORT_MS);
-  });
-
-  // ===========================================================================
-  // Test: Heap Usage (100k rows, <500MB)
-  // ===========================================================================
-  test('heap usage: 100k row table, <500MB peak heap', async ({ page }) => {
-    const metrics: PerfMetrics = {
-      timestamp: new Date().toISOString(),
-      tests: {},
-      summary: { passed: true, failedTests: [] },
-    };
-
-    // Enable Performance domain for metrics
-    const client = await page.context().newCDPSession(page);
-    await client.send('Performance.enable');
-
-    // Get baseline heap usage
-    await client.send('HeapProfiler.collectGarbage');
-    const baselineMetrics = await client.send('Performance.getMetrics');
-    const baselineHeap =
-      baselineMetrics.metrics.find((m) => m.name === 'JSHeapUsedSize')?.value || 0;
-
-    // Create large dataset in memory
-    await page.evaluate(async (rowCount: number) => {
-      // Create large array to simulate 100k rows of data
-      const data: { id: number; name: string; value: number; extra: string }[] = [];
-      for (let i = 0; i < rowCount; i++) {
-        data.push({
-          id: i + 1,
-          name: `Item ${i + 1} with some additional text for realistic size`,
-          value: Math.random() * 10000,
-          extra: `Extra data field ${i + 1} to increase memory usage per row`,
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const req = indexedDB.open('idb-sqlite', 1);
+          req.onerror = () => reject(req.error);
+          req.onsuccess = () => resolve(req.result);
         });
-      }
-      (window as unknown as { __perfTestData: typeof data }).__perfTestData = data;
 
-      // Trigger some DOM operations to simulate grid rendering
-      const container = document.createElement('div');
-      container.style.display = 'none';
-      document.body.appendChild(container);
+        const tx = db.transaction('databases', 'readonly');
+        const store = tx.objectStore('databases');
 
-      // Simulate virtualizer by creating some DOM elements
-      for (let i = 0; i < 50; i++) {
-        const row = document.createElement('div');
-        row.textContent = JSON.stringify(data[i]);
-        container.appendChild(row);
-      }
-    }, SIZES.LARGE_ROW_COUNT);
+        const data = await new Promise<{ blob: Blob } | undefined>((resolve, reject) => {
+          const req = store.get('export-test-db');
+          req.onsuccess = () => resolve(req.result as { blob: Blob } | undefined);
+          req.onerror = () => reject(req.error);
+        });
 
-    // Get peak heap usage
-    const peakMetrics = await client.send('Performance.getMetrics');
-    const peakHeap = peakMetrics.metrics.find((m) => m.name === 'JSHeapUsedSize')?.value || 0;
+        if (!data) {
+          throw new Error('Database not found');
+        }
 
-    const peakHeapMB = peakHeap / (1024 * 1024);
-    const baselineHeapMB = baselineHeap / (1024 * 1024);
-    const heapIncreaseMB = peakHeapMB - baselineHeapMB;
+        // Read the blob to simulate export
+        const arrayBuffer = await data.blob.arrayBuffer();
+        db.close();
 
-    await client.detach();
+        return { timeMs: performance.now() - startMs, sizeBytes: arrayBuffer.byteLength };
+      }),
+      50, // sample every 50ms
+      20 // minimum 20 samples
+    );
 
-    metrics.tests.heapUsage = {
+    const { peakHeapMB } = await stopHeapSampling(heapClient, samples);
+    const traceEvents = await stopTracing(traceClient, traceChunks);
+    saveTrace('export-large', { traceEvents });
+
+    const result: PerfResult = {
+      timestamp: new Date().toISOString(),
+      test: 'export-large',
       peakHeapMB,
-      passed: peakHeapMB <= THRESHOLDS.HEAP_USAGE_MB,
-      rowCount: SIZES.LARGE_ROW_COUNT,
+      threshold: THRESHOLDS.EXPORT_PEAK_HEAP_MB,
+      passed: peakHeapMB <= THRESHOLDS.EXPORT_PEAK_HEAP_MB,
+      samples,
+      fixtureSizeMB: sizeMB,
     };
+    saveResult(result);
 
-    if (!metrics.tests.heapUsage.passed) {
-      metrics.summary.passed = false;
-      metrics.summary.failedTests.push('heapUsage');
-    }
-
-    saveMetrics(metrics);
-
-    // Log results
     console.log(
-      `Heap Usage: peak=${peakHeapMB.toFixed(2)}MB, baseline=${baselineHeapMB.toFixed(2)}MB, increase=${heapIncreaseMB.toFixed(2)}MB`
+      `Export ${sizeMB}MB: peak heap = ${peakHeapMB.toFixed(2)}MB, time = ${exportResult.timeMs.toFixed(0)}ms`
     );
 
-    expect(peakHeapMB).toBeLessThanOrEqual(THRESHOLDS.HEAP_USAGE_MB);
+    // Export should not OOM (stay under threshold)
+    expect(peakHeapMB).toBeLessThanOrEqual(THRESHOLDS.EXPORT_PEAK_HEAP_MB);
   });
 
-  // ===========================================================================
-  // Test: Query Latency (cached query <100ms)
-  // ===========================================================================
-  test('query latency: execute to first row <100ms', async ({ page }) => {
-    const metrics: PerfMetrics = {
-      timestamp: new Date().toISOString(),
-      tests: {},
-      summary: { passed: true, failedTests: [] },
-    };
+  test('results summary: verify all metrics', async ({ browserName }) => {
+    test.skip(browserName !== 'chromium', 'CDP required');
 
-    // Create test database
-    await createTestDatabase(page, 1000);
+    ensureResultsDir();
 
-    // Reload to pick up the database
-    await page.reload();
-    await expect(page).toHaveTitle(/SQLite Editor/);
+    // List all result files
+    const files = fs.readdirSync(RESULTS_DIR).filter((f) => f.endsWith('.json') && !f.includes('trace'));
 
-    // Warm-up run - simulate query execution
-    await page.evaluate(async () => {
-      // Warm up query execution path
-      const warmupData: { id: number; value: number }[] = [];
-      for (let i = 0; i < 100; i++) {
-        warmupData.push({ id: i, value: Math.random() });
+    if (files.length === 0) {
+      console.log('No performance results found - this is the first run');
+      return;
+    }
+
+    console.log('\n=== Performance Test Summary ===\n');
+
+    let allPassed = true;
+    const failures: string[] = [];
+
+    for (const file of files) {
+      try {
+        const result: PerfResult = JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, file), 'utf-8'));
+        const status = result.passed ? 'PASS' : 'FAIL';
+        console.log(
+          `${result.test}: peak=${result.peakHeapMB.toFixed(2)}MB threshold=${result.threshold}MB [${status}]`
+        );
+
+        if (!result.passed) {
+          allPassed = false;
+          failures.push(`${result.test} (${result.peakHeapMB.toFixed(2)}MB > ${result.threshold}MB)`);
+        }
+      } catch {
+        // Skip invalid files
       }
-      (window as unknown as { __warmupData: typeof warmupData }).__warmupData = warmupData;
-    });
-
-    // Measure query latency (simulated)
-    const latencyMs = await page.evaluate(async () => {
-      const startTime = performance.now();
-
-      // Simulate query execution and result rendering
-      const queryResult: { id: number; name: string; value: number }[] = [];
-      for (let i = 0; i < 1000; i++) {
-        queryResult.push({
-          id: i + 1,
-          name: `Result ${i + 1}`,
-          value: Math.random() * 1000,
-        });
-      }
-
-      // Simulate DOM update (first row render)
-      const firstRow = document.createElement('div');
-      firstRow.textContent = JSON.stringify(queryResult[0]);
-      document.body.appendChild(firstRow);
-
-      const endTime = performance.now();
-      document.body.removeChild(firstRow);
-
-      return endTime - startTime;
-    });
-
-    metrics.tests.queryLatency = {
-      latencyMs,
-      passed: latencyMs <= THRESHOLDS.QUERY_LATENCY_MS,
-    };
-
-    if (!metrics.tests.queryLatency.passed) {
-      metrics.summary.passed = false;
-      metrics.summary.failedTests.push('queryLatency');
     }
 
-    saveMetrics(metrics);
+    console.log('\n================================\n');
 
-    // Log results
-    console.log(`Query Latency: ${latencyMs.toFixed(2)}ms`);
-
-    expect(latencyMs).toBeLessThanOrEqual(THRESHOLDS.QUERY_LATENCY_MS);
-  });
-
-  // ===========================================================================
-  // Summary Test: Verify all metrics and fail on regression
-  // ===========================================================================
-  test('summary: verify metrics and fail on any regression', async ({ browserName }) => {
-    // This test runs last and verifies the overall results
-    test.skip(browserName !== 'chromium', 'Performance tests require Chromium (CDP)');
-
-    expect(fs.existsSync(RESULTS_FILE)).toBe(true);
-    const results: PerfMetrics[] = JSON.parse(fs.readFileSync(RESULTS_FILE, 'utf-8'));
-    expect(results.length).toBeGreaterThan(0);
-    const latestResult = results[results.length - 1];
-
-    // Log summary
-    console.log('\n=== Performance Test Summary ===');
-    console.log(`Timestamp: ${latestResult.timestamp}`);
-
-    if (latestResult.tests.gridScroll) {
-      const t = latestResult.tests.gridScroll;
-      console.log(
-        `Grid Scroll: p95=${t.p95FrameTimeMs.toFixed(2)}ms (threshold: ${THRESHOLDS.GRID_SCROLL_P95_FRAME_MS}ms) - ${t.passed ? 'PASS' : 'FAIL'}`
-      );
-    }
-
-    if (latestResult.tests.largeImport) {
-      const t = latestResult.tests.largeImport;
-      console.log(
-        `Large Import: ${t.importTimeMs}ms (threshold: ${THRESHOLDS.LARGE_IMPORT_MS}ms) - ${t.passed ? 'PASS' : 'FAIL'}`
-      );
-    }
-
-    if (latestResult.tests.heapUsage) {
-      const t = latestResult.tests.heapUsage;
-      console.log(
-        `Heap Usage: ${t.peakHeapMB.toFixed(2)}MB (threshold: ${THRESHOLDS.HEAP_USAGE_MB}MB) - ${t.passed ? 'PASS' : 'FAIL'}`
-      );
-    }
-
-    if (latestResult.tests.queryLatency) {
-      const t = latestResult.tests.queryLatency;
-      console.log(
-        `Query Latency: ${t.latencyMs.toFixed(2)}ms (threshold: ${THRESHOLDS.QUERY_LATENCY_MS}ms) - ${t.passed ? 'PASS' : 'FAIL'}`
-      );
-    }
-
-    console.log(`\nOverall: ${latestResult.summary.passed ? 'PASS' : 'FAIL'}`);
-    if (latestResult.summary.failedTests.length > 0) {
-      console.log(`Failed tests: ${latestResult.summary.failedTests.join(', ')}`);
-    }
-    console.log('================================\n');
-
-    // Fail if any test failed
-    expect(latestResult.summary.passed).toBe(true);
+    // Fail the summary test if any threshold was violated
+    expect(allPassed, `Threshold violations: ${failures.join(', ')}`).toBe(true);
   });
 });

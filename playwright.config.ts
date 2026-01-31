@@ -53,6 +53,17 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         channel: 'chrome',
       },
+      testIgnore: '**/perf/**',
+    },
+    {
+      name: 'perf',
+      testDir: './e2e/perf',
+      use: {
+        ...devices['Desktop Chrome'],
+        channel: 'chrome',
+      },
+      timeout: 180000, // 3 min per test for large fixtures
+      retries: 0, // No retries for perf tests
     },
   ],
   webServer: {

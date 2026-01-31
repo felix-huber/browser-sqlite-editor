@@ -414,6 +414,17 @@ export class WorkerClient {
   }
 
   /**
+   * Get the size of a database in bytes
+   */
+  async getDbSize(dbName: string): Promise<{ sizeBytes: number; storageMode: 'opfs' | 'idb' }> {
+    const response = await this.request<{ type: 'dbSizeResult'; sizeBytes: number; storageMode: 'opfs' | 'idb' }>({
+      type: 'getDbSize',
+      dbName,
+    });
+    return { sizeBytes: response.sizeBytes, storageMode: response.storageMode };
+  }
+
+  /**
    * Acquire write lock for a database
    */
   async acquireLock(dbName: string): Promise<{ isWriter: boolean; holderStale?: boolean }> {

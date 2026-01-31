@@ -26,6 +26,7 @@ import {
   handleDeleteDbRequest,
   handleRenameDbRequest,
   handleGetRegistryRequest,
+  handleGetDbSizeRequest,
 } from './handlers/registry';
 import {
   handleFlushSnapshotRequest,
@@ -167,6 +168,10 @@ async function handleMessage(event: WorkerMessageEvent): Promise<void> {
 
     case 'getRegistry':
       await handleGetRegistryRequest(request, id, postResponse);
+      break;
+
+    case 'getDbSize':
+      await handleGetDbSizeRequest(request, id, postResponse);
       break;
 
     case 'acquireLock':

@@ -23,3 +23,8 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-1x1 | P5-04: Row identity strategy for UPDATE/DELETE | DONE | 92de92f4fdf577cb75add16bbdbeb8692820efc5 | clean review |
 | bd-2eq | P1-05: Enforce PRAGMA journal_mode=DELETE | FAILED | - | review/verification failure |
 | bd-2am | P1-06: Storage layout migration safety | DONE | dc80bfaf86df60c17b801aa93c34317a2ae9d441 | clean review |
+| bd-po6 | P3-00: Shared DDL diff preview component | FAILED | - | review/verification failure |
+| bd-3ge | P5-00: Shared SQL generation helpers | FAILED | - | review/verification failure |
+| bd-b05 | P2-00: Perf/memory regression harness | FAILED | - | review/verification failure |
+| bd-3lz | P1-07: Single-writer lock + read-only open enforcement | FAILED | - | review/verification failure |
+| bd-3t7 | P2-08: Size warnings on open + DB growth | FAILED | - | review/verification failure |

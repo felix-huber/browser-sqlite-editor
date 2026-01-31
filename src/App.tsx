@@ -15,6 +15,7 @@ import { StorageFullBanner } from './shared/components/StorageFullBanner';
 import { PersistenceErrorBanner } from './shared/components/PersistenceErrorBanner';
 import { QuotaExceededModal } from './shared/components/QuotaExceededModal';
 import { PersistenceErrorModal } from './shared/components/PersistenceErrorModal';
+import { SizeWarningToast } from './shared/components/SizeWarningToast';
 import { UnsavedPrompt, type UnsavedPromptAction } from './shared/components/UnsavedPrompt';
 import { useFocusTrap } from './shared/hooks/useFocusTrap';
 import { NewDatabaseDialog } from './shared/components/NewDatabaseDialog';
@@ -39,6 +40,7 @@ import {
   openDb,
   closeDb,
   refreshSchema,
+  refreshSizeWarning,
 } from './store';
 import { getWorkerClient, WorkerClient } from './core/worker/client';
 import { useGlobalShortcutHandlers } from './shared/hooks/useKeyboardShortcuts';
@@ -341,8 +343,10 @@ function App() {
       const baseName = file.name.replace(/\.(sqlite|db|sqlite3)$/i, '') || 'imported';
       const importResult = await client.importFile(file, baseName);
       await loadRegistry();
-      // Open the imported database
+      // Open the imported database (also triggers size warning check)
       await openDb(importResult.dbName ?? baseName);
+      // Re-check size after import (in case file was large)
+      await refreshSizeWarning();
     } catch (err) {
       console.error('Failed to import SQLite file:', err);
       setImportError(err instanceof Error ? err.message : 'Failed to import database');
@@ -510,8 +514,27 @@ function App() {
         );
       });
 
+    // Check for write operations that may grow the database
+    const mightGrowDb = sqlWithoutComments
+      .split(';')
+      .some((statement) => {
+        const trimmed = statement.trim().toUpperCase();
+        return (
+          trimmed.startsWith('INSERT ') ||
+          trimmed.startsWith('CREATE ') ||
+          trimmed.startsWith('UPDATE ') ||
+          trimmed.includes(' IMPORT') ||
+          trimmed.includes('ATTACH ')
+        );
+      });
+
     if (shouldRefresh) {
       await refreshSchema();
+    }
+
+    // Re-check size after operations that may grow the database
+    if (mightGrowDb) {
+      await refreshSizeWarning();
     }
 
     return result;
@@ -573,6 +596,8 @@ function App() {
       }
 
       await refreshSchema();
+      // Re-check size after data import
+      await refreshSizeWarning();
       setLastTableSelection(options.tableName);
       setLastViewSelection(null);
       setActiveView({ type: 'table', tableName: options.tableName });
@@ -1092,6 +1117,9 @@ function App() {
           onCancel={() => setExportError(null)}
         />
       )}
+
+      {/* Size Warning Toast */}
+      <SizeWarningToast />
     </>
   );
 }

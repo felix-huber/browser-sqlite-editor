@@ -38,11 +38,11 @@ function createOptions(overrides: Partial<GenerateSqlOptions> = {}): GenerateSql
 }
 
 describe('quoteIdentifier', () => {
-  it('returns simple identifiers unchanged', () => {
-    expect(quoteIdentifier('users')).toBe('users')
-    expect(quoteIdentifier('user_id')).toBe('user_id')
-    expect(quoteIdentifier('MyTable')).toBe('MyTable')
-    expect(quoteIdentifier('_private')).toBe('_private')
+  it('always wraps identifiers in double quotes', () => {
+    expect(quoteIdentifier('users')).toBe('"users"')
+    expect(quoteIdentifier('user_id')).toBe('"user_id"')
+    expect(quoteIdentifier('MyTable')).toBe('"MyTable"')
+    expect(quoteIdentifier('_private')).toBe('"_private"')
   })
 
   it('quotes identifiers with special characters', () => {
@@ -107,9 +107,9 @@ describe('generateSql', () => {
         })
       )
 
-      expect(result.sql).toContain('t1.id')
-      expect(result.sql).toContain('t1.name')
-      expect(result.sql).toContain('t1.email')
+      expect(result.sql).toContain('t1."id"')
+      expect(result.sql).toContain('t1."name"')
+      expect(result.sql).toContain('t1."email"')
     })
 
     it('includes columns from multiple tables', () => {
@@ -122,10 +122,10 @@ describe('generateSql', () => {
         })
       )
 
-      expect(result.sql).toContain('t1.id')
-      expect(result.sql).toContain('t1.name')
-      expect(result.sql).toContain('t2.order_id')
-      expect(result.sql).toContain('t2.amount')
+      expect(result.sql).toContain('t1."id"')
+      expect(result.sql).toContain('t1."name"')
+      expect(result.sql).toContain('t2."order_id"')
+      expect(result.sql).toContain('t2."amount"')
     })
   })
 
@@ -137,10 +137,10 @@ describe('generateSql', () => {
         })
       )
 
-      expect(result.sql).toContain('FROM users AS t1')
+      expect(result.sql).toContain('FROM "users" AS t1')
     })
 
-    it('quotes table names when needed', () => {
+    it('quotes table names with special characters', () => {
       const result = generateSql(
         createOptions({
           tableNodes: [createTableNode('user-data', 't1')],
@@ -160,8 +160,8 @@ describe('generateSql', () => {
         })
       )
 
-      expect(result.sql).toContain('FROM users AS t1')
-      expect(result.sql).toContain('CROSS JOIN products AS t2')
+      expect(result.sql).toContain('FROM "users" AS t1')
+      expect(result.sql).toContain('CROSS JOIN "products" AS t2')
     })
   })
 
@@ -186,7 +186,7 @@ describe('generateSql', () => {
         })
       )
 
-      expect(result.sql).toContain('JOIN orders AS t2 ON t1.id = t2.user_id')
+      expect(result.sql).toContain('JOIN "orders" AS t2 ON t1."id" = t2."user_id"')
     })
 
     it('adds LEFT JOIN', () => {
@@ -209,7 +209,7 @@ describe('generateSql', () => {
         })
       )
 
-      expect(result.sql).toContain('LEFT JOIN orders AS t2 ON t1.id = t2.user_id')
+      expect(result.sql).toContain('LEFT JOIN "orders" AS t2 ON t1."id" = t2."user_id"')
     })
 
     it('adds RIGHT JOIN', () => {
@@ -232,7 +232,7 @@ describe('generateSql', () => {
         })
       )
 
-      expect(result.sql).toContain('RIGHT JOIN orders AS t2 ON t1.id = t2.user_id')
+      expect(result.sql).toContain('RIGHT JOIN "orders" AS t2 ON t1."id" = t2."user_id"')
     })
 
     it('handles multiple joins', () => {
@@ -266,8 +266,8 @@ describe('generateSql', () => {
         })
       )
 
-      expect(result.sql).toContain('JOIN orders AS t2 ON t1.id = t2.user_id')
-      expect(result.sql).toContain('LEFT JOIN products AS t3 ON t2.product_id = t3.id')
+      expect(result.sql).toContain('JOIN "orders" AS t2 ON t1."id" = t2."user_id"')
+      expect(result.sql).toContain('LEFT JOIN "products" AS t3 ON t2."product_id" = t3."id"')
     })
   })
 
@@ -471,12 +471,12 @@ describe('generateSql', () => {
 
       expect(result.isValid).toBe(true)
       expect(result.sql).toContain('SELECT')
-      expect(result.sql).toContain('t1.id')
-      expect(result.sql).toContain('t1.name')
-      expect(result.sql).toContain('t2.order_id')
-      expect(result.sql).toContain('t2.total')
-      expect(result.sql).toContain('FROM users AS t1')
-      expect(result.sql).toContain('JOIN orders AS t2')
+      expect(result.sql).toContain('t1."id"')
+      expect(result.sql).toContain('t1."name"')
+      expect(result.sql).toContain('t2."order_id"')
+      expect(result.sql).toContain('t2."total"')
+      expect(result.sql).toContain('FROM "users" AS t1')
+      expect(result.sql).toContain('JOIN "orders" AS t2')
       expect(result.sql).toContain('WHERE t2.total > ?')
       expect(result.sql).toContain('ORDER BY t2.total DESC')
       expect(result.sql).toContain('LIMIT 50')

@@ -639,3 +639,187 @@ describe('WebLockManager - Multiple Databases', () => {
     expect(manager.hasLock('db2')).toBe(true);
   });
 });
+
+// =============================================================================
+// Single-Writer Lock Integration Tests
+// =============================================================================
+
+describe('WebLockManager - single-writer lock enforcement', () => {
+  describe('write lock acquisition before database open', () => {
+    it('should return acquired=true when no lock is held, enabling write mode', async () => {
+      const adapter = createMockAdapter(mockState);
+      const manager = new WebLockManager(adapter);
+
+      const result = await manager.acquireLock('test-db');
+
+      expect(result.acquired).toBe(true);
+      expect(result.holderId).toBeNull();
+      expect(result.holderStale).toBe(false);
+      // When acquired=true, caller should open database with readOnly=false
+    });
+
+    it('should return acquired=false when lock held by another, requiring read-only open', async () => {
+      const adapter = createMockAdapter(mockState);
+      const manager1 = new WebLockManager(adapter);
+      const manager2 = new WebLockManager(adapter);
+
+      // First manager acquires write lock
+      await manager1.acquireLock('test-db');
+
+      // Reset tab ID to simulate different tab
+      resetTabId();
+
+      // Second manager tries to acquire - should fail
+      const result = await manager2.acquireLock('test-db');
+
+      expect(result.acquired).toBe(false);
+      // When acquired=false, caller should open database with readOnly=true
+      // (SQLITE_OPEN_READONLY flag)
+    });
+  });
+
+  describe('read-only mode enforcement', () => {
+    it('should enable caller to detect read-only mode requirement', async () => {
+      const adapter = createMockAdapter(mockState);
+      const manager1 = new WebLockManager(adapter);
+      const manager2 = new WebLockManager(adapter);
+
+      // Tab 1 acquires lock
+      const tab1Result = await manager1.acquireLock('shared-db');
+      expect(tab1Result.acquired).toBe(true);
+
+      // Reset tab ID for second manager
+      resetTabId();
+
+      // Tab 2 attempts to acquire
+      const tab2Result = await manager2.acquireLock('shared-db');
+
+      // Tab 2 should know it's in read-only mode
+      const isReadOnly = !tab2Result.acquired;
+      expect(isReadOnly).toBe(true);
+    });
+
+    it('should provide lock holder info for read-only tabs', async () => {
+      mockState.webLocksAvailable = false; // Use localStorage fallback for holder info
+
+      const adapter = createMockAdapter(mockState);
+      const manager1 = new WebLockManager(adapter);
+      const manager2 = new WebLockManager(adapter);
+
+      const tab1Id = getTabId();
+      await manager1.acquireLock('shared-db');
+
+      // Reset tab ID for second manager
+      resetTabId();
+
+      const tab2Result = await manager2.acquireLock('shared-db');
+
+      expect(tab2Result.acquired).toBe(false);
+      expect(tab2Result.holderId).toBe(tab1Id);
+    });
+  });
+
+  describe('heartbeat detection for single-writer guarantee', () => {
+    it('should detect stale locks for writer takeover', async () => {
+      mockState.webLocksAvailable = false; // Use localStorage fallback
+
+      const adapter = createMockAdapter(mockState);
+
+      // Simulate a stale heartbeat (crashed tab)
+      const key = `${_testing.LS_HEARTBEAT_PREFIX}stale-db`;
+      const staleTimestamp = Date.now() - _testing.HEARTBEAT_STALE_THRESHOLD - 1000;
+      mockState.localStorageData.set(
+        key,
+        JSON.stringify({ tabId: 'crashed-tab', timestamp: staleTimestamp })
+      );
+
+      const manager = new WebLockManager(adapter);
+
+      // Query should detect staleness
+      const status = await manager.queryLockStatus('stale-db');
+      expect(status.isStale).toBe(true);
+      expect(status.holderId).toBe('crashed-tab');
+
+      // Acquiring should succeed (takeover)
+      const result = await manager.acquireLock('stale-db');
+      expect(result.acquired).toBe(true);
+    });
+
+    it('should maintain heartbeat to prevent false staleness', async () => {
+      vi.useFakeTimers();
+      mockState.webLocksAvailable = false;
+
+      const adapter = createMockAdapter(mockState);
+      mockLocalStorage(mockState);
+      const manager = new WebLockManager(adapter);
+
+      await manager.acquireLock('active-db');
+
+      const key = `${_testing.LS_HEARTBEAT_PREFIX}active-db`;
+      const initialData = JSON.parse(mockState.localStorageData.get(key)!);
+      const initialTimestamp = initialData.timestamp;
+
+      // Advance time less than stale threshold
+      vi.advanceTimersByTime(2000);
+
+      const updatedData = JSON.parse(mockState.localStorageData.get(key)!);
+      expect(updatedData.timestamp).toBeGreaterThan(initialTimestamp);
+
+      // Lock should not be stale
+      const status = await manager.queryLockStatus('active-db');
+      expect(status.isStale).toBe(false);
+
+      await manager.releaseLock('active-db');
+      vi.useRealTimers();
+    });
+  });
+
+  describe('writer takeover after stale detection', () => {
+    it('should allow new writer after previous writer crashes', async () => {
+      mockState.webLocksAvailable = false;
+
+      const adapter = createMockAdapter(mockState);
+
+      // Simulate Tab A crashed (stale lock)
+      const key = `${_testing.LS_HEARTBEAT_PREFIX}crash-test-db`;
+      mockState.localStorageData.set(
+        key,
+        JSON.stringify({
+          tabId: 'tab-a-crashed',
+          timestamp: Date.now() - 10000, // 10s ago, well past 6s threshold
+        })
+      );
+
+      const managerB = new WebLockManager(adapter);
+
+      // Tab B should be able to take over
+      const result = await managerB.acquireLock('crash-test-db');
+
+      expect(result.acquired).toBe(true);
+      expect(managerB.hasLock('crash-test-db')).toBe(true);
+
+      // Verify new writer's heartbeat is active
+      const updatedData = JSON.parse(mockState.localStorageData.get(key)!);
+      expect(updatedData.tabId).toBe(getTabId());
+      expect(Date.now() - updatedData.timestamp).toBeLessThan(1000);
+    });
+  });
+
+  describe('lock release on database close', () => {
+    it('should release lock when releaseLock is called', async () => {
+      const adapter = createMockAdapter(mockState);
+      const manager = new WebLockManager(adapter);
+
+      await manager.acquireLock('close-test-db');
+      expect(manager.hasLock('close-test-db')).toBe(true);
+
+      await manager.releaseLock('close-test-db');
+      expect(manager.hasLock('close-test-db')).toBe(false);
+
+      // Another manager should now be able to acquire
+      const manager2 = new WebLockManager(adapter);
+      const result = await manager2.acquireLock('close-test-db');
+      expect(result.acquired).toBe(true);
+    });
+  });
+});

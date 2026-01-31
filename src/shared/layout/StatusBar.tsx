@@ -19,7 +19,11 @@ import {
   useLockHolder,
   usePersistenceStatus,
   usePersistenceError,
+  useDbsExceedingThreshold,
+  SIZE_THRESHOLD_OPFS,
+  SIZE_THRESHOLD_IDB,
 } from '../../store';
+import type { StorageMode } from '../../types';
 import { formatBytes } from '../format/bytes';
 
 /**
@@ -116,6 +120,25 @@ function ErrorIcon() {
   );
 }
 
+function WarningIcon() {
+  return (
+    <svg
+      className="w-3.5 h-3.5 text-amber-600"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+      />
+    </svg>
+  );
+}
+
 /**
  * StatusBar component displaying persistence and database status
  */
@@ -131,6 +154,7 @@ export function StatusBar({
   const lockHolder = useLockHolder();
   const persistenceStatus = usePersistenceStatus();
   const persistenceError = usePersistenceError();
+  const dbsExceedingThreshold = useDbsExceedingThreshold();
 
   // Error details popover state
   const [showErrorDetails, setShowErrorDetails] = useState(false);
@@ -220,6 +244,14 @@ export function StatusBar({
   // Table count from schema
   const tableCount = schema?.tables.length ?? 0;
 
+  // Check if current database exceeds size threshold
+  const showSizeWarning = activeDbId && dbsExceedingThreshold.has(activeDbId);
+  const getSizeWarningTooltip = (mode: StorageMode | null): string => {
+    const threshold = mode === 'opfs' ? SIZE_THRESHOLD_OPFS : SIZE_THRESHOLD_IDB;
+    const thresholdMB = Math.round(threshold / (1024 * 1024));
+    return `Database exceeds ${thresholdMB}MB ${mode === 'opfs' ? 'OPFS' : 'IndexedDB'} threshold. Consider archiving old data or running VACUUM.`;
+  };
+
   return (
     <footer
       className="h-7 bg-white border-t border-navy-200 flex items-center px-4 text-xs shrink-0"
@@ -281,6 +313,21 @@ export function StatusBar({
         >
           {storageModeDisplay}
         </span>
+
+        {/* Size warning badge */}
+        {showSizeWarning && (
+          <>
+            <div className="w-px h-4 bg-navy-200" />
+            <span
+              className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px] font-semibold"
+              title={getSizeWarningTooltip(storageMode)}
+              data-testid="size-warning-badge"
+            >
+              <WarningIcon />
+              Large DB
+            </span>
+          </>
+        )}
 
         {/* Lock status (when multi-tab) */}
         {showLockStatus && (

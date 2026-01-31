@@ -15,6 +15,7 @@ import type { WhereCondition, WhereClauseResult } from './WhereBuilder'
 import type { SortCondition } from './OrderByBuilder'
 import { generateWhereClause } from './WhereBuilder'
 import { generateOrderByClause } from './OrderByBuilder'
+import { quoteIdentifier } from '../../core/sql/helpers'
 
 /** Options for SQL generation */
 export interface GenerateSqlOptions {
@@ -44,41 +45,8 @@ export interface GenerateSqlResult {
   validationMessage?: string
 }
 
-/**
- * Quote an identifier (table or column name) if needed.
- * SQLite allows most identifiers without quoting, but we quote
- * those that contain special characters or are reserved keywords.
- */
-export function quoteIdentifier(name: string): string {
-  // Simple check: if it contains non-alphanumeric chars (except underscore), quote it
-  if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
-    // Check for SQLite reserved keywords (common ones)
-    const reserved = new Set([
-      'SELECT', 'FROM', 'WHERE', 'JOIN', 'LEFT', 'RIGHT', 'INNER', 'OUTER',
-      'CROSS', 'ON', 'AND', 'OR', 'NOT', 'NULL', 'TRUE', 'FALSE', 'ORDER',
-      'BY', 'ASC', 'DESC', 'LIMIT', 'OFFSET', 'GROUP', 'HAVING', 'UNION',
-      'EXCEPT', 'INTERSECT', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP',
-      'ALTER', 'TABLE', 'INDEX', 'VIEW', 'AS', 'DISTINCT', 'ALL', 'BETWEEN',
-      'LIKE', 'IN', 'IS', 'EXISTS', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END',
-      'KEY', 'PRIMARY', 'FOREIGN', 'REFERENCES', 'DEFAULT', 'CHECK', 'UNIQUE',
-      'CONSTRAINT', 'CASCADE', 'SET', 'ROWID', 'INTEGER', 'TEXT', 'REAL',
-      'BLOB', 'NUMERIC', 'COLLATE', 'AUTOINCREMENT', 'ABORT', 'ACTION',
-      'ADD', 'AFTER', 'ANALYZE', 'ATTACH', 'BEFORE', 'BEGIN', 'COLUMN',
-      'COMMIT', 'CONFLICT', 'DATABASE', 'DEFERRED', 'DEFERRABLE', 'DETACH',
-      'EACH', 'ESCAPE', 'EXPLAIN', 'FAIL', 'GLOB', 'IF', 'IGNORE', 'IMMEDIATE',
-      'INDEXED', 'INITIALLY', 'INSTEAD', 'MATCH', 'NATURAL', 'NO', 'OF',
-      'PLAN', 'PRAGMA', 'QUERY', 'RAISE', 'RECURSIVE', 'REINDEX', 'RELEASE',
-      'RENAME', 'REPLACE', 'RESTRICT', 'RETURNING', 'ROLLBACK', 'ROW',
-      'SAVEPOINT', 'TEMP', 'TEMPORARY', 'TRANSACTION', 'TRIGGER', 'VACUUM',
-      'VALUES', 'VIRTUAL', 'WITH', 'WITHOUT',
-    ])
-    if (!reserved.has(name.toUpperCase())) {
-      return name
-    }
-  }
-  // Quote with double quotes, escaping any internal double quotes
-  return `"${name.replace(/"/g, '""')}"`
-}
+// Re-export quoteIdentifier for backwards compatibility
+export { quoteIdentifier }
 
 /**
  * Generate a SELECT statement from query builder state.

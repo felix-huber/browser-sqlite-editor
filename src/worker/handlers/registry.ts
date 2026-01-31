@@ -2,11 +2,12 @@
  * Registry and database lifecycle handlers.
  */
 
-import type { WorkerRequest, WorkerResponse, WorkerErrorCode } from '../../types';
+import type { WorkerRequest, WorkerResponse, WorkerErrorCode, StorageMode } from '../../types';
 import { getEngine } from '../../core/engine/db-engine';
-import { OPFS_VFS_NAME } from '../../core/engine/opfs-vfs';
+import { OPFS_VFS_NAME, getOPFSDatabaseSize } from '../../core/engine/opfs-vfs';
 import { getRegistry, toFilename } from '../db-registry';
 import { resolveDbPath } from '../storage';
+import { getIdbDbSize } from '../idb-storage';
 
 export type PostResponse = (response: WorkerResponse, requestId?: number) => void;
 
@@ -201,6 +202,50 @@ export async function handleGetRegistryRequest(
     postResponse({
       type: 'error',
       message: `Failed to get registry: ${message}`,
+      code: 'UNKNOWN',
+    }, id);
+  }
+}
+
+export async function handleGetDbSizeRequest(
+  request: Extract<WorkerRequest, { type: 'getDbSize' }>,
+  id: number,
+  postResponse: PostResponse
+): Promise<void> {
+  try {
+    const registry = getRegistry();
+    if (!registry.isInitialized()) {
+      await registry.init();
+    }
+    const entry = registry.getDatabaseByName(request.dbName);
+    if (!entry) {
+      postResponse({
+        type: 'error',
+        message: `Database "${request.dbName}" not found`,
+        code: 'NOT_FOUND',
+      }, id);
+      return;
+    }
+
+    const storageMode: StorageMode = entry.storageType ?? registry.getStorageMode();
+    let sizeBytes = 0;
+
+    if (storageMode === 'opfs') {
+      sizeBytes = await getOPFSDatabaseSize(toFilename(entry.name)) ?? 0;
+    } else {
+      sizeBytes = await getIdbDbSize(entry.name);
+    }
+
+    postResponse({
+      type: 'dbSizeResult',
+      sizeBytes,
+      storageMode,
+    }, id);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    postResponse({
+      type: 'error',
+      message: `Failed to get database size: ${message}`,
       code: 'UNKNOWN',
     }, id);
   }

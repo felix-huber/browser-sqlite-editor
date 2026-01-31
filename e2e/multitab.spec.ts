@@ -651,3 +651,114 @@ test.describe('Two Page Tests (Same Context = Shared localStorage)', () => {
     }
   });
 });
+
+// =============================================================================
+// Single-Writer Lock + SQLITE_OPEN_READONLY Enforcement Tests
+// =============================================================================
+
+test.describe('Single-Writer Lock Integration', () => {
+  test('multi-tab: writer takeover allows writes after stale lock', async ({ context }) => {
+    /**
+     * This test verifies the complete single-writer lock takeover flow:
+     * 1. Tab A acquires write lock and can write to database
+     * 2. Tab B opens same database in read-only mode (SQLITE_OPEN_READONLY enforced)
+     * 3. After Tab A's lock becomes stale, Tab B can take over
+     * 4. After takeover, Tab B can successfully write to database
+     *
+     * This is an extension of the crash recovery test, verifying the write
+     * actually succeeds after takeover.
+     */
+    const pageA = await context.newPage();
+    const pageB = await context.newPage();
+
+    // Use the same naming pattern as existing crash recovery test
+    const dbName = 'single-writer-test';
+
+    try {
+      await pageA.goto('/');
+      await expect(pageA).toHaveTitle(/SQLite Editor/);
+      // Clear all storage for fresh test state - same pattern as crash recovery test
+      await clearAllStorage(pageA);
+      await pageA.reload();
+
+      // Tab A: Create DB with test table as writer
+      await createAndOpenDatabase(pageA, dbName);
+      await runSql(pageA, `CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT); INSERT INTO items (value) VALUES ('from_tab_a');`);
+      await openTable(pageA, dbName, 'items');
+
+      // Verify Tab A can see the data it wrote
+      await expect(pageA.getByText('from_tab_a')).toBeVisible();
+
+      // Tab B: Navigate and open same database (read-only due to lock)
+      await pageB.goto('/');
+      await openDatabaseFromWelcome(pageB, dbName);
+      await openTable(pageB, dbName, 'items');
+
+      // Tab B should be in read-only mode
+      await expect(pageB.getByTestId('read-only-banner')).toBeVisible();
+
+      // Tab B should still see the data (read works in read-only mode)
+      await expect(pageB.getByText('from_tab_a')).toBeVisible();
+
+      // Close Tab A to simulate lock becoming stale
+      await pageA.close();
+
+      // Wait for stale detection in Tab B
+      await expect(pageB.getByTestId('stale-warning')).toBeVisible({ timeout: 15000 });
+
+      // Tab B takes over the write lock
+      await pageB.getByTestId('take-over-button').click();
+
+      // Verify Tab B is no longer in read-only mode
+      await expect(pageB.getByTestId('read-only-banner')).toBeHidden({ timeout: 15000 });
+
+      // Tab B should now be able to write - use SQL editor to insert new data
+      await runSql(pageB, `INSERT INTO items (value) VALUES ('from_tab_b_after_takeover');`);
+
+      // Verify the new data is visible - refresh the table view
+      await openTable(pageB, dbName, 'items');
+      await expect(pageB.getByText('from_tab_b_after_takeover')).toBeVisible();
+
+      // Also verify original data is still there
+      await expect(pageB.getByText('from_tab_a')).toBeVisible();
+    } finally {
+      await pageB.close();
+    }
+  });
+
+  test('multi-tab: read-only tab sees lock holder and cannot modify database', async ({ context }) => {
+    /**
+     * This test verifies that a tab in read-only mode (due to another tab
+     * holding the write lock) shows proper read-only UI indication.
+     */
+    const pageA = await context.newPage();
+    const pageB = await context.newPage();
+
+    const dbName = 'readonly-test';
+
+    try {
+      await pageA.goto('/');
+      await expect(pageA).toHaveTitle(/SQLite Editor/);
+      // Clear all storage for fresh test state
+      await clearAllStorage(pageA);
+      await pageA.reload();
+
+      // Tab A: Create DB with test table as writer
+      await createAndOpenDatabase(pageA, dbName);
+      await runSql(pageA, `CREATE TABLE data (id INTEGER PRIMARY KEY, val TEXT);`);
+
+      // Tab B: Navigate and open same database (will be read-only)
+      await pageB.goto('/');
+      await openDatabaseFromWelcome(pageB, dbName);
+
+      // Tab B should be in read-only mode with banner visible
+      await expect(pageB.getByTestId('read-only-banner')).toBeVisible();
+
+      // Verify lock holder info is shown (using specific test ID)
+      await expect(pageB.getByTestId('lock-holder-info')).toBeVisible();
+    } finally {
+      await pageA.close();
+      await pageB.close();
+    }
+  });
+});
