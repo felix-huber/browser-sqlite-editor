@@ -1,16 +1,16 @@
 {
-  "runId": "2026-01-31T12:44:52+01:00",
-  "updatedAt": "2026-01-31T12:51:36+01:00",
+  "runId": "2026-01-31T12:51:42+01:00",
+  "updatedAt": "2026-01-31T12:59:11+01:00",
   "mode": {
     "loop": false,
     "beads": true
   },
   "task": {
-    "id": "bd-149",
-    "subject": "P5-01: Virtual scrolling grid",
+    "id": "bd-qdl",
+    "subject": "P4-02: FK creation validation",
     "status": "completed",
     "phase": "review",
-    "attempt": 1
+    "attempt": 2
   },
   "tools": {
     "implementer": "claude",

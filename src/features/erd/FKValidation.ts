@@ -215,6 +215,19 @@ export function parseDataIntegrityResult(input: DataIntegrityInput): DataIntegri
 // =============================================================================
 
 /**
+ * Sanitize a name for use as part of an identifier (e.g., index name).
+ * Replaces special characters with underscores.
+ */
+function sanitizeForIdentifier(name: string): string {
+  // Replace any non-alphanumeric characters (except underscore) with underscore
+  // Also handle consecutive underscores and leading/trailing underscores
+  return name
+    .replace(/[^a-zA-Z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+}
+
+/**
  * Generate DDL to create a UNIQUE index on a column.
  */
 export function generateCreateUniqueIndexDDL(
@@ -224,8 +237,10 @@ export function generateCreateUniqueIndexDDL(
   const tableEsc = escapeIdentifier(tableName)
   const colEsc = escapeIdentifier(columnName)
 
-  // Generate a deterministic index name
-  const indexName = `idx_${tableName}_${columnName}_unique`
+  // Generate a deterministic index name with sanitized table/column names
+  const sanitizedTable = sanitizeForIdentifier(tableName)
+  const sanitizedColumn = sanitizeForIdentifier(columnName)
+  const indexName = `idx_${sanitizedTable}_${sanitizedColumn}_unique`
   const indexNameEsc = escapeIdentifier(indexName)
 
   return `CREATE UNIQUE INDEX ${indexNameEsc} ON ${tableEsc} (${colEsc})`

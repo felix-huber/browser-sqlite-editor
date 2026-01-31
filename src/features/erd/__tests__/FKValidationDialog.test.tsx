@@ -380,6 +380,32 @@ describe('FKValidationDialog', () => {
       fireEvent.click(screen.getByTestId('cancel-validation-button'))
       expect(onCancelValidation).toHaveBeenCalled()
     })
+
+    it('shows large table progress indicator when isLargeTable is true', () => {
+      render(
+        <FKValidationDialog
+          {...defaultProps}
+          isValidating={true}
+          isLargeTable={true}
+        />
+      )
+
+      expect(screen.getByTestId('validation-loading')).toBeInTheDocument()
+      expect(screen.getByText('Validating (large table)...')).toBeInTheDocument()
+    })
+
+    it('shows standard progress indicator when isLargeTable is false', () => {
+      render(
+        <FKValidationDialog
+          {...defaultProps}
+          isValidating={true}
+          isLargeTable={false}
+        />
+      )
+
+      expect(screen.getByTestId('validation-loading')).toBeInTheDocument()
+      expect(screen.getByText('Validating foreign key...')).toBeInTheDocument()
+    })
   })
 
   describe('isCreatingIndex state', () => {

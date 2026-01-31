@@ -24,6 +24,7 @@ import {
   type TableInfo,
   type ColumnInfo,
 } from './FKValidationDialog'
+import { useFKValidation } from './hooks/useFKValidation'
 import { FKEdgeContextMenu } from './FKEdgeContextMenu'
 import { FKEditDialog } from './FKEditDialog'
 import { FKDeleteDialog } from './FKDeleteDialog'
@@ -139,8 +140,17 @@ export function ERDCanvas({
   const [showFKDialog, setShowFKDialog] = useState(false)
   const [pendingFK, setPendingFK] = useState<PendingFKInfo | null>(null)
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
-  const [isValidating, setIsValidating] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
+  const [isCreatingIndex, setIsCreatingIndex] = useState(false)
+
+  // Use the async FK validation hook
+  const fkValidation = useFKValidation({
+    childTable: pendingFK?.childTable ?? '',
+    childColumn: pendingFK?.childColumn ?? '',
+    parentTable: pendingFK?.parentTable ?? '',
+    parentColumn: pendingFK?.parentColumn ?? '',
+    isActive: showFKDialog && pendingFK !== null,
+  })
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({
@@ -196,12 +206,11 @@ export function ERDCanvas({
         parentColumn,
       }
 
-      // Run validation
-      setIsValidating(true)
+      // Set pending FK and show dialog - hook will handle async validation
       setPendingFK(fkInfo)
       setShowFKDialog(true)
 
-      // Build table info for validation
+      // Build table info for synchronous (legacy) validation
       const childTableInfo: TableInfo = {
         name: childTable,
         columns: (childNode.data.columns || []).map((c): ColumnInfo => ({
@@ -224,7 +233,7 @@ export function ERDCanvas({
         })),
       }
 
-      // Validate FK
+      // Run synchronous (legacy) validation for immediate errors like DUPLICATE_FK
       const errors = validateForeignKey(
         fkInfo,
         childTableInfo,
@@ -233,7 +242,6 @@ export function ERDCanvas({
       )
 
       setValidationErrors(errors)
-      setIsValidating(false)
     },
     [isReadOnly, nodes, existingFKs, onShowToast]
   )
@@ -303,12 +311,25 @@ export function ERDCanvas({
    * Handle dialog close
    */
   const handleDialogClose = useCallback(() => {
-    if (!isCreating) {
+    if (!isCreating && !isCreatingIndex) {
       setShowFKDialog(false)
       setPendingFK(null)
       setValidationErrors([])
     }
-  }, [isCreating])
+  }, [isCreating, isCreatingIndex])
+
+  /**
+   * Handle creating unique index from validation dialog
+   */
+  const handleCreateUniqueIndex = useCallback(async () => {
+    if (!fkValidation.createUniqueIndex) return
+    setIsCreatingIndex(true)
+    try {
+      await fkValidation.createUniqueIndex()
+    } finally {
+      setIsCreatingIndex(false)
+    }
+  }, [fkValidation])
 
   /**
    * Get FK data from edge ID
@@ -663,10 +684,17 @@ export function ERDCanvas({
         isOpen={showFKDialog}
         pendingFK={pendingFK}
         errors={validationErrors}
-        isValidating={isValidating}
+        isValidating={fkValidation.isValidating}
         isCreating={isCreating}
         onClose={handleDialogClose}
         onCreate={handleCreateFK}
+        uniquenessResult={fkValidation.uniquenessResult}
+        integrityResult={fkValidation.integrityResult}
+        createUniqueIndexDDL={fkValidation.createUniqueIndexDDL}
+        onCreateUniqueIndex={handleCreateUniqueIndex}
+        isCreatingIndex={isCreatingIndex}
+        onCancelValidation={fkValidation.cancel}
+        isLargeTable={fkValidation.isLargeTable}
       />
 
       {/* FK Context Menu */}

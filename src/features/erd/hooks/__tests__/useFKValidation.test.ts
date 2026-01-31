@@ -483,4 +483,93 @@ describe('useFKValidation', () => {
       expect(result.current.error).toBe('Database error')
     })
   })
+
+  describe('isLargeTable behavior', () => {
+    it('sets isLargeTable to true when child table has more than 10000 rows', async () => {
+      mockQuery
+        // Row count query for isLargeTable check - returns > 10000
+        .mockResolvedValueOnce({
+          columns: ['COUNT(*)'],
+          rows: [[15000]],
+        })
+        // Violation count query
+        .mockResolvedValueOnce({
+          columns: ['violation_count'],
+          rows: [[0]],
+        })
+
+      const { result, rerender } = renderHook(
+        (props: FKValidationHookInput) => useFKValidation(props),
+        { initialProps: defaultInput }
+      )
+
+      rerender({ ...defaultInput, isActive: true })
+
+      await waitFor(() => {
+        expect(result.current.isValidating).toBe(false)
+      })
+
+      expect(result.current.isLargeTable).toBe(true)
+    })
+
+    it('keeps isLargeTable as false when child table has 10000 or fewer rows', async () => {
+      mockQuery
+        // Row count query for isLargeTable check - returns exactly 10000
+        .mockResolvedValueOnce({
+          columns: ['COUNT(*)'],
+          rows: [[10000]],
+        })
+        // Violation count query
+        .mockResolvedValueOnce({
+          columns: ['violation_count'],
+          rows: [[0]],
+        })
+
+      const { result, rerender } = renderHook(
+        (props: FKValidationHookInput) => useFKValidation(props),
+        { initialProps: defaultInput }
+      )
+
+      rerender({ ...defaultInput, isActive: true })
+
+      await waitFor(() => {
+        expect(result.current.isValidating).toBe(false)
+      })
+
+      expect(result.current.isLargeTable).toBe(false)
+    })
+
+    it('resets isLargeTable when validation becomes inactive', async () => {
+      mockQuery
+        // Row count query for isLargeTable check
+        .mockResolvedValueOnce({
+          columns: ['COUNT(*)'],
+          rows: [[20000]],
+        })
+        // Violation count query
+        .mockResolvedValueOnce({
+          columns: ['violation_count'],
+          rows: [[0]],
+        })
+
+      const { result, rerender } = renderHook(
+        (props: FKValidationHookInput) => useFKValidation(props),
+        { initialProps: defaultInput }
+      )
+
+      rerender({ ...defaultInput, isActive: true })
+
+      await waitFor(() => {
+        expect(result.current.isValidating).toBe(false)
+        expect(result.current.isLargeTable).toBe(true)
+      })
+
+      // Deactivate validation
+      rerender({ ...defaultInput, isActive: false })
+
+      await waitFor(() => {
+        expect(result.current.isLargeTable).toBe(false)
+      })
+    })
+  })
 })
