@@ -41,6 +41,7 @@ CREATE TABLE generated_table (
 async function setupEmptyDb(page: Page) {
   const dbName = createUniqueDbName();
   await createAndOpenDatabase(page, dbName);
+  await waitForReady(page);
   return dbName;
 }
 
@@ -48,6 +49,7 @@ async function setupDbWithTables(page: Page) {
   const dbName = createUniqueDbName();
   await createAndOpenDatabase(page, dbName);
   await runSql(page, BASE_SQL);
+  await waitForReady(page);
   return dbName;
 }
 
