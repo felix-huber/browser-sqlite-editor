@@ -1268,7 +1268,9 @@ run_task_verification() {
 
   log_info "Running task-specific verification..."
   while IFS= read -r cmd; do
-    cmd=$(echo "$cmd" | xargs)
+    # Trim leading/trailing whitespace without stripping quotes (xargs strips quotes!)
+    cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+    cmd="${cmd%"${cmd##*[![:space:]]}"}"
     [[ -z "$cmd" ]] && continue
 
     # Skip lines that don't look like commands
@@ -1279,7 +1281,8 @@ run_task_verification() {
 
     # Fix common test framework CLI syntax errors (Pattern 7)
     # Vitest uses -t not --grep for test filtering
-    if [[ "$cmd" == *"npm"*"test"*"--grep"* ]] && [[ -f "package.json" ]] && grep -q '"vitest"' package.json 2>/dev/null; then
+    # BUT: Playwright E2E tests use --grep (not -t), so skip E2E commands
+    if [[ "$cmd" == *"npm"*"test"*"--grep"* ]] && [[ "$cmd" != *"e2e"* ]] && [[ -f "package.json" ]] && grep -q '"vitest"' package.json 2>/dev/null; then
       local fixed_cmd="${cmd//--grep/-t}"
       log_warn "Auto-fixing Vitest syntax: --grep → -t"
       cmd="$fixed_cmd"

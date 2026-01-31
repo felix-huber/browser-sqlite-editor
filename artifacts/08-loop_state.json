@@ -1,13 +1,13 @@
 {
-  "runId": "2026-01-31T21:12:53+01:00",
-  "updatedAt": "2026-01-31T21:12:53+01:00",
+  "runId": "2026-01-31T22:00:47+01:00",
+  "updatedAt": "2026-01-31T22:00:47+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-1jc",
-    "subject": "P8-02a: E2E fill — Table designer rebuild safety",
+    "id": "bd-2zh",
+    "subject": "P8-02b: E2E fill — Table designer dependency + schema features",
     "status": "running",
     "phase": "implement",
     "attempt": 1

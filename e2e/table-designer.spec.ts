@@ -13,10 +13,65 @@ import {
  * E2E Tests for Table Designer
  */
 
+/**
+ * Clear all storage (OPFS and IndexedDB) to prevent resource exhaustion.
+ * This is critical for CI where tests run sequentially and OPFS handles accumulate.
+ *
+ * IMPORTANT: After clearing, we recreate the required OPFS directory structure
+ * so the worker can initialize properly.
+ */
+async function clearAllStorage(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    // Clear localStorage
+    localStorage.clear();
+
+    // Clear IndexedDB
+    const deleteIdb = (name: string): Promise<void> => {
+      return new Promise((resolve) => {
+        const req = indexedDB.deleteDatabase(name);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+        req.onblocked = () => resolve();
+      });
+    };
+
+    const knownDbs = ['sqlite-editor-registry', 'idb-sqlite'];
+    for (const name of knownDbs) {
+      await deleteIdb(name);
+    }
+
+    // Clear OPFS and recreate directory structure
+    try {
+      if (navigator.storage?.getDirectory) {
+        const root = await navigator.storage.getDirectory();
+        try {
+          await root.removeEntry('sqlite-editor', { recursive: true });
+        } catch {
+          // ignore missing dir
+        }
+        try {
+          await root.removeEntry('wasm-sqlite-editor', { recursive: true });
+        } catch {
+          // ignore missing dir
+        }
+        // Recreate the required directory structure for the worker
+        const appDir = await root.getDirectoryHandle('wasm-sqlite-editor', { create: true });
+        await appDir.getDirectoryHandle('databases', { create: true });
+      }
+    } catch {
+      // OPFS not available
+    }
+  });
+}
+
 const DB_PREFIX = 'table-designer-db';
 
+// Counter for unique names per test run
+let dbCounter = 0;
+
 function createUniqueDbName() {
-  return `${DB_PREFIX}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  dbCounter++;
+  return `${DB_PREFIX}-${dbCounter}`;
 }
 
 const BASE_SQL = `
@@ -169,6 +224,9 @@ test.describe('Table Designer - Create Mode', () => {
 test.describe('Table Designer - Edit Mode', () => {
   let dbName = '';
   test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await clearAllStorage(page);
+    await page.reload();
     dbName = await setupDbWithTables(page);
   });
 
@@ -252,6 +310,9 @@ test.describe('Table Designer - Edit Mode', () => {
 
 test.describe('Table Designer - Read Only Mode', () => {
   test('read-only mode blocks edits', async ({ page }) => {
+    await page.goto('/');
+    await clearAllStorage(page);
+    await page.reload();
     const dbName = await setupDbWithTables(page);
     const reader = await page.context().newPage();
     await reader.goto('/');
@@ -268,13 +329,17 @@ test.describe('Table Designer - Read Only Mode', () => {
 // =============================================================================
 
 test.describe('Table Designer Integration Checks', () => {
-  test('welcome screen visible on load', async ({ page }) => {
+  test.beforeEach(async ({ page }) => {
     await page.goto('/');
+    await clearAllStorage(page);
+    await page.reload();
+  });
+
+  test('welcome screen visible on load', async ({ page }) => {
     await expect(page.getByTestId('welcome-screen')).toBeVisible();
   });
 
   test('status bar ready state', async ({ page }) => {
-    await page.goto('/');
     await waitForReady(page);
   });
 });

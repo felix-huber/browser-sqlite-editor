@@ -16,6 +16,30 @@ Tracking structural issues observed during ralph.sh execution that may need code
 - Lighthouse: ❌ Still failing (no .lighthouseci/ generated)
 - Build/Perf: ✅ PASSING
 
+### Issue 21: xargs Strips Quotes in Verification Commands
+- **Discovered**: 2026-01-31 22:00
+- **Root Cause**: `run_task_verification` uses `xargs` to trim whitespace (line 1271)
+  - `cmd=$(echo "$cmd" | xargs)` removes quotes from patterns
+  - Causes `--grep 'E2E|FOO'` to become `--grep E2E|FOO`
+  - Shell interprets `|` as pipe, not regex OR
+- **Fix Applied**: Replaced xargs with pure bash whitespace trimming:
+  ```bash
+  cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+  cmd="${cmd%"${cmd##*[![:space:]]}"}"
+  ```
+- **Status**: 🟢 Fixed
+
+### Issue 22: E2E Tests Incorrectly Get Vitest --grep→-t Conversion
+- **Discovered**: 2026-01-31 22:00
+- **Root Cause**: Pattern 7 fix converts `--grep` to `-t` for all tests
+  - Vitest uses `-t`, Playwright uses `--grep`
+  - E2E tests use Playwright, so `--grep` should NOT be converted
+- **Fix Applied**: Added condition to skip conversion for E2E:
+  ```bash
+  if [[ "$cmd" != *"e2e"* ]]
+  ```
+- **Status**: 🟢 Fixed
+
 ### Issue 20: PTY Buffering Prevents Output Capture
 - **Discovered**: 2026-01-31 21:05
 - **Root Cause**: **CONFIRMED** - Claude CLI output isn't flushing through `timeout | tee` pipeline
