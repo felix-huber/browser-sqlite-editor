@@ -62,7 +62,7 @@ done
 unset _args
 
 cleanup_lock() { rm -f "$RALPH_LOCK" 2>/dev/null; }
-handle_signal() { cleanup_lock; exit 130; }  # 130 = 128 + SIGINT(2)
+handle_signal() { exit 130; }  # 130 = 128 + SIGINT(2); EXIT trap handles cleanup
 acquire_lock() {
   if [[ -f "$RALPH_LOCK" ]]; then
     local lock_pid
@@ -1069,58 +1069,14 @@ extract_section() {
   ' | sed -e 's/^[ -]*//'
 }
 
-# Build task JSON from bead file (avoids variable capture issues with escape sequences)
-build_task_json_from_bead_file() {
-  local bead_file="$1"
-  local id
-  local title
-  local desc
-  local labels_json
-  id=$(jq -r '.id' "$bead_file")
-  title=$(jq -r '.title' "$bead_file")
-  # Use a temp file for description to preserve escape sequences
-  local desc_file=$(mktemp)
-  jq -r '.description // ""' "$bead_file" > "$desc_file"
-  desc=$(cat "$desc_file")
-  rm -f "$desc_file"
-  labels_json=$(jq -c '.labels // [] | map(ascii_downcase)' "$bead_file")
-
-  local verification
-  local llm_verification
-  local allowed_paths
-  verification=$(extract_section "$desc" '^(Verification:|VERIFICATION:)')
-  llm_verification=$(extract_section "$desc" '^(LLM Verification:|LLM VERIFY:|Subjective Checks:|SUBJECTIVE CHECKS:)')
-  allowed_paths=$(extract_section "$desc" '^(Allowed Paths:|ALLOWED PATHS:|Files to modify:|FILES TO MODIFY:)')
-
-  jq -n \
-    --arg id "$id" \
-    --arg subject "$title" \
-    --arg description "$desc" \
-    --arg verification "$verification" \
-    --arg llmVerification "$llm_verification" \
-    --arg allowedPaths "$allowed_paths" \
-    --argjson tags "$labels_json" \
-    '{
-      id: $id,
-      subject: $subject,
-      description: $description,
-      tags: $tags,
-      allowedPaths: ($allowedPaths | split("\n") | map(select(length>0))),
-      verification: ($verification | split("\n") | map(select(length>0))),
-      llmVerification: ($llmVerification | split("\n") | map(select(length>0)))
-    }'
-}
-
 build_task_json_from_bead() {
   local bead_json="$1"
-  local id
-  local title
-  local desc
-  local labels_json
-  id=$(echo "$bead_json" | jq -r '.id')
-  title=$(echo "$bead_json" | jq -r '.title')
-  desc=$(echo "$bead_json" | jq -r '.description // ""')
-  labels_json=$(echo "$bead_json" | jq -c '.labels // [] | map(ascii_downcase)')
+  local id title desc labels_json
+  # Use here-strings (<<<) instead of echo to avoid escape sequence interpretation (Issue 18)
+  id=$(jq -r '.id' <<< "$bead_json")
+  title=$(jq -r '.title' <<< "$bead_json")
+  desc=$(jq -r '.description // ""' <<< "$bead_json")
+  labels_json=$(jq -c '.labels // [] | map(ascii_downcase)' <<< "$bead_json")
 
   local verification
   local llm_verification
@@ -1268,7 +1224,7 @@ run_task_verification() {
 
   log_info "Running task-specific verification..."
   while IFS= read -r cmd; do
-    # Trim leading/trailing whitespace without stripping quotes (xargs strips quotes!)
+    # Trim whitespace without xargs (xargs strips quotes - Issue 21)
     cmd="${cmd#"${cmd%%[![:space:]]*}"}"
     cmd="${cmd%"${cmd##*[![:space:]]}"}"
     [[ -z "$cmd" ]] && continue
@@ -1281,8 +1237,8 @@ run_task_verification() {
 
     # Fix common test framework CLI syntax errors (Pattern 7)
     # Vitest uses -t not --grep for test filtering
-    # BUT: Playwright E2E tests use --grep (not -t), so skip E2E commands
-    if [[ "$cmd" == *"npm"*"test"*"--grep"* ]] && [[ "$cmd" != *"e2e"* ]] && [[ -f "package.json" ]] && grep -q '"vitest"' package.json 2>/dev/null; then
+    # BUT: Skip for E2E tests - Playwright uses --grep correctly (Issue 22)
+    if [[ "$cmd" != *"e2e"* ]] && [[ "$cmd" == *"npm"*"test"*"--grep"* ]] && [[ -f "package.json" ]] && grep -q '"vitest"' package.json 2>/dev/null; then
       local fixed_cmd="${cmd//--grep/-t}"
       log_warn "Auto-fixing Vitest syntax: --grep → -t"
       cmd="$fixed_cmd"
@@ -1393,13 +1349,17 @@ $diff_content"
 # Execute a command with optional timeout, capturing output and exit code correctly
 # Usage: _exec_with_timeout <tmp_output_file> <log_file_or_empty> <cmd...>
 # Sets global _EXEC_RC with the exit code
+#
+# Issue 20 fix: Avoid | tee which causes PTY buffering issues with Claude CLI.
+# Write directly to file, then display. Use `tail -f log_file` in another terminal
+# for real-time monitoring.
 _exec_with_timeout() {
   local tmp_output="$1"
   local log_file="$2"
   shift 2
   local cmd=("$@")
 
-  # Detect timeout command (cached for performance)
+  # Detect timeout command
   local timeout_cmd=""
   if command -v timeout >/dev/null 2>&1; then
     timeout_cmd="timeout"
@@ -1407,23 +1367,20 @@ _exec_with_timeout() {
     timeout_cmd="gtimeout"
   fi
 
-  # Build and execute the pipeline
-  # NOTE: Issue #20 - tee pipeline may have buffering issues with some CLIs
-  # If output doesn't appear, check if CLI buffers output in non-TTY mode
+  # Execute with direct file redirection (avoids PTY buffering issues)
+  # Output goes to tmp_output, which is later copied to log_file
   if [[ -n "$timeout_cmd" ]]; then
-    if [[ -n "$log_file" ]]; then
-      "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" 2>&1 | tee "$tmp_output" | tee -a "$log_file"
-    else
-      "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" 2>&1 | tee "$tmp_output"
-    fi
+    "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" > "$tmp_output" 2>&1
   else
-    if [[ -n "$log_file" ]]; then
-      "${cmd[@]}" 2>&1 | tee "$tmp_output" | tee -a "$log_file"
-    else
-      "${cmd[@]}" 2>&1 | tee "$tmp_output"
-    fi
+    "${cmd[@]}" > "$tmp_output" 2>&1
   fi
-  _EXEC_RC=${PIPESTATUS[0]}
+  _EXEC_RC=$?
+
+  # Append to log file if specified
+  [[ -n "$log_file" ]] && cat "$tmp_output" >> "$log_file"
+
+  # Always show output to console
+  cat "$tmp_output"
 }
 
 # Run a task with the specified tool
@@ -2051,56 +2008,37 @@ get_next_task_graph() {
 get_next_task_beads() {
   # br ready --json returns tasks with no open blockers
   # Format: [{"id": "bd-a1b2", "title": "...", "priority": 1, "type": "task", ...}]
-  # Note: br may output INFO lines to stdout (e.g. "2026-01-31T... INFO ..."),
-  # so we filter to skip lines starting with timestamps.
-  # IMPORTANT: Don't capture JSON to a bash variable - it breaks escape sequences.
-  # Use temp files instead to preserve exact JSON formatting.
-  local tmp_ready=$(mktemp)
-  br ready --json 2>/dev/null | sed '/^[0-9]/d' > "$tmp_ready" || echo "[]" > "$tmp_ready"
-
-  local count
-  count=$(jq 'length' "$tmp_ready" 2>/dev/null || echo "0")
-  if [[ "$count" -eq 0 ]]; then
-    rm -f "$tmp_ready"
+  local ready_tasks
+  ready_tasks=$(br ready --json 2>/dev/null || echo "[]")
+  
+  if [[ "$ready_tasks" == "[]" || -z "$ready_tasks" ]]; then
     echo ""
     return
   fi
-
+  
   # Get the first ready task and convert to our format
-  local tmp_bead=$(mktemp)
-  jq -c '.[0]' "$tmp_ready" > "$tmp_bead" 2>/dev/null
-  rm -f "$tmp_ready"
-
-  if [[ ! -s "$tmp_bead" ]] || grep -q '^null$' "$tmp_bead"; then
-    rm -f "$tmp_bead"
+  local bead_json
+  bead_json=$(jq -c '.[0]' <<< "$ready_tasks")
+  if [[ -z "$bead_json" || "$bead_json" == "null" ]]; then
     echo ""
     return
   fi
-
-  build_task_json_from_bead_file "$tmp_bead"
-  rm -f "$tmp_bead"
+  build_task_json_from_bead "$bead_json"
 }
 
 # Get task by ID
 get_task_by_id() {
   local task_id="$1"
   if [[ "$USE_BEADS" == "true" ]]; then
-    # Use temp file to avoid variable capture issues with escape sequences
-    local tmp_raw=$(mktemp)
-    br show "$task_id" --json 2>/dev/null | sed '/^[0-9]/d' > "$tmp_raw" || echo "[]" > "$tmp_raw"
-
-    # br show returns an array, extract first element
-    local tmp_bead=$(mktemp)
-    jq -c '.[0]' "$tmp_raw" > "$tmp_bead" 2>/dev/null
-    rm -f "$tmp_raw"
-
-    if [[ ! -s "$tmp_bead" ]] || grep -q '^null$' "$tmp_bead"; then
-      rm -f "$tmp_bead"
+    local bead_json
+    bead_json=$(br show "$task_id" --json 2>/dev/null || echo "")
+    if [[ -z "$bead_json" || "$bead_json" == "null" ]]; then
       echo ""
       return
     fi
-    build_task_json_from_bead_file "$tmp_bead"
-    rm -f "$tmp_bead"
+    # Handle both array and object responses (Pattern 14 fix)
+    bead_json=$(jq 'if type == "array" then .[0] else . end' <<< "$bead_json")
+    build_task_json_from_bead "$bead_json"
   else
     jq -r --arg id "$task_id" '.tasks[] | select(.id == $id)' "$TASK_GRAPH"
   fi
@@ -2278,13 +2216,11 @@ check_task_stalled() {
   # Check 2: Log file heartbeat (no output for 5+ minutes = likely stuck)
   local log_file="$LOGS_DIR/${task_id}.log"
   if [[ -f "$log_file" ]]; then
+    # Get mtime: try macOS format, then Linux, fallback to now
     local log_mtime
-    # macOS uses -f %m, Linux uses -c %Y
-    if stat -f %m "$log_file" >/dev/null 2>&1; then
-      log_mtime=$(stat -f %m "$log_file")
-    else
-      log_mtime=$(stat -c %Y "$log_file" 2>/dev/null || echo "$now")
-    fi
+    log_mtime=$(stat -f %m "$log_file" 2>/dev/null) || \
+    log_mtime=$(stat -c %Y "$log_file" 2>/dev/null) || \
+    log_mtime=$now
     local log_age_minutes=$(( (now - log_mtime) / 60 ))
     if [[ "$log_age_minutes" -ge 5 ]] && [[ "$elapsed_minutes" -ge 5 ]]; then
       log_warn "Task $task_id log has no output for ${log_age_minutes}m (heartbeat check)"
@@ -2550,61 +2486,52 @@ get_cmd() {
         ;;
     esac
   elif [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]] || [[ -f "requirements.txt" ]]; then
-    # Python - use single tool per type, let verify_build handle "not found"
+    # Python
     case "$cmd_type" in
-      lint) echo "ruff check ." ;;
-      test) echo "pytest -v" ;;
-      typecheck) echo "mypy ." ;;
-      build) echo "pip install -e ." ;;
+      lint) echo "ruff check ."; return 0 ;;
+      test) echo "pytest -v"; return 0 ;;
+      typecheck) echo "mypy ."; return 0 ;;
+      build) echo "pip install -e ."; return 0 ;;
       dev)
-        # Check which runner is available (no runtime fallback chains)
         if [[ -f "app.py" ]] || [[ -f "application.py" ]]; then
-          echo "flask run --debug"
+          echo "flask run --debug"; return 0
         elif command -v uvicorn &>/dev/null && [[ -f "main.py" ]]; then
-          echo "uvicorn main:app --reload"
+          echo "uvicorn main:app --reload"; return 0
         elif [[ -f "main.py" ]]; then
-          echo "python main.py"
-        else
-          echo "flask run --debug"
-        fi
-        ;;
+          echo "python main.py"; return 0
+        fi ;;
     esac
-    return 0
   elif [[ -f "Cargo.toml" ]]; then
     # Rust
     case "$cmd_type" in
-      lint) echo "cargo clippy -- -D warnings" ;;
-      test) echo "cargo test" ;;
-      typecheck) echo "cargo check" ;;
-      build) echo "cargo build --release" ;;
-      dev) echo "cargo run" ;;
+      lint) echo "cargo clippy -- -D warnings"; return 0 ;;
+      test) echo "cargo test"; return 0 ;;
+      typecheck) echo "cargo check"; return 0 ;;
+      build) echo "cargo build --release"; return 0 ;;
+      dev) echo "cargo run"; return 0 ;;
     esac
-    return 0
   elif [[ -f "go.mod" ]]; then
     # Go
     case "$cmd_type" in
       lint)
-        # Prefer golangci-lint if available, else use go vet
         if command -v golangci-lint &>/dev/null; then
           echo "golangci-lint run"
         else
           echo "go vet ./..."
         fi
-        ;;
-      test) echo "go test -v ./..." ;;
-      typecheck) echo "go build ./..." ;;  # Go typing is compile-time
-      build) echo "go build -o bin/ ./..." ;;
-      dev) echo "go run ." ;;
+        return 0 ;;
+      test) echo "go test -v ./..."; return 0 ;;
+      typecheck) echo "go build ./..."; return 0 ;;
+      build) echo "go build -o bin/ ./..."; return 0 ;;
+      dev) echo "go run ."; return 0 ;;
     esac
-    return 0
   elif [[ -f "Gemfile" ]]; then
     # Ruby
     case "$cmd_type" in
-      lint) echo "bundle exec rubocop" ;;
-      test) echo "bundle exec rspec" ;;
-      build) echo "bundle install" ;;
+      lint) echo "bundle exec rubocop"; return 0 ;;
+      test) echo "bundle exec rspec"; return 0 ;;
+      build) echo "bundle install"; return 0 ;;
     esac
-    return 0
   fi
 
   # No command found
@@ -2960,14 +2887,7 @@ count_tasks() {
       in_progress) br_status="in_progress" ;;
       failed) br_status="blocked" ;;
     esac
-    # Use temp file to avoid variable capture issues with escape sequences
-    local tmp=$(mktemp)
-    RUST_LOG= br list --status "$br_status" --json 2>/dev/null | sed '/^[0-9]/d' > "$tmp" || echo "[]" > "$tmp"
-    local count
-    count=$(jq 'length' "$tmp" 2>/dev/null || echo "0")
-    rm -f "$tmp"
-    # Ensure we always output a number (jq on empty file returns nothing)
-    echo "${count:-0}"
+    br list --status "$br_status" --json 2>/dev/null | jq 'length' || echo "0"
   else
     jq --arg s "$status" '[.tasks[] | select(.status == $s)] | length' "$TASK_GRAPH"
   fi

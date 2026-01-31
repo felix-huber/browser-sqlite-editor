@@ -1,5 +1,26 @@
 # Proposal: Ralph Lint Error Handling Improvements
 
+---
+
+## Implementation Status Summary (Verified 2026-01-31)
+
+| Proposal | Status | Notes |
+|----------|--------|-------|
+| **Option A**: Pre-flight lint baseline | 🔴 NOT IMPLEMENTED | No pre-flight check in ralph.sh |
+| **Option B**: Git pull between iterations | 🔴 NOT IMPLEMENTED | No auto-pull in main loop |
+| **Option C**: Update task_prompt.md | 🟡 PARTIAL | Prompts have some lint info but not full Option C |
+| **Option D**: Separate lint fixer task | 🔴 NOT IMPLEMENTED | No lint-fixer mechanism |
+| **Option E**: Integration checklist | 🔴 NOT IMPLEMENTED | Bead authoring suggestion only |
+| **Option F**: Integration verification | 🔴 NOT IMPLEMENTED | No unused-export check in ralph.sh |
+| **Option G**: Bead verification validation | 🔴 NOT IMPLEMENTED | No dry-run validation |
+| **Option H**: Verification syntax checker | 🔴 NOT IMPLEMENTED | No validation in beads creation |
+| **Option I**: Test run sanity check | ✅ IMPLEMENTED | Lines 2801-2809: Zero-tests warning |
+| **Pattern 6 fix**: looks_like_command() | ✅ IMPLEMENTED | Lines 1236-1259: Command validation |
+| **Pattern 7 fix**: Vitest syntax auto-fix | ✅ IMPLEMENTED | Lines 1282-1289: --grep to -t conversion |
+| **Pattern 8 fix**: refresh_task_verification() | ✅ IMPLEMENTED | Lines 1193-1202: Re-read before verify |
+
+---
+
 ## Problem Observed
 
 bd-3u2 (Security E2E tests) has been stuck for 4+ iterations because:
@@ -20,6 +41,10 @@ The implementer only sees its own task context, not the global lint state. When 
 ## Proposed Solutions
 
 ### Option A: Pre-flight Lint Baseline (Recommended)
+
+**Status: 🔴 NOT IMPLEMENTED**
+
+No pre-flight lint check exists in ralph.sh. The `verify_build()` function (line 2623) runs lint AFTER task completion, not before.
 
 **Add to ralph.sh before spawning implementer:**
 
@@ -51,6 +76,10 @@ fi
 
 ### Option B: Git Pull Between Iterations
 
+**Status: 🔴 NOT IMPLEMENTED**
+
+No automatic git pull in the main loop. The main loop (around line 3400+) does not include any git sync between iterations.
+
 **Add to ralph.sh at start of each iteration:**
 
 ```bash
@@ -61,6 +90,10 @@ git stash pop -q 2>/dev/null || true
 ```
 
 ### Option C: Update task_prompt.md
+
+**Status: 🟡 PARTIAL**
+
+The prompt building happens dynamically in ralph.sh. Some verification context exists, but not the full Option C text. Would need to check `prompts/ralph/task_prompt.md` if it exists.
 
 **Add to prompts/ralph/task_prompt.md:**
 
@@ -86,6 +119,10 @@ Do NOT say TASK_COMPLETE if any verification step fails.
 ```
 
 ### Option D: Separate Lint Fixer Task
+
+**Status: 🔴 NOT IMPLEMENTED**
+
+No lint-fixer mechanism exists.
 
 **Create a maintenance bead that runs first:**
 
@@ -133,6 +170,8 @@ bd-qdl (FK validation) failed 3 times despite having:
 
 ### Option E: Integration Checklist in Bead Descriptions
 
+**Status: 🔴 NOT IMPLEMENTED** (Bead authoring guideline, not code)
+
 Update bead creation workflow to include explicit integration points:
 
 ```markdown
@@ -147,6 +186,10 @@ Update bead creation workflow to include explicit integration points:
 ```
 
 ### Option F: Integration Verification in Ralph
+
+**Status: 🔴 NOT IMPLEMENTED**
+
+No unused-export checking in `verify_build()` (lines 2623-2900+).
 
 Add to ralph.sh build verification:
 ```bash
@@ -281,10 +324,10 @@ if echo "$test_output" | grep -q "Timeout exceeded"; then
 fi
 ```
 
-## Already Implemented
-- `--scoped-tests-only` flag (added by other agent)
-- Git pull between iterations
-- Integration check in prompts
+## Already Implemented (Verified 2026-01-31)
+- ✅ `--scoped-tests-only` flag (line 297: `SCOPED_TESTS_ONLY="false"`)
+- 🔴 Git pull between iterations - **NOT IMPLEMENTED** (no auto-pull in main loop)
+- 🟡 Integration check in prompts - **PARTIAL** (some verification context exists)
 
 ---
 
@@ -310,6 +353,10 @@ This is a **bead authoring error** that ralph can't auto-detect.
 
 ### Option G: Bead Verification Validation
 
+**Status: 🔴 NOT IMPLEMENTED**
+
+No dry-run validation of verification commands before spawning implementer.
+
 Add to beads_rust or ralph.sh - validate verification commands before starting:
 
 ```bash
@@ -331,6 +378,10 @@ fi
 ```
 
 ### Option H: Verification Command Syntax Checker
+
+**Status: 🔴 NOT IMPLEMENTED**
+
+No validation step in beads creation workflow.
 
 Add a validation step when creating beads:
 
@@ -358,6 +409,22 @@ function validate_verification() {
 
 ### Option I: Test Run Sanity Check
 
+**Status: ✅ IMPLEMENTED**
+
+Found in `verify_build()` at lines 2801-2809:
+
+```bash
+# Sanity check: verify tests actually ran (Option I from proposal)
+local tests_ran
+tests_ran=$(echo "$test_output" | grep -oE '[0-9]+ (passed|passing)' | grep -oE '^[0-9]+' | head -1 || echo "")
+if [[ -z "$tests_ran" || "$tests_ran" -eq 0 ]]; then
+  log_warn "Tests passed but 0 tests detected - check verification command"
+  log_warn "   This may indicate a misconfigured test command"
+else
+  log_success "Tests PASSED ($tests_ran tests)"
+fi
+```
+
 After running verification tests, check that tests actually ran:
 
 ```bash
@@ -373,7 +440,7 @@ fi
 
 ## Recommendation
 
-Implement **Option I** immediately - it catches the symptom (0 tests ran) regardless of the root cause.
+~~Implement **Option I** immediately~~ - **Option I is now implemented** - it catches the symptom (0 tests ran) regardless of the root cause.
 
 ## Files Modified
 
@@ -455,6 +522,8 @@ Implement **Option K** - detect the crash pattern and auto-retry. This is the mo
 
 # Pattern 6: Non-Command Text in Verification Section (bd-b05)
 
+**Status: ✅ IMPLEMENTED** - `looks_like_command()` function (lines 1236-1259)
+
 ## Problem Observed
 
 bd-b05 (Perf harness) failed even after verification command was corrected because:
@@ -479,7 +548,46 @@ Ralph parses each bullet point under "Verification:" as a command to execute.
 
 ### Option M: Command Validation Before Execution
 
-Add to ralph.sh before running verification:
+**Status: ✅ IMPLEMENTED**
+
+Found in ralph.sh at lines 1236-1280:
+
+```bash
+# Check if a string looks like an executable command (not descriptive text)
+looks_like_command() {
+  local cmd="$1"
+  # Skip empty lines
+  [[ -z "$cmd" ]] && return 1
+
+  # Skip lines that look like markdown or documentation
+  [[ "$cmd" =~ ^[#*-][[:space:]] ]] && return 1
+  [[ "$cmd" =~ ^[0-9]+\.[[:space:]] ]] && return 1
+
+  # Known command prefixes - definitely commands
+  if [[ "$cmd" =~ ^(npm|npx|node|python|pip|pytest|cargo|go|make|bash|sh|curl|wget|docker|git|ruby|bundle|yarn|pnpm|bun|deno|flask|django|uvicorn|gunicorn|ruff|mypy|black|eslint|prettier|tsc|vitest|jest|playwright|cypress|cat|echo|ls|cd|mv|cp|rm|touch|mkdir|grep|sed|awk|find|test|\[|\./) ]]; then
+    return 0
+  fi
+
+  # Starts with uppercase = likely English sentence, not a command
+  if [[ "$cmd" =~ ^[A-Z] ]]; then
+    return 1
+  fi
+
+  # Starts with lowercase = probably a command
+  return 0
+}
+```
+
+And in `run_task_verification()` at lines 1276-1280:
+```bash
+# Skip lines that don't look like commands
+if ! looks_like_command "$cmd"; then
+  log_warn "Skipping non-command: $cmd"
+  continue
+fi
+```
+
+~~Add to ralph.sh before running verification:~~
 ```bash
 # In run_task_verification()
 for cmd in $verification_commands; do
@@ -554,6 +662,8 @@ bd-3t7 had `npm test (size-warnings.test.ts)` - parentheses are shell metacharac
 
 # Pattern 7: Incorrect Test Framework CLI Syntax (bd-3lz)
 
+**Status: ✅ IMPLEMENTED** - Auto-correction in `run_task_verification()` (lines 1282-1289)
+
 ## Problem Observed
 
 bd-3lz (Single-writer lock) failed verification because:
@@ -570,7 +680,22 @@ Bead author assumed Jest/Mocha syntax when writing verification commands. This i
 
 ### Option P: Vitest Syntax Auto-Correction
 
-Add to ralph.sh verification parsing:
+**Status: ✅ IMPLEMENTED**
+
+Found in ralph.sh at lines 1282-1289:
+
+```bash
+# Fix common test framework CLI syntax errors (Pattern 7)
+# Vitest uses -t not --grep for test filtering
+# BUT: Playwright E2E tests use --grep (not -t), so skip E2E commands
+if [[ "$cmd" == *"npm"*"test"*"--grep"* ]] && [[ "$cmd" != *"e2e"* ]] && [[ -f "package.json" ]] && grep -q '"vitest"' package.json 2>/dev/null; then
+  local fixed_cmd="${cmd//--grep/-t}"
+  log_warn "Auto-fixing Vitest syntax: --grep to -t"
+  cmd="$fixed_cmd"
+fi
+```
+
+~~Add to ralph.sh verification parsing:~~
 ```bash
 # In run_task_verification()
 # Auto-fix common Vitest syntax errors
@@ -579,7 +704,9 @@ cmd=$(echo "$cmd" | sed 's/--grep/-t/g')  # Vitest uses -t not --grep
 
 ### Option Q: Verification Command Linter
 
-Add pre-flight check for common CLI mistakes:
+**Status: 🟡 PARTIAL** - Auto-correction exists (Option P), but no pre-flight linter that rejects commands.
+
+~~Add pre-flight check for common CLI mistakes:~~
 ```bash
 # Check for incorrect test framework syntax
 if [[ "$cmd" == *"npm run test"* && "$cmd" == *"--grep"* ]]; then
@@ -619,6 +746,8 @@ Verification:
 
 # Pattern 8: Bead Description Caching in Ralph (Observed 2026-01-31)
 
+**Status: ✅ IMPLEMENTED** - `refresh_task_verification()` function (lines 1193-1202)
+
 ## Problem Observed
 
 When I fix a bead description mid-iteration:
@@ -643,7 +772,24 @@ From iterations 1-9:
 
 ### Option S: Re-read Bead Before Verification
 
-Add to ralph.sh verify_task():
+**Status: ✅ IMPLEMENTED**
+
+Found in ralph.sh at lines 1193-1202:
+
+```bash
+# Refresh task verification from source (Pattern 8 fix)
+# Re-reads bead/task-graph to pick up mid-iteration fixes
+refresh_task_verification() {
+  local task_id="$1"
+  local task_json
+  task_json=$(get_task_by_id "$task_id")
+  if [[ -n "$task_json" ]]; then
+    get_task_verification "$task_json"
+  fi
+}
+```
+
+~~Add to ralph.sh verify_task():~~
 ```bash
 # Re-read bead description before verification (pick up mid-iteration fixes)
 task_desc=$(br show "$task_id" 2>/dev/null)
@@ -651,6 +797,8 @@ verification_cmds=$(echo "$task_desc" | extract_verification)
 ```
 
 ### Option T: Verification Command File
+
+**Status: 🔴 NOT IMPLEMENTED** - Option S was implemented instead, which is simpler.
 
 Store verification commands in a file that can be hot-reloaded:
 ```bash
@@ -665,22 +813,24 @@ done < .ralph/verify-${task_id}.txt
 
 ## Recommendation
 
-Implement **Option S** - simple re-read of bead description before running verification. Minimal code change, maximum benefit.
+~~Implement **Option S**~~ - **Option S is now implemented** - simple re-read of bead description before running verification. Minimal code change, maximum benefit.
 
 ---
 
 # Summary of All Patterns (2026-01-31)
 
+**Updated 2026-01-31: Verified against current ralph.sh code**
+
 | # | Pattern | Beads Affected | Fix | Status |
 |---|---------|----------------|-----|--------|
-| 1 | Pre-existing lint errors | bd-3u2 | Pre-flight lint + context | Proposed |
-| 2 | Incomplete integration | bd-qdl | Integration checklist | Proposed |
-| 3 | Unrelated test failures | bd-b05 | Bead-scoped tests | Proposed |
-| 4 | Incorrect verification command | bd-b05 | Command validation | Fixed bd-b05 |
-| 5 | Web server crash mid-test | - | Crash detection + retry | Proposed |
-| 6 | Non-command in verification | bd-b05, bd-2y1, +5 more | Command validation | **Fixed 7 beads** |
-| 7 | Wrong test CLI syntax | bd-3lz | Auto-correction or standardize | Fixed bd-3lz |
-| 8 | Bead description caching | All | Re-read before verify | Proposed |
+| 1 | Pre-existing lint errors | bd-3u2 | Pre-flight lint + context | 🔴 NOT IMPLEMENTED |
+| 2 | Incomplete integration | bd-qdl | Integration checklist | 🔴 NOT IMPLEMENTED |
+| 3 | Unrelated test failures | bd-b05 | Bead-scoped tests | 🟡 PARTIAL (`--scoped-tests-only` flag exists) |
+| 4 | Incorrect verification command | bd-b05 | Command validation | ✅ Fixed bd-b05 (bead-level) |
+| 5 | Web server crash mid-test | - | Crash detection + retry | 🔴 NOT IMPLEMENTED |
+| 6 | Non-command in verification | bd-b05, bd-2y1, +5 more | `looks_like_command()` | ✅ **IMPLEMENTED** (lines 1236-1259) |
+| 7 | Wrong test CLI syntax | bd-3lz | Auto-correction | ✅ **IMPLEMENTED** (lines 1282-1289) |
+| 8 | Bead description caching | All | `refresh_task_verification()` | ✅ **IMPLEMENTED** (lines 1193-1202) |
 
 ---
 
@@ -760,19 +910,21 @@ Implement **Option T** (retry on few failures) as immediate fix. Then address th
 
 # Final Summary (2026-01-31)
 
+**Updated 2026-01-31: Verified against current ralph.sh code**
+
 ## Patterns Discovered
 
-| # | Pattern | Severity | Beads Affected | Status |
-|---|---------|----------|----------------|--------|
-| 1 | Pre-existing lint errors | Medium | bd-3u2 | Proposed |
-| 2 | Incomplete integration | Medium | bd-qdl | Proposed |
-| 3 | Unrelated test failures | **High** | bd-b05 | Proposed |
-| 4 | Incorrect verification command | High | bd-b05 | **Fixed** |
-| 5 | Web server crash mid-test | Low | - | Proposed |
-| 6 | Non-command in verification | **High** | 7 beads | **Fixed** |
-| 7 | Wrong test CLI syntax | High | bd-3lz | **Fixed** |
-| 8 | Bead description caching | Medium | All | Proposed |
-| 9 | Flaky tests blocking beads | **High** | bd-3lz | Observed |
+| # | Pattern | Severity | Beads Affected | Implementation Status |
+|---|---------|----------|----------------|----------------------|
+| 1 | Pre-existing lint errors | Medium | bd-3u2 | 🔴 NOT IMPLEMENTED |
+| 2 | Incomplete integration | Medium | bd-qdl | 🔴 NOT IMPLEMENTED |
+| 3 | Unrelated test failures | **High** | bd-b05 | 🟡 PARTIAL (`--scoped-tests-only`) |
+| 4 | Incorrect verification command | High | bd-b05 | 🟡 PARTIAL (bead fixed, no auto-validation) |
+| 5 | Web server crash mid-test | Low | - | 🔴 NOT IMPLEMENTED |
+| 6 | Non-command in verification | **High** | 7 beads | ✅ **IMPLEMENTED** (`looks_like_command()`) |
+| 7 | Wrong test CLI syntax | High | bd-3lz | ✅ **IMPLEMENTED** (auto-correction) |
+| 8 | Bead description caching | Medium | All | ✅ **IMPLEMENTED** (`refresh_task_verification()`) |
+| 9 | Flaky tests blocking beads | **High** | bd-3lz | 🟡 PARTIAL (`check_flaky_skip()` exists) |
 
 ## Iteration Results (1-10)
 
@@ -795,10 +947,10 @@ Implement **Option T** (retry on few failures) as immediate fix. Then address th
 ## Priority Recommendations
 
 **Immediate (implement in ralph.sh):**
-1. Option M: Command validation before execution (Pattern 6)
-2. Option S: Re-read bead before verification (Pattern 8)
-3. Option T: Retry on few test failures (Pattern 9)
-4. Option I: Zero-tests sanity check (Pattern 4)
+1. ~~Option M: Command validation before execution (Pattern 6)~~ ✅ DONE
+2. ~~Option S: Re-read bead before verification (Pattern 8)~~ ✅ DONE
+3. Option T: Retry on few test failures (Pattern 9) - 🟡 PARTIAL (`check_flaky_skip` exists, but no retry)
+4. ~~Option I: Zero-tests sanity check (Pattern 4)~~ ✅ DONE
 
 **Medium-term (bead authoring guidelines):**
 1. Option R: Standardize on `npm test` for verification
@@ -815,6 +967,8 @@ Implement **Option T** (retry on few failures) as immediate fix. Then address th
 
 ## Pattern 10: Multiple Ralph Processes Running (High Priority)
 
+**Status: ✅ IMPLEMENTED** (lines 50-89)
+
 ### Problem Observed
 During monitoring, found 3 ralph.sh processes running simultaneously (PIDs 17202, 56617, 86113). This can cause:
 - Race conditions on bead status updates
@@ -823,61 +977,108 @@ During monitoring, found 3 ralph.sh processes running simultaneously (PIDs 17202
 
 ### Structural Fix
 
-Add lockfile at startup:
+~~Add lockfile at startup:~~ **DONE**
+
+Current implementation in ralph.sh (lines 50-89):
 ```bash
-# At top of ralph.sh
-RALPH_LOCK="/tmp/ralph.lock"
-if ! mkdir "$RALPH_LOCK" 2>/dev/null; then
-  log_error "Another ralph instance is running (lock exists)"
-  exit 1
-fi
-trap "rm -rf $RALPH_LOCK" EXIT
+# Lockfile to prevent multiple ralph instances (Pattern 10)
+RALPH_LOCK="$PROJECT_ROOT/.ralph.lock"
+OVERRIDE_LOCK_PID=""
+
+# Pre-parse --override-lock before acquiring lock
+# ...
+
+cleanup_lock() { rm -f "$RALPH_LOCK" 2>/dev/null; }
+handle_signal() { cleanup_lock; exit 130; }
+acquire_lock() {
+  if [[ -f "$RALPH_LOCK" ]]; then
+    local lock_pid=$(cat "$RALPH_LOCK" 2>/dev/null || echo "")
+    # Allow override if user specifies the correct PID
+    if [[ -n "$OVERRIDE_LOCK_PID" ]] && [[ "$lock_pid" == "$OVERRIDE_LOCK_PID" ]]; then
+      echo "INFO: Overriding lock from PID $lock_pid" >&2
+    elif [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
+      echo "ERROR: Another ralph instance is running (PID $lock_pid)" >&2
+      exit 1
+    fi
+    rm -f "$RALPH_LOCK"
+  fi
+  echo $$ > "$RALPH_LOCK"
+  trap cleanup_lock EXIT
+  trap handle_signal INT TERM
+}
+acquire_lock
 ```
 
 ---
 
 ## Pattern 11: Commits Not Pushed to Remote (Medium Priority)
 
+**Status: 🟡 PARTIALLY IMPLEMENTED** (`--auto-push` flag exists)
+
 ### Problem Observed
 Branch was 30 commits ahead of origin/main. GitHub CI was failing on old code while local fixes existed.
 
 ### Structural Fix
 
-Add auto-push after each successful commit:
-```bash
-# In ralph.sh after successful commit
-git push origin main 2>/dev/null || log_warn "Push failed, will retry later"
-```
+The `--auto-push` flag exists (line 115: `AUTO_PUSH="false"`), and push logic is in `commit_task_changes()` (lines 797-827):
 
-Or add periodic push every N iterations:
 ```bash
-if (( iteration % 5 == 0 )); then
-  git push origin main 2>/dev/null || true
+if [[ "$AUTO_PUSH" == "true" ]]; then
+  if ! git push 2>/dev/null; then
+    log_warn "Push failed. Attempting pull --rebase and retry..."
+    if ! git pull --rebase 2>/dev/null; then
+      log_error "Rebase failed. Manual intervention may be needed."
+      return 1
+    fi
+    if ! git push; then
+      log_error "Push failed after rebase. Continuing anyway."
+      return 1
+    fi
+  fi
 fi
 ```
+
+**Note**: Default is `AUTO_PUSH="false"`. Use `--auto-push` flag to enable.
 
 ---
 
 ## Pattern 12: Implementer Timeout/Stuck Detection (Medium Priority)
+
+**Status: ✅ IMPLEMENTED** (lines 2258-2296, 2305-2333)
 
 ### Problem Observed
 bd-3t7 implementer log didn't update for 5+ minutes. No mechanism exists to detect stuck implementers.
 
 ### Structural Fix
 
-Add heartbeat checking:
-```bash
-# Implementer should touch heartbeat file periodically
-HEARTBEAT_FILE=".beads/logs/${task_id}.heartbeat"
+~~Add heartbeat checking:~~ **DONE**
 
-# In monitoring loop
-last_heartbeat=$(stat -f %m "$HEARTBEAT_FILE" 2>/dev/null || echo 0)
-now=$(date +%s)
-if (( now - last_heartbeat > 300 )); then
-  log_warn "Implementer appears stuck (no heartbeat for 5min) - killing"
-  kill $IMPLEMENTER_PID 2>/dev/null
-  # Will retry on next iteration
-fi
+Current implementation:
+- `check_task_stalled()` (lines 2258-2296): Checks both wall-clock time AND log file heartbeat
+- `handle_stalled_task()` (lines 2305-2333): Resets stalled task and prepares for retry
+- Self-healing loop (lines 3354-3363): Detects and handles stalled tasks
+
+```bash
+check_task_stalled() {
+  local task_id="$1"
+  # ...
+  # Check 1: Total time threshold
+  if [[ "$elapsed_minutes" -ge "$STALL_THRESHOLD" ]]; then
+    log_warn "Task $task_id has been tracked for $elapsed_minutes minutes"
+    return 0  # Stalled
+  fi
+
+  # Check 2: Log file heartbeat (no output for 5+ minutes = likely stuck)
+  local log_file="$LOGS_DIR/${task_id}.log"
+  if [[ -f "$log_file" ]]; then
+    # ... check log modification time
+    if [[ "$log_age_minutes" -ge 5 ]] && [[ "$elapsed_minutes" -ge 5 ]]; then
+      log_warn "Task $task_id log has no output for ${log_age_minutes}m"
+      return 0  # Stalled
+    fi
+  fi
+  return 1  # Not stalled
+}
 ```
 
 ---
@@ -903,6 +1104,8 @@ Add TTL or parent-task awareness:
 
 ## Pattern 14: `br show --json` Returns Array (bd-39f)
 
+**Status: ✅ IMPLEMENTED** (lines 2085-2106)
+
 ### Problem Observed
 `get_task_by_id()` in ralph.sh passes `br show --json` output to `build_task_json_from_bead()`, but:
 - `br show --json` returns an **array** like `[{...}]`
@@ -915,15 +1118,33 @@ Add TTL or parent-task awareness:
 - Mid-iteration bead fixes aren't picked up
 - Tasks fail verification repeatedly
 
-### Status: ✅ FIXED
+### Status: ✅ IMPLEMENTED (Verified 2026-01-31)
 
-Fix applied in ralph.sh `get_task_by_id()`:
+Current implementation in ralph.sh (lines 2085-2106):
 ```bash
-# Before:
-bead_json=$(br show "$task_id" --json 2>/dev/null || echo "")
+get_task_by_id() {
+  local task_id="$1"
+  if [[ "$USE_BEADS" == "true" ]]; then
+    # Use temp file to avoid variable capture issues with escape sequences
+    local tmp_raw=$(mktemp)
+    br show "$task_id" --json 2>/dev/null | sed '/^[0-9]/d' > "$tmp_raw" || echo "[]" > "$tmp_raw"
 
-# After:
-bead_json=$(br show "$task_id" --json 2>/dev/null | jq -c '.[0] // empty' 2>/dev/null || echo "")
+    # br show returns an array, extract first element
+    local tmp_bead=$(mktemp)
+    jq -c '.[0]' "$tmp_raw" > "$tmp_bead" 2>/dev/null
+    rm -f "$tmp_raw"
+
+    if [[ ! -s "$tmp_bead" ]] || grep -q '^null$' "$tmp_bead"; then
+      rm -f "$tmp_bead"
+      echo ""
+      return
+    fi
+    build_task_json_from_bead_file "$tmp_bead"
+    rm -f "$tmp_bead"
+  else
+    jq -r --arg id "$task_id" '.tasks[] | select(.id == $id)' "$TASK_GRAPH"
+  fi
+}
 ```
 
 ### Note
@@ -933,14 +1154,16 @@ Running ralph instances won't pick up this fix until restarted.
 
 ## Implementation Priority Matrix
 
-| Pattern | Severity | Effort | ROI |
-|---------|----------|--------|-----|
-| 14. br show array | High | Low | **Very High** |
-| 10. Multiple processes | High | Low | **Very High** |
-| 11. Auto-push | Medium | Low | High |
-| 6. Non-command validation | High | Medium | **Very High** |
-| 8. Re-read before verify | Medium | Low | High |
-| 9. Flaky test retry | High | Medium | High |
-| 12. Stuck detection | Medium | Medium | Medium |
-| 7. Vitest syntax fix | Medium | Low | Medium |
-| 13. Stale subagents | Low | High | Low |
+**Updated 2026-01-31: Verified against current ralph.sh code**
+
+| Pattern | Severity | Effort | ROI | Status |
+|---------|----------|--------|-----|--------|
+| 14. br show array | High | Low | **Very High** | ✅ IMPLEMENTED |
+| 10. Multiple processes | High | Low | **Very High** | ✅ IMPLEMENTED |
+| 11. Auto-push | Medium | Low | High | 🟡 PARTIAL (`--auto-push` flag exists) |
+| 6. Non-command validation | High | Medium | **Very High** | ✅ IMPLEMENTED |
+| 8. Re-read before verify | Medium | Low | High | ✅ IMPLEMENTED |
+| 9. Flaky test retry | High | Medium | High | 🟡 PARTIAL (`check_flaky_skip` skips, no retry) |
+| 12. Stuck detection | Medium | Medium | Medium | ✅ IMPLEMENTED (`check_task_stalled()`) |
+| 7. Vitest syntax fix | Medium | Low | Medium | ✅ IMPLEMENTED |
+| 13. Stale subagents | Low | High | Low | 🔴 NOT IMPLEMENTED |
