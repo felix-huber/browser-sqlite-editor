@@ -78,3 +78,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-1jc | P8-02a: E2E fill — Table designer rebuild safety | FAILED | - | tool failed (rc=1) |
 | bd-1jc | P8-02a: E2E fill — Table designer rebuild safety | FAILED | - | tool failed (rc=1) |
 | bd-2zh | P8-02b: E2E fill — Table designer dependency + schema features | FAILED | - | verification failed |
+| bd-2zh | P8-02b: E2E fill — Table designer dependency + schema features | DONE | 801211297adf4b94bd32d13d15395ec33d34ef98 | clean |
