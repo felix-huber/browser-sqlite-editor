@@ -91,3 +91,39 @@ export function renameColumn(
     strict: ast.strict,
   }
 }
+
+/**
+ * Drops a column from a CREATE TABLE AST.
+ *
+ * Note: This only removes the column definition. It does NOT update
+ * references to the column in CHECK constraints, GENERATED expressions,
+ * foreign key constraints, or table-level constraints. Those would need
+ * separate handling or validation.
+ *
+ * @param ast - The CREATE TABLE AST to modify
+ * @param columnName - The column name to drop
+ * @returns A new AST with the column removed (original is not mutated)
+ */
+export function dropColumn(
+  ast: CreateTableNode,
+  columnName: string
+): CreateTableNode {
+  const index = ast.columns.findIndex(
+    (c) => c.name.toLowerCase() === columnName.toLowerCase()
+  )
+  if (index === -1) {
+    throw new Error(`Column "${columnName}" not found`)
+  }
+
+  const newColumns = ast.columns.filter((_, i) => i !== index)
+
+  return {
+    ...ast,
+    columns: newColumns,
+    // Explicitly preserve all other properties
+    tableConstraints: [...ast.tableConstraints],
+    primaryKeyColumns: ast.primaryKeyColumns ? [...ast.primaryKeyColumns] : undefined,
+    withoutRowid: ast.withoutRowid,
+    strict: ast.strict,
+  }
+}

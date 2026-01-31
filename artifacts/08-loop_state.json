@@ -1,13 +1,13 @@
 {
   "runId": "2026-01-31T00:28:10+01:00",
-  "updatedAt": "2026-01-31T04:07:02+01:00",
+  "updatedAt": "2026-01-31T04:10:28+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-2gl",
-    "subject": "P3-01b: Apply column add/rename via AST patch",
+    "id": "bd-1ok",
+    "subject": "P3-01c: Apply column drop via AST patch + copy plan",
     "status": "completed",
     "phase": "review",
     "attempt": 1
