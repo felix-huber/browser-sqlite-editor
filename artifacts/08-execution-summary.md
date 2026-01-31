@@ -70,3 +70,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-u9l | P3-04: DDL diff preview enhancement | DONE | f8c81ce3909205ac6ef7b99a8ea98163c42ea297 | clean |
 | bd-1xx | P4-03: ERD DDL diff preview | DONE | 0f91a444eda0d3a524739b8667911a26487811b6 | clean |
 | bd-22t | P6-03: sqlite3_stmt_readonly check | DONE | ea7c649209a5755fd5545b88403f73c6cf04e4b9 | clean |
+| bd-9kc | US-006: Query builder result column aliases | DONE | 503413eb27052948c7c22159e8c657824ff44193 | clean |

@@ -1,6 +1,6 @@
 {
-  "runId": "2026-01-31T19:53:51+01:00",
-  "updatedAt": "2026-01-31T19:53:51+01:00",
+  "runId": "2026-01-31T20:01:06+01:00",
+  "updatedAt": "2026-01-31T20:01:06+01:00",
   "mode": {
     "loop": true,
     "beads": true
@@ -8,13 +8,13 @@
   "task": {
     "id": "bd-9kc",
     "subject": "US-006: Query builder result column aliases",
-    "status": "running",
-    "phase": "implement",
+    "status": "completed",
+    "phase": "done",
     "attempt": 1
   },
   "tools": {
     "implementer": "claude",
     "reviewer": "claude"
   },
-  "note": "started"
+  "note": "all checks passed"
 }
