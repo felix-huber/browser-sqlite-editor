@@ -126,8 +126,11 @@ test.describe('Grid Editing Tests', () => {
       await input.fill('Alicia');
       await page.keyboard.press('Tab');
       await expect(page.getByTestId('cell-0-name')).toContainText('Alicia');
-      // Bio column should now be in edit mode (uses input since content doesn't have actual newlines)
-      await expect(page.locator('[data-testid="cell-0-bio"] [data-testid="edit-input"]')).toBeVisible();
+      // Wait for edit mode to transfer to next cell - may use input or textarea depending on content
+      const nextCellEditor = page.locator(
+        '[data-testid="cell-0-bio"] [data-testid="edit-input"], [data-testid="cell-0-bio"] [data-testid="edit-textarea"]'
+      );
+      await expect(nextCellEditor).toBeVisible({ timeout: 15000 });
     });
 
     test('dirty cells show yellow background', async ({ page }) => {

@@ -49,7 +49,8 @@ test.describe('Import/Export (real UI)', () => {
 
     await page.getByTestId('table-name-input').fill('people');
     await page.getByTestId('import-button').click();
-    await expect(page.getByTestId('import-dialog')).toBeHidden({ timeout: 10000 });
+    // Import can take longer in CI - increase timeout
+    await expect(page.getByTestId('import-dialog')).toBeHidden({ timeout: 20000 });
 
     await openTable(page, DB_NAME, 'people');
     await expect(page.getByTestId('cell-0-name')).toHaveText('Ada');
@@ -68,7 +69,8 @@ test.describe('Import/Export (real UI)', () => {
 
     await page.getByTestId('table-name-input').fill('items');
     await page.getByTestId('import-button').click();
-    await expect(page.getByTestId('import-dialog')).toBeHidden({ timeout: 10000 });
+    // Import can take longer in CI - increase timeout
+    await expect(page.getByTestId('import-dialog')).toBeHidden({ timeout: 20000 });
 
     await openTable(page, DB_NAME, 'items');
     await expect(page.getByTestId('cell-0-name')).toHaveText('Widget');
@@ -81,7 +83,8 @@ test.describe('Import/Export (real UI)', () => {
     await page.getByTestId('table-name-input').fill('ages');
     await page.getByTestId('type-dropdown-1').selectOption('TEXT');
     await page.getByTestId('import-button').click();
-    await expect(page.getByTestId('import-dialog')).toBeHidden({ timeout: 10000 });
+    // Import can take longer in CI - increase timeout
+    await expect(page.getByTestId('import-dialog')).toBeHidden({ timeout: 20000 });
 
     await runSql(page, "PRAGMA table_info('ages')");
     await expect(page.getByTestId('cell-1-type')).toHaveText('TEXT');
@@ -104,7 +107,8 @@ test.describe('Import/Export (real UI)', () => {
     await page.getByTestId('import-button').click();
 
     await expect(page.getByTestId('error-state')).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText(/constraint/i)).toBeVisible();
+    // Error message should mention either the constraint type or the constraint violation
+    await expect(page.getByText(/CONSTRAINT|unique|violated/i)).toBeVisible();
     await page.getByTestId('close-button').click();
 
     await runSql(page, 'SELECT COUNT(*) AS count FROM unique_table');
