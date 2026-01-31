@@ -1,6 +1,6 @@
 {
-  "runId": "2026-01-31T20:20:36+01:00",
-  "updatedAt": "2026-01-31T20:20:36+01:00",
+  "runId": "2026-01-31T20:29:13+01:00",
+  "updatedAt": "2026-01-31T20:29:13+01:00",
   "mode": {
     "loop": true,
     "beads": true
@@ -8,13 +8,13 @@
   "task": {
     "id": "bd-rqg",
     "subject": "P4-05: ERD draft state tracking",
-    "status": "running",
-    "phase": "implement",
+    "status": "completed",
+    "phase": "done",
     "attempt": 1
   },
   "tools": {
     "implementer": "claude",
     "reviewer": "claude"
   },
-  "note": "started"
+  "note": "all checks passed"
 }

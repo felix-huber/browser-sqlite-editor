@@ -71,3 +71,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-1xx | P4-03: ERD DDL diff preview | DONE | 0f91a444eda0d3a524739b8667911a26487811b6 | clean |
 | bd-22t | P6-03: sqlite3_stmt_readonly check | DONE | ea7c649209a5755fd5545b88403f73c6cf04e4b9 | clean |
 | bd-9kc | US-006: Query builder result column aliases | DONE | 503413eb27052948c7c22159e8c657824ff44193 | clean |
+| bd-rqg | P4-05: ERD draft state tracking | DONE | ff47fb12b0e83b3ee829cb2e5a6de361683f2d4f | clean |
