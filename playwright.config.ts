@@ -51,7 +51,8 @@ export default defineConfig({
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
-        channel: 'chrome',
+        // Use Chromium instead of Chrome for CI compatibility
+        // Chrome (channel: 'chrome') is not always available in CI environments
       },
       testIgnore: '**/perf/**',
     },
@@ -60,7 +61,7 @@ export default defineConfig({
       testDir: './e2e/perf',
       use: {
         ...devices['Desktop Chrome'],
-        channel: 'chrome',
+        // Use Chromium instead of Chrome for CI compatibility
       },
       timeout: 180000, // 3 min per test for large fixtures
       retries: 0, // No retries for perf tests
