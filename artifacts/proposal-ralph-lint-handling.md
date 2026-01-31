@@ -542,8 +542,13 @@ Verification:
 | bd-1xx | `Manual test` + `Test: create FK...` | `npm test` |
 | bd-u9l | `Manual test + npm test` + `Test: column rename...` | `npm test` |
 | bd-3mp | `Test: rename column, verify single ALTER statement issued` | `npm test` |
+| bd-3t7 | `npm test (size-warnings.test.ts)` (parenthetical syntax) | `npm test` |
 
-**Impact:** 5 beads fixed proactively, preventing ~10+ wasted iterations.
+**Impact:** 6 beads fixed proactively, preventing ~12+ wasted iterations.
+
+## Pattern 6 Variant: Parenthetical Syntax
+
+bd-3t7 had `npm test (size-warnings.test.ts)` - parentheses are shell metacharacters and cause syntax errors. This is a subtler Pattern 6 variant.
 
 ---
 
@@ -803,3 +808,108 @@ Implement **Option T** (retry on few failures) as immediate fix. Then address th
 1. Option Q: Verification command linter in beads_rust
 2. Option F: Integration verification (unused exports check)
 3. Option V: Fix flaky tests at source
+
+---
+
+# Additional Structural Improvements (Observed 2026-01-31)
+
+## Pattern 10: Multiple Ralph Processes Running (High Priority)
+
+### Problem Observed
+During monitoring, found 3 ralph.sh processes running simultaneously (PIDs 17202, 56617, 86113). This can cause:
+- Race conditions on bead status updates
+- Conflicting git operations
+- Resource contention
+
+### Structural Fix
+
+Add lockfile at startup:
+```bash
+# At top of ralph.sh
+RALPH_LOCK="/tmp/ralph.lock"
+if ! mkdir "$RALPH_LOCK" 2>/dev/null; then
+  log_error "Another ralph instance is running (lock exists)"
+  exit 1
+fi
+trap "rm -rf $RALPH_LOCK" EXIT
+```
+
+---
+
+## Pattern 11: Commits Not Pushed to Remote (Medium Priority)
+
+### Problem Observed
+Branch was 30 commits ahead of origin/main. GitHub CI was failing on old code while local fixes existed.
+
+### Structural Fix
+
+Add auto-push after each successful commit:
+```bash
+# In ralph.sh after successful commit
+git push origin main 2>/dev/null || log_warn "Push failed, will retry later"
+```
+
+Or add periodic push every N iterations:
+```bash
+if (( iteration % 5 == 0 )); then
+  git push origin main 2>/dev/null || true
+fi
+```
+
+---
+
+## Pattern 12: Implementer Timeout/Stuck Detection (Medium Priority)
+
+### Problem Observed
+bd-3t7 implementer log didn't update for 5+ minutes. No mechanism exists to detect stuck implementers.
+
+### Structural Fix
+
+Add heartbeat checking:
+```bash
+# Implementer should touch heartbeat file periodically
+HEARTBEAT_FILE=".beads/logs/${task_id}.heartbeat"
+
+# In monitoring loop
+last_heartbeat=$(stat -f %m "$HEARTBEAT_FILE" 2>/dev/null || echo 0)
+now=$(date +%s)
+if (( now - last_heartbeat > 300 )); then
+  log_warn "Implementer appears stuck (no heartbeat for 5min) - killing"
+  kill $IMPLEMENTER_PID 2>/dev/null
+  # Will retry on next iteration
+fi
+```
+
+---
+
+## Pattern 13: Stale Subagent Notifications (Low Priority)
+
+### Problem Observed
+Old subagent tasks (a24b9a7, a0b26cd, a58f511) completed with stale information hours after their parent task finished.
+
+### Impact
+- Confusing notifications
+- Potential for stale changes overwriting current work
+- Wasted compute
+
+### Structural Fix
+
+Add TTL or parent-task awareness:
+- Subagents should check if parent task still exists/relevant
+- Add timeout to subagent tasks
+- Cancel child tasks when parent completes
+
+---
+
+## Implementation Priority Matrix
+
+| Pattern | Severity | Effort | ROI |
+|---------|----------|--------|-----|
+| 10. Multiple processes | High | Low | **Very High** |
+| 11. Auto-push | Medium | Low | High |
+| 6. Non-command validation | High | Medium | **Very High** |
+| 8. Re-read before verify | Medium | Low | High |
+| 9. Flaky test retry | High | Medium | High |
+| 12. Stuck detection | Medium | Medium | Medium |
+| 7. Vitest syntax fix | Medium | Low | Medium |
+| 13. Stale subagents | Low | High | Low |

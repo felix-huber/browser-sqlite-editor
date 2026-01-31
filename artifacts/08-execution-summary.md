@@ -57,3 +57,5 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-3lz | P1-07: Single-writer lock + read-only open enforcement | FAILED | - | verification failed |
 | bd-3lz | P1-07: Single-writer lock + read-only open enforcement | FAILED | - | verification failed |
 | bd-3lz | P1-07: Single-writer lock + read-only open enforcement | DONE | 736995f69ccb936d04a47d38568ddedcf42b4dd0 | clean |
+| bd-3t7 | P2-08: Size warnings on open + DB growth | FAILED | - | verification failed |
+| bd-3t7 | P2-08: Size warnings on open + DB growth | FAILED | - | verification failed |

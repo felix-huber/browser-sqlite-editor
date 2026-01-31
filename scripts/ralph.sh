@@ -36,6 +36,7 @@ set -euo pipefail
 #   ./scripts/ralph.sh --tool smart 50       # Smart routing by task type
 #   ./scripts/ralph.sh --ask 50              # Ask for each task
 #   ./scripts/ralph.sh --beads 50            # Use beads for task tracking
+#   ./scripts/ralph.sh --auto-push 50        # Push after each commit (recommended for CI sync)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -45,6 +46,45 @@ LEARNINGS_FILE="$PROJECT_ROOT/learnings.md"
 LOGS_DIR="$PROJECT_ROOT/.beads/logs"
 CURRENT_TASK_ID=""  # Set during execution for logging
 SESSION_START_TS=0
+
+# Lockfile to prevent multiple ralph instances (Pattern 10)
+RALPH_LOCK="$PROJECT_ROOT/.ralph.lock"
+OVERRIDE_LOCK_PID=""
+
+# Pre-parse --override-lock before acquiring lock (so agents can override without deleting files)
+_args=("$@")
+for ((i=0; i<${#_args[@]}; i++)); do
+  if [[ "${_args[i]}" == "--override-lock" ]] && [[ -n "${_args[i+1]:-}" ]]; then
+    OVERRIDE_LOCK_PID="${_args[i+1]}"
+    break
+  fi
+done
+unset _args
+
+cleanup_lock() { rm -f "$RALPH_LOCK" 2>/dev/null; }
+acquire_lock() {
+  if [[ -f "$RALPH_LOCK" ]]; then
+    local lock_pid
+    lock_pid=$(cat "$RALPH_LOCK" 2>/dev/null || echo "")
+
+    # Allow override if user specifies the correct PID
+    if [[ -n "$OVERRIDE_LOCK_PID" ]] && [[ "$lock_pid" == "$OVERRIDE_LOCK_PID" ]]; then
+      echo "INFO: Overriding lock from PID $lock_pid (--override-lock)" >&2
+    elif [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
+      echo "ERROR: Another ralph instance is running (PID $lock_pid)" >&2
+      echo "Options:" >&2
+      echo "  1. Remove lock: rm $RALPH_LOCK" >&2
+      echo "  2. Override:    ./scripts/ralph.sh --override-lock $lock_pid [other args]" >&2
+      exit 1
+    else
+      echo "WARN: Removing stale lock from dead process $lock_pid" >&2
+    fi
+    rm -f "$RALPH_LOCK"
+  fi
+  echo $$ > "$RALPH_LOCK"
+  trap cleanup_lock EXIT
+}
+acquire_lock
 
 # Defaults
 MAX_ITERATIONS=20
@@ -201,6 +241,10 @@ parse_args() {
           exit 1
         fi
         STALL_THRESHOLD="$2"
+        shift 2
+        ;;
+      --override-lock)
+        # Already pre-parsed before acquire_lock, just consume the argument
         shift 2
         ;;
       --auto-pr)
@@ -394,6 +438,7 @@ Options:
   --min-review-passes <n>      Minimum fresh-eyes passes before accepting clean (default: 2)
   --no-self-heal               Disable auto-recovery of stuck tasks
   --stall-threshold <min>      Minutes before task is considered stuck (default: 20)
+  --override-lock <pid>        Override stale lockfile from specified PID (for agents that can't delete files)
   --auto-pr                    Create PR after each completed task (default: on)
   --no-auto-pr                 Disable auto-PR creation
   --pr-base <branch>           Base branch for PRs (default: main)
@@ -2134,26 +2179,45 @@ clear_task_tracking() {
   fi
 }
 
-# Check if a task has stalled (exceeded STALL_THRESHOLD)
+# Check if a task has stalled (exceeded STALL_THRESHOLD or no log activity)
+# Uses both wall-clock time AND log file heartbeat for accurate detection
 check_task_stalled() {
   local task_id="$1"
   init_task_tracking
-  
+
   local start_time
   start_time=$(jq -r --arg id "$task_id" '.[$id] // 0' "$TASK_TRACKING_FILE" 2>/dev/null || echo "0")
-  
+
   if [[ "$start_time" -eq 0 ]]; then
     return 1  # No start time recorded, not stalled
   fi
-  
+
   local now=$(date +%s)
   local elapsed_minutes=$(( (now - start_time) / 60 ))
-  
+
+  # Check 1: Total time threshold
   if [[ "$elapsed_minutes" -ge "$STALL_THRESHOLD" ]]; then
     log_warn "Task $task_id has been tracked for $elapsed_minutes minutes (threshold: $STALL_THRESHOLD)"
     return 0  # Stalled
   fi
-  
+
+  # Check 2: Log file heartbeat (no output for 5+ minutes = likely stuck)
+  local log_file="$LOGS_DIR/${task_id}.log"
+  if [[ -f "$log_file" ]]; then
+    local log_mtime
+    # macOS uses -f %m, Linux uses -c %Y
+    if stat -f %m "$log_file" >/dev/null 2>&1; then
+      log_mtime=$(stat -f %m "$log_file")
+    else
+      log_mtime=$(stat -c %Y "$log_file" 2>/dev/null || echo "$now")
+    fi
+    local log_age_minutes=$(( (now - log_mtime) / 60 ))
+    if [[ "$log_age_minutes" -ge 5 ]] && [[ "$elapsed_minutes" -ge 5 ]]; then
+      log_warn "Task $task_id log has no output for ${log_age_minutes}m (heartbeat check)"
+      return 0  # Stalled - no log activity
+    fi
+  fi
+
   return 1  # Not stalled
 }
 
@@ -2412,39 +2476,61 @@ get_cmd() {
         ;;
     esac
   elif [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]] || [[ -f "requirements.txt" ]]; then
-    # Python - use single tool per type
+    # Python - use single tool per type, let verify_build handle "not found"
     case "$cmd_type" in
-      lint) echo "ruff check ." && return 0 ;;
-      test) echo "pytest -v" && return 0 ;;
-      typecheck) echo "mypy ." && return 0 ;;
-      build) echo "pip install -e ." && return 0 ;;
-      dev) echo "flask run --debug 2>/dev/null || uvicorn main:app --reload 2>/dev/null || python main.py" && return 0 ;;
+      lint) echo "ruff check ." ;;
+      test) echo "pytest -v" ;;
+      typecheck) echo "mypy ." ;;
+      build) echo "pip install -e ." ;;
+      dev)
+        # Check which runner is available (no runtime fallback chains)
+        if [[ -f "app.py" ]] || [[ -f "application.py" ]]; then
+          echo "flask run --debug"
+        elif command -v uvicorn &>/dev/null && [[ -f "main.py" ]]; then
+          echo "uvicorn main:app --reload"
+        elif [[ -f "main.py" ]]; then
+          echo "python main.py"
+        else
+          echo "flask run --debug"
+        fi
+        ;;
     esac
+    return 0
   elif [[ -f "Cargo.toml" ]]; then
     # Rust
     case "$cmd_type" in
-      lint) echo "cargo clippy -- -D warnings" && return 0 ;;
-      test) echo "cargo test" && return 0 ;;
-      typecheck) echo "cargo check" && return 0 ;;
-      build) echo "cargo build --release" && return 0 ;;
-      dev) echo "cargo run" && return 0 ;;
+      lint) echo "cargo clippy -- -D warnings" ;;
+      test) echo "cargo test" ;;
+      typecheck) echo "cargo check" ;;
+      build) echo "cargo build --release" ;;
+      dev) echo "cargo run" ;;
     esac
+    return 0
   elif [[ -f "go.mod" ]]; then
     # Go
     case "$cmd_type" in
-      lint) echo "golangci-lint run 2>/dev/null || go vet ./..." && return 0 ;;
-      test) echo "go test -v ./..." && return 0 ;;
-      typecheck) echo "go build ./..." && return 0 ;;  # Go typing is compile-time
-      build) echo "go build -o bin/ ./..." && return 0 ;;
-      dev) echo "go run ." && return 0 ;;
+      lint)
+        # Prefer golangci-lint if available, else use go vet
+        if command -v golangci-lint &>/dev/null; then
+          echo "golangci-lint run"
+        else
+          echo "go vet ./..."
+        fi
+        ;;
+      test) echo "go test -v ./..." ;;
+      typecheck) echo "go build ./..." ;;  # Go typing is compile-time
+      build) echo "go build -o bin/ ./..." ;;
+      dev) echo "go run ." ;;
     esac
+    return 0
   elif [[ -f "Gemfile" ]]; then
     # Ruby
     case "$cmd_type" in
-      lint) echo "bundle exec rubocop" && return 0 ;;
-      test) echo "bundle exec rspec" && return 0 ;;
-      build) echo "bundle install" && return 0 ;;
+      lint) echo "bundle exec rubocop" ;;
+      test) echo "bundle exec rspec" ;;
+      build) echo "bundle install" ;;
     esac
+    return 0
   fi
 
   # No command found
@@ -2454,7 +2540,9 @@ get_cmd() {
 # Check if a command exists for given type
 has_cmd() {
   local cmd_type="$1"
-  get_cmd "$cmd_type" >/dev/null 2>&1
+  local result
+  result=$(get_cmd "$cmd_type" 2>/dev/null)
+  [[ -n "$result" ]]
 }
 
 # Verify the project builds successfully
@@ -2468,9 +2556,9 @@ verify_build() {
   # Ensure log directory exists
   mkdir -p "$LOGS_DIR" 2>/dev/null || true
 
-  # Skip if not a Node project
-  if [[ ! -f "package.json" ]]; then
-    log_info "No package.json - skipping build verification"
+  # Check if any supported stack exists
+  if ! has_cmd "lint" && ! has_cmd "test" && ! has_cmd "build"; then
+    log_warn "No supported stack detected - skipping build verification"
     return 0
   fi
 
@@ -2500,25 +2588,45 @@ verify_build() {
       if [[ $lint_exit -eq 0 ]]; then
         log_success "✅ Lint PASSED"
       else
-        # Lint failed - could be errors or warnings exceeding max-warnings
-        # Count actual error lines (format: "file:line:col  error  message")
-        local error_lines=$(echo "$lint_output" | grep -cE "^\s*[0-9]+:[0-9]+\s+error\s" || echo "0")
-        # Also check for summary line like "X errors"
-        local summary_errors=$(echo "$lint_output" | grep -oE "[0-9]+ errors?" | head -1 | grep -oE "[0-9]+" || echo "0")
+        # Lint failed - count errors from various linter formats
+        # ESLint: "file:line:col  error  message" or "X errors"
+        # Ruff/Pylint: "file.py:line:col: E501 message" or "Found X errors"
+        # Clippy: "error[E0001]: message"
+        local error_count=0
 
-        if [[ "$error_lines" -gt 0 || "$summary_errors" -gt 0 ]]; then
-          local total_errors=$((error_lines > summary_errors ? error_lines : summary_errors))
-          log_error "❌ Lint FAILED ($total_errors errors)"
+        # Try multiple patterns to extract error count
+        # Pattern 1: "X error(s)" summary
+        local summary_match=$(echo "$lint_output" | grep -oE "[0-9]+ errors?" | head -1 | grep -oE "[0-9]+" || echo "")
+        if [[ -n "$summary_match" ]]; then
+          error_count=$summary_match
+        fi
+
+        # Pattern 2: "Found X error(s)" (ruff style)
+        if [[ $error_count -eq 0 ]]; then
+          summary_match=$(echo "$lint_output" | grep -oE "Found [0-9]+ error" | grep -oE "[0-9]+" || echo "")
+          [[ -n "$summary_match" ]] && error_count=$summary_match
+        fi
+
+        # Pattern 3: Count lines with error indicators (generic)
+        if [[ $error_count -eq 0 ]]; then
+          # Count lines containing file:line patterns (common to all linters)
+          error_count=$(echo "$lint_output" | grep -cE "^[^:]+:[0-9]+:" || echo "0")
+        fi
+
+        if [[ "$error_count" -gt 0 ]]; then
+          log_error "❌ Lint FAILED ($error_count errors)"
           lint_passed=false
           # Show first few error lines
-          echo "$lint_output" | grep -E "error" | head -5 | while read -r line; do
+          echo "$lint_output" | grep -E "^[^:]+:[0-9]+:|error|Error" | head -5 | while read -r line; do
             log_error "   $line"
           done
         else
-          # Lint failed but no errors found - likely max-warnings exceeded
-          log_warn "⚠️ Lint failed (likely max-warnings exceeded)"
-          log_warn "   This may indicate too many warnings - consider fixing them"
-          # Don't fail the task for warnings, but log it
+          # Lint failed but couldn't parse error count
+          log_error "❌ Lint FAILED"
+          lint_passed=false
+          echo "$lint_output" | head -5 | while read -r line; do
+            log_error "   $line"
+          done
         fi
       fi
 

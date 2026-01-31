@@ -53,29 +53,32 @@ get_cmd() {
   # Python
   if [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]] || [[ -f "requirements.txt" ]]; then
     case "$cmd_type" in
-      lint) echo "ruff check ." && return 0 ;;
-      test) echo "pytest -v" && return 0 ;;
-      typecheck) echo "mypy ." && return 0 ;;
-      build) echo "pip install -e ." && return 0 ;;
+      lint) echo "ruff check ." ;;
+      test) echo "pytest -v" ;;
+      typecheck) echo "mypy ." ;;
+      build) echo "pip install -e ." ;;
     esac
+    return 0
   fi
   # Rust
   if [[ -f "Cargo.toml" ]]; then
     case "$cmd_type" in
-      lint) echo "cargo clippy -- -D warnings" && return 0 ;;
-      test) echo "cargo test" && return 0 ;;
-      typecheck) echo "cargo check" && return 0 ;;
-      build) echo "cargo build --release" && return 0 ;;
+      lint) echo "cargo clippy -- -D warnings" ;;
+      test) echo "cargo test" ;;
+      typecheck) echo "cargo check" ;;
+      build) echo "cargo build --release" ;;
     esac
+    return 0
   fi
   # Go
   if [[ -f "go.mod" ]]; then
     case "$cmd_type" in
-      lint) echo "go vet ./..." && return 0 ;;
-      test) echo "go test -v ./..." && return 0 ;;
-      typecheck) echo "go build ./..." && return 0 ;;
-      build) echo "go build -o bin/ ./..." && return 0 ;;
+      lint) echo "go vet ./..." ;;
+      test) echo "go test -v ./..." ;;
+      typecheck) echo "go build ./..." ;;
+      build) echo "go build -o bin/ ./..." ;;
     esac
+    return 0
   fi
   return 1
 }
@@ -188,14 +191,26 @@ else
 fi
 
 # Gate: E2E Tests (optional)
+# Check multiple sources: npm script, Makefile, or standalone script
 echo "━━━ Running E2E tests..."
+E2E_CMD=""
 if has_npm_script "test:e2e"; then
+  E2E_CMD="npm run test:e2e"
+elif [[ -f "Makefile" ]] && grep -q "^test-e2e:" Makefile 2>/dev/null; then
+  E2E_CMD="make test-e2e"
+elif [[ -f "Makefile" ]] && grep -q "^e2e:" Makefile 2>/dev/null; then
+  E2E_CMD="make e2e"
+elif [[ -x "scripts/run_e2e_happy_paths.sh" ]]; then
+  E2E_CMD="./scripts/run_e2e_happy_paths.sh"
+fi
+
+if [[ -n "$E2E_CMD" ]]; then
   RAN_ANY=1
   set +e
-  E2E_OUTPUT=$(npm run test:e2e 2>&1)
+  E2E_OUTPUT=$(eval "$E2E_CMD" 2>&1)
   E2E_EXIT=$?
   set -e
-  
+
   if [[ $E2E_EXIT -eq 0 ]]; then
     echo "| E2E Tests | ✅ PASS | All passed |" >> "$OUT_FILE"
     echo "✅ E2E tests passed"
@@ -205,7 +220,7 @@ if has_npm_script "test:e2e"; then
     echo "❌ E2E tests failed"
   fi
 else
-  echo "| E2E Tests | ⏭️ SKIP | No test:e2e script |" >> "$OUT_FILE"
+  echo "| E2E Tests | ⏭️ SKIP | No E2E test command found |" >> "$OUT_FILE"
   echo "⏭️ E2E tests skipped"
 fi
 
