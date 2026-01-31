@@ -110,12 +110,16 @@ export interface FKValidationDialogProps {
 // FK Actions
 // =============================================================================
 
+/**
+ * FK actions available in the dialog.
+ * Per PRD US-004: SET DEFAULT is not shown (requires DEFAULT which complicates UI).
+ * Order: NO ACTION is default, followed by other options.
+ */
 const FK_ACTIONS: ForeignKeyAction[] = [
   'NO ACTION',
   'RESTRICT',
   'CASCADE',
   'SET NULL',
-  'SET DEFAULT',
 ]
 
 // =============================================================================

@@ -153,18 +153,20 @@ describe('FKEditDialog', () => {
     ).toBeInTheDocument()
   })
 
-  it('has all FK action options in dropdowns', () => {
+  it('has all FK action options in dropdowns (SET DEFAULT excluded per PRD)', () => {
     render(<FKEditDialog {...defaultProps} />)
 
     const onDeleteSelect = screen.getByTestId('fk-edit-on-delete-select')
     const options = onDeleteSelect.querySelectorAll('option')
     const optionValues = Array.from(options).map((o) => o.value)
 
+    // Per PRD US-004: SET DEFAULT not shown (requires DEFAULT which complicates UI)
     expect(optionValues).toContain('NO ACTION')
     expect(optionValues).toContain('RESTRICT')
     expect(optionValues).toContain('CASCADE')
     expect(optionValues).toContain('SET NULL')
-    expect(optionValues).toContain('SET DEFAULT')
+    expect(optionValues).not.toContain('SET DEFAULT')
+    expect(optionValues).toHaveLength(4)
   })
 
   describe('onDirtyChange callback', () => {
