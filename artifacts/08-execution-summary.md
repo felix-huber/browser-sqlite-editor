@@ -56,3 +56,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-2y1 | P4-04: FK creation dialog with action configuration | DONE | cde677dab355127eb49adad7dec5feb5af5b4dc2 | clean |
 | bd-3lz | P1-07: Single-writer lock + read-only open enforcement | FAILED | - | verification failed |
 | bd-3lz | P1-07: Single-writer lock + read-only open enforcement | FAILED | - | verification failed |
+| bd-3lz | P1-07: Single-writer lock + read-only open enforcement | DONE | 736995f69ccb936d04a47d38568ddedcf42b4dd0 | clean |
