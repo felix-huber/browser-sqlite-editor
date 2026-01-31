@@ -181,47 +181,98 @@ describe('parseJSON', () => {
       expect(result.error).toContain('must be an object');
     });
 
-    it('rejects nested objects with descriptive error', () => {
-      const input = JSON.stringify([
-        { name: 'test', nested: { foo: 1 } },
-      ]);
+    it('rejects nested objects with descriptive error including line number', () => {
+      // Multi-line JSON with nested object on line 4
+      const input = `[
+  { "name": "test" },
+  { "name": "ok" },
+  { "name": "bad", "nested": { "foo": 1 } }
+]`;
 
       const result = parseJSON(input);
 
       expect(result.isValid).toBe(false);
       expect(result.error).toContain('nested object');
       expect(result.error).toContain('nested');
+      expect(result.error).toMatch(/line 4/i);
     });
 
-    it('rejects array values with descriptive error', () => {
-      const input = JSON.stringify([
-        { name: 'test', arr: [1, 2, 3] },
-      ]);
+    it('rejects array values with descriptive error including line number', () => {
+      // Multi-line JSON with array value on line 3
+      const input = `[
+  { "name": "test" },
+  { "name": "bad", "arr": [1, 2, 3] }
+]`;
 
       const result = parseJSON(input);
 
       expect(result.isValid).toBe(false);
       expect(result.error).toContain('array');
       expect(result.error).toContain('arr');
+      expect(result.error).toMatch(/line 3/i);
     });
 
     it('rejects null elements in array', () => {
-      const input = JSON.stringify([{ a: 1 }, null, { a: 2 }]);
+      const input = `[
+  { "a": 1 },
+  null,
+  { "a": 2 }
+]`;
 
       const result = parseJSON(input);
 
       expect(result.isValid).toBe(false);
-      expect(result.error).toContain('index 1');
+      expect(result.error).toMatch(/line 3/i);
       expect(result.error).toContain('must be an object');
     });
 
     it('rejects mixed array with non-objects', () => {
-      const input = JSON.stringify([{ a: 1 }, 'string', { a: 2 }]);
+      const input = `[
+  { "a": 1 },
+  "string",
+  { "a": 2 }
+]`;
 
       const result = parseJSON(input);
 
       expect(result.isValid).toBe(false);
-      expect(result.error).toContain('index 1');
+      expect(result.error).toMatch(/line 3/i);
+    });
+  });
+
+  describe('BLOB placeholder handling', () => {
+    it('imports BLOB placeholder object as TEXT with warning', () => {
+      const input = JSON.stringify([
+        { name: 'test', blob: { __blob_base64__: 'SGVsbG8=', bytes: 5 } },
+      ]);
+
+      const result = parseJSON(input);
+
+      expect(result.isValid).toBe(true);
+      expect(result.columns).toEqual([
+        { name: 'name', type: 'TEXT' },
+        { name: 'blob', type: 'TEXT' },
+      ]);
+      // BLOB placeholder imported as string representation
+      expect(result.rows[0][1]).toBe('{"__blob_base64__":"SGVsbG8=","bytes":5}');
+      expect(result.warnings).toBeDefined();
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings![0]).toMatch(/BLOB placeholder/i);
+      expect(result.warnings![0]).toMatch(/line 1/i);
+    });
+
+    it('reports multiple BLOB placeholder warnings', () => {
+      const input = `[
+  { "id": 1, "data": { "__blob_base64__": "AAA=", "bytes": 2 } },
+  { "id": 2, "data": { "__blob_base64__": "BBB=", "bytes": 2 } }
+]`;
+
+      const result = parseJSON(input);
+
+      expect(result.isValid).toBe(true);
+      expect(result.warnings).toHaveLength(2);
+      expect(result.warnings![0]).toMatch(/line 2/i);
+      expect(result.warnings![1]).toMatch(/line 3/i);
     });
   });
 

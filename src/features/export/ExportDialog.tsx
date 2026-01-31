@@ -232,7 +232,9 @@ export function ExportDialog({
         }
 
         if (jsonOptions.arrayOfObjects) {
-          content = exportToJSON(columns, rows, jsonExportOptions)
+          const result = exportToJSON(columns, rows, jsonExportOptions)
+          content = result.json
+          // Warning is shown via blobWarning state in dialog UI
         } else {
           // Object of arrays format
           const objOfArrays: Record<string, unknown[]> = {}
@@ -366,7 +368,7 @@ export function ExportDialog({
           )}
 
           {/* BLOB warning */}
-          {format === 'csv' && blobWarning > 0 && (
+          {(format === 'csv' || format === 'json') && blobWarning > 0 && (
             <div
               className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded text-sm"
               role="alert"
@@ -388,8 +390,9 @@ export function ExportDialog({
               <div>
                 <p className="font-medium text-amber-800">BLOB data detected</p>
                 <p className="text-amber-700">
-                  {blobWarning} BLOB cell{blobWarning !== 1 ? 's' : ''} will be exported as [BLOB] placeholders.
-                  Binary data cannot be represented in CSV format.
+                  {blobWarning} BLOB cell{blobWarning !== 1 ? 's' : ''} will be exported as{' '}
+                  {format === 'csv' ? '[BLOB]' : '{"__blob_base64__": ...}'} placeholders.
+                  Binary data cannot be fully represented in {format.toUpperCase()} format.
                 </p>
               </div>
             </div>

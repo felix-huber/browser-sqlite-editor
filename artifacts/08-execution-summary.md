@@ -33,3 +33,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-1ok | P3-01c: Apply column drop via AST patch + copy plan | DONE | 207f0dc447c4b0afd1a3635b7be6f0aacafa9e47 | clean review |
 | bd-39f | P3-01d: Post-rebuild verification + guardrails | FAILED | - | review/verification failure |
 | bd-ts6 | P2-03: CSV type inference with leading zeros | DONE | 9d6bc9f0521328c92affda1cab00d3d76d2c9a30 | clean review |
+| bd-6sr | P2-04: JSON import flat-only enforcement | FAILED | - | review/verification failure |

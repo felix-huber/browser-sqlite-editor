@@ -380,16 +380,18 @@ describe('ExportDialog', () => {
       expect(screen.queryByTestId('blob-warning')).not.toBeInTheDocument()
     })
 
-    it('hides BLOB warning when switching to JSON format', async () => {
+    it('shows BLOB warning with JSON-specific message when switching to JSON format', async () => {
       const user = userEvent.setup()
       const rows = [[1, new Uint8Array([0x01])]]
       renderDialog({ rows })
 
       expect(screen.getByTestId('blob-warning')).toBeInTheDocument()
+      expect(screen.getByText(/\[BLOB\]/)).toBeInTheDocument()
 
       await user.click(screen.getByTestId('format-json'))
 
-      expect(screen.queryByTestId('blob-warning')).not.toBeInTheDocument()
+      expect(screen.getByTestId('blob-warning')).toBeInTheDocument()
+      expect(screen.getByText(/\{\"__blob_base64__\": \.\.\.\}/)).toBeInTheDocument()
     })
 
     it('hides BLOB warning when switching to SQL format', async () => {

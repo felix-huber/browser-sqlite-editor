@@ -197,21 +197,35 @@ export interface JSONExportOptions {
 }
 
 /**
+ * Result of JSON export operation
+ */
+export interface JSONExportResult {
+  /** The JSON string */
+  json: string;
+  /** Number of BLOB fields replaced with placeholders */
+  blobCount: number;
+  /** Warning message if BLOBs were present */
+  warning?: string;
+}
+
+/**
  * Export table data to JSON string (array of objects).
  *
- * BLOB columns are encoded as base64 strings with a special prefix.
+ * BLOB columns are encoded as objects: {"__blob_base64__": "<base64>", "bytes": N}
  *
  * @param columns - Column names
  * @param rows - Row data (may contain Uint8Array for BLOBs)
  * @param options - Export options
- * @returns JSON string
+ * @returns JSONExportResult with json string, blob count, and optional warning
  */
 export function exportToJSON(
   columns: string[],
   rows: unknown[][],
   options: JSONExportOptions = {}
-): string {
+): JSONExportResult {
   const { pretty = true, indent = 2 } = options;
+
+  let blobCount = 0;
 
   const objects = rows.map((row) => {
     const obj: Record<string, unknown> = {};
@@ -220,8 +234,12 @@ export function exportToJSON(
       const value = row[i];
 
       if (isBlob(value)) {
-        // Encode BLOB as base64 with prefix for identification
-        obj[colName] = `base64:${blobToBase64(value)}`;
+        // Encode BLOB as object placeholder with base64 and byte count
+        blobCount++;
+        obj[colName] = {
+          __blob_base64__: blobToBase64(value),
+          bytes: value.length,
+        };
       } else {
         obj[colName] = value;
       }
@@ -229,9 +247,20 @@ export function exportToJSON(
     return obj;
   });
 
-  return pretty
+  const json = pretty
     ? JSON.stringify(objects, null, indent)
     : JSON.stringify(objects);
+
+  const result: JSONExportResult = {
+    json,
+    blobCount,
+  };
+
+  if (blobCount > 0) {
+    result.warning = `${blobCount} BLOB field(s) exported as base64 placeholders`;
+  }
+
+  return result;
 }
 
 /**

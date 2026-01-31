@@ -1,16 +1,16 @@
 {
   "runId": "2026-01-31T00:28:10+01:00",
-  "updatedAt": "2026-01-31T04:26:09+01:00",
+  "updatedAt": "2026-01-31T04:37:54+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-ts6",
-    "subject": "P2-03: CSV type inference with leading zeros",
+    "id": "bd-2kg",
+    "subject": "P2-06: JSON export BLOB placeholder format",
     "status": "completed",
     "phase": "review",
-    "attempt": 2
+    "attempt": 3
   },
   "tools": {
     "implementer": "claude",

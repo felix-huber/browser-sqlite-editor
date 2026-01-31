@@ -287,8 +287,8 @@ describe('exportToJSON', () => {
         ['Bob', 25],
       ];
 
-      const json = exportToJSON(columns, rows);
-      const parsed = JSON.parse(json);
+      const result = exportToJSON(columns, rows);
+      const parsed = JSON.parse(result.json);
 
       expect(parsed).toEqual([
         { name: 'Alice', age: 30 },
@@ -300,27 +300,27 @@ describe('exportToJSON', () => {
       const columns = ['name'];
       const rows = [['Alice']];
 
-      const json = exportToJSON(columns, rows, { pretty: false });
+      const result = exportToJSON(columns, rows, { pretty: false });
 
-      expect(json).toBe('[{"name":"Alice"}]');
-      expect(json).not.toContain('\n');
+      expect(result.json).toBe('[{"name":"Alice"}]');
+      expect(result.json).not.toContain('\n');
     });
 
     it('uses custom indentation', () => {
       const columns = ['name'];
       const rows = [['Alice']];
 
-      const json = exportToJSON(columns, rows, { indent: 4 });
+      const result = exportToJSON(columns, rows, { indent: 4 });
 
-      expect(json).toContain('    "name"');
+      expect(result.json).toContain('    "name"');
     });
 
     it('handles null values', () => {
       const columns = ['name', 'age'];
       const rows = [[null, 30]];
 
-      const json = exportToJSON(columns, rows);
-      const parsed = JSON.parse(json);
+      const result = exportToJSON(columns, rows);
+      const parsed = JSON.parse(result.json);
 
       expect(parsed[0]).toEqual({ name: null, age: 30 });
     });
@@ -329,43 +329,99 @@ describe('exportToJSON', () => {
       const columns = ['name'];
       const rows: unknown[][] = [];
 
-      const json = exportToJSON(columns, rows);
-      const parsed = JSON.parse(json);
+      const result = exportToJSON(columns, rows);
+      const parsed = JSON.parse(result.json);
 
       expect(parsed).toEqual([]);
     });
   });
 
   describe('BLOB handling', () => {
-    it('encodes BLOB as base64 with prefix', () => {
+    it('encodes BLOB as object placeholder with base64 and byte count', () => {
       const columns = ['id', 'data'];
-      const rows = [[1, new Uint8Array([72, 101, 108, 108, 111])]]; // "Hello"
+      const rows = [[1, new Uint8Array([72, 101, 108, 108, 111])]]; // "Hello" (5 bytes)
 
-      const json = exportToJSON(columns, rows);
-      const parsed = JSON.parse(json);
+      const result = exportToJSON(columns, rows);
+      const parsed = JSON.parse(result.json);
 
-      expect(parsed[0].data).toBe('base64:SGVsbG8=');
+      expect(parsed[0].data).toEqual({
+        __blob_base64__: 'SGVsbG8=',
+        bytes: 5,
+      });
     });
 
     it('handles empty BLOB', () => {
       const columns = ['data'];
       const rows = [[new Uint8Array([])]];
 
-      const json = exportToJSON(columns, rows);
-      const parsed = JSON.parse(json);
+      const result = exportToJSON(columns, rows);
+      const parsed = JSON.parse(result.json);
 
-      expect(parsed[0].data).toBe('base64:');
+      expect(parsed[0].data).toEqual({
+        __blob_base64__: '',
+        bytes: 0,
+      });
     });
 
     it('handles BLOB with binary data', () => {
       const columns = ['data'];
       const rows = [[new Uint8Array([0x00, 0xff, 0x80, 0x7f])]];
 
-      const json = exportToJSON(columns, rows);
-      const parsed = JSON.parse(json);
+      const result = exportToJSON(columns, rows);
+      const parsed = JSON.parse(result.json);
 
-      // Verify it's a valid base64 string
-      expect(parsed[0].data).toMatch(/^base64:[A-Za-z0-9+/]*=*$/);
+      expect(parsed[0].data).toEqual({
+        __blob_base64__: expect.stringMatching(/^[A-Za-z0-9+/]*=*$/),
+        bytes: 4,
+      });
+    });
+
+    it('returns blobCount of 0 when no BLOBs present', () => {
+      const columns = ['name', 'age'];
+      const rows = [['Alice', 30]];
+
+      const result = exportToJSON(columns, rows);
+
+      expect(result.blobCount).toBe(0);
+    });
+
+    it('returns blobCount matching number of BLOB fields replaced', () => {
+      const columns = ['id', 'data1', 'data2'];
+      const rows = [
+        [1, new Uint8Array([1, 2]), new Uint8Array([3, 4])],
+        [2, 'text', new Uint8Array([5, 6])],
+      ];
+
+      const result = exportToJSON(columns, rows);
+
+      expect(result.blobCount).toBe(3); // 2 blobs in first row, 1 in second
+    });
+
+    it('returns warning message when BLOBs are present', () => {
+      const columns = ['id', 'data'];
+      const rows = [[1, new Uint8Array([1, 2, 3])]];
+
+      const result = exportToJSON(columns, rows);
+
+      expect(result.warning).toBe('1 BLOB field(s) exported as base64 placeholders');
+    });
+
+    it('returns no warning when no BLOBs present', () => {
+      const columns = ['name'];
+      const rows = [['Alice']];
+
+      const result = exportToJSON(columns, rows);
+
+      expect(result.warning).toBeUndefined();
+    });
+
+    it('pluralizes warning correctly for multiple BLOBs', () => {
+      const columns = ['a', 'b'];
+      const rows = [[new Uint8Array([1]), new Uint8Array([2])]];
+
+      const result = exportToJSON(columns, rows);
+
+      expect(result.warning).toBe('2 BLOB field(s) exported as base64 placeholders');
     });
   });
 
@@ -374,8 +430,8 @@ describe('exportToJSON', () => {
       const columns = ['active'];
       const rows = [[true], [false]];
 
-      const json = exportToJSON(columns, rows);
-      const parsed = JSON.parse(json);
+      const result = exportToJSON(columns, rows);
+      const parsed = JSON.parse(result.json);
 
       expect(parsed).toEqual([{ active: true }, { active: false }]);
     });
@@ -384,8 +440,8 @@ describe('exportToJSON', () => {
       const columns = ['int', 'float'];
       const rows = [[42, 3.14]];
 
-      const json = exportToJSON(columns, rows);
-      const parsed = JSON.parse(json);
+      const result = exportToJSON(columns, rows);
+      const parsed = JSON.parse(result.json);
 
       expect(parsed[0]).toEqual({ int: 42, float: 3.14 });
     });
@@ -394,8 +450,8 @@ describe('exportToJSON', () => {
       const columns = ['text'];
       const rows = [['line1\nline2\ttab"quote']];
 
-      const json = exportToJSON(columns, rows);
-      const parsed = JSON.parse(json);
+      const result = exportToJSON(columns, rows);
+      const parsed = JSON.parse(result.json);
 
       expect(parsed[0].text).toBe('line1\nline2\ttab"quote');
     });
@@ -404,8 +460,8 @@ describe('exportToJSON', () => {
       const columns = ['text'];
       const rows = [['Hello World']];
 
-      const json = exportToJSON(columns, rows);
-      const parsed = JSON.parse(json);
+      const result = exportToJSON(columns, rows);
+      const parsed = JSON.parse(result.json);
 
       expect(parsed[0].text).toBe('Hello World');
     });
