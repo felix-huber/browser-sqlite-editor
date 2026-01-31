@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest'
 import {
   quoteIdentifier,
   escapeLikePattern,
-  generateAlias,
 } from '../sql/helpers'
 
 describe('quoteIdentifier', () => {
@@ -169,68 +168,15 @@ describe('escapeLikePattern', () => {
       expect(escapeLikePattern('%_\\')).toBe('\\%\\_\\\\')
     })
   })
-})
 
-describe('generateAlias', () => {
-  describe('basic functionality', () => {
-    it('returns Table.Column format', () => {
-      expect(generateAlias('users', 'name')).toBe('users.name')
+  describe('NULL handling', () => {
+    it('returns null when given null', () => {
+      expect(escapeLikePattern(null as unknown as string)).toBe(null)
     })
 
-    it('handles different table and column names', () => {
-      expect(generateAlias('orders', 'id')).toBe('orders.id')
-    })
-
-    it('handles underscores in names', () => {
-      expect(generateAlias('user_roles', 'role_id')).toBe('user_roles.role_id')
-    })
-  })
-
-  describe('special characters', () => {
-    it('handles spaces in table name', () => {
-      expect(generateAlias('my table', 'col')).toBe('my table.col')
-    })
-
-    it('handles spaces in column name', () => {
-      expect(generateAlias('table', 'my col')).toBe('table.my col')
-    })
-
-    it('handles dots in names (does not escape)', () => {
-      expect(generateAlias('schema.table', 'col')).toBe('schema.table.col')
-    })
-  })
-
-  describe('reserved words', () => {
-    it('handles reserved word as table', () => {
-      expect(generateAlias('SELECT', 'id')).toBe('SELECT.id')
-    })
-
-    it('handles reserved word as column', () => {
-      expect(generateAlias('users', 'TABLE')).toBe('users.TABLE')
-    })
-  })
-
-  describe('unicode', () => {
-    it('handles unicode table name', () => {
-      expect(generateAlias('ユーザー', 'name')).toBe('ユーザー.name')
-    })
-
-    it('handles unicode column name', () => {
-      expect(generateAlias('users', '名前')).toBe('users.名前')
-    })
-  })
-
-  describe('edge cases', () => {
-    it('handles empty table name', () => {
-      expect(generateAlias('', 'col')).toBe('.col')
-    })
-
-    it('handles empty column name', () => {
-      expect(generateAlias('table', '')).toBe('table.')
-    })
-
-    it('handles both empty', () => {
-      expect(generateAlias('', '')).toBe('.')
+    it('returns undefined when given undefined', () => {
+      expect(escapeLikePattern(undefined as unknown as string)).toBe(undefined)
     })
   })
 })
+

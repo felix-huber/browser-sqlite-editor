@@ -1,29 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import {
   generateSelectQuery,
-  quoteIdentifier,
   generateTieBreakerColumns,
   type QueryBuilderState,
 } from '../sql/query-builder'
 import type { TableInfo, ColumnInfo } from '../../types'
 
-describe('quoteIdentifier', () => {
-  it('quotes simple identifier', () => {
-    expect(quoteIdentifier('users')).toBe('"users"')
-  })
-
-  it('escapes double quotes', () => {
-    expect(quoteIdentifier('my"table')).toBe('"my""table"')
-  })
-
-  it('handles multiple double quotes', () => {
-    expect(quoteIdentifier('a"b"c')).toBe('"a""b""c"')
-  })
-
-  it('handles empty string', () => {
-    expect(quoteIdentifier('')).toBe('""')
-  })
-})
+// quoteIdentifier tests are in sql-helpers.test.ts
 
 describe('generateSelectQuery', () => {
   describe('empty state', () => {

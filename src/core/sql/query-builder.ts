@@ -8,6 +8,7 @@ import type { SortCondition } from '../../features/query-builder/OrderByBuilder'
 import type { WhereCondition } from '../../features/query-builder/WhereBuilder'
 import { generateWhereClause } from '../../features/query-builder/WhereBuilder'
 import type { TableInfo } from '../../types'
+import { quoteIdentifier } from './helpers'
 
 /** Table on the canvas with its selection state */
 export interface QueryTable {
@@ -57,16 +58,6 @@ export interface GeneratedQuery {
   sql: string
   /** Parameterized values for prepared statement */
   params: unknown[]
-}
-
-/**
- * Quote an identifier (table or column name) for SQLite.
- * Uses double quotes and escapes internal quotes.
- */
-export function quoteIdentifier(name: string): string {
-  // Escape double quotes by doubling them
-  const escaped = name.replace(/"/g, '""')
-  return `"${escaped}"`
 }
 
 /**

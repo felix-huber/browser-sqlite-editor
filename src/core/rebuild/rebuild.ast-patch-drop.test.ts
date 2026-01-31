@@ -280,8 +280,9 @@ describe('Copy statement for drop column', () => {
       targetColumns
     )
 
+    // 'first' is quoted because it's a SQLite reserved keyword
     expect(sql).toBe(
-      'INSERT INTO _t_rebuild_temp (first, second) SELECT first, second FROM t'
+      'INSERT INTO _t_rebuild_temp ("first", second) SELECT "first", second FROM t'
     )
   })
 

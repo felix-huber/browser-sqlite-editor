@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo } from 'react'
-import { escapeLike, getEscapeClause } from '../../core/sql/escape'
+import { escapeLike, getEscapeClause } from '../../core/sql/helpers'
 
 /** Column info for condition building */
 export interface WhereBuilderColumn {
