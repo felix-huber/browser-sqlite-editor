@@ -32,34 +32,74 @@ interface CreateDbResult {
 }
 
 /**
- * Clear all storage for clean test state
+ * Clear all storage for clean test state.
+ * Must clean ALL known databases including VFS storage to prevent
+ * corrupted state from affecting subsequent tests.
  */
 async function clearAllStorage(page: Page): Promise<void> {
   await page.evaluate(async () => {
     // Clear localStorage (heartbeat locks)
     localStorage.clear();
 
-    // Clear IndexedDB databases
+    // Clear IndexedDB databases - include ALL known databases
     const deleteIdb = (name: string): Promise<void> => {
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve) => {
         const req = indexedDB.deleteDatabase(name);
         req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
+        req.onerror = () => resolve(); // Continue even on error
         req.onblocked = () => resolve();
       });
     };
 
-    await deleteIdb('sqlite-editor-registry');
-    await deleteIdb('idb-sqlite');
+    // Known databases that might exist
+    const knownDbs = [
+      'sqlite-editor-registry',
+      'idb-sqlite',
+      'idb-batch-atomic',  // VFS storage
+    ];
 
-    // Clear OPFS if available
+    // Try to list all databases if available
+    if (typeof indexedDB.databases === 'function') {
+      try {
+        const dbs = await indexedDB.databases();
+        for (const db of dbs) {
+          if (db.name) {
+            await deleteIdb(db.name);
+          }
+        }
+      } catch {
+        // Fall back to known list
+        for (const name of knownDbs) {
+          await deleteIdb(name);
+        }
+      }
+    } else {
+      for (const name of knownDbs) {
+        await deleteIdb(name);
+      }
+    }
+
+    // Clear ALL OPFS directories (not just known ones)
     try {
       if (navigator.storage?.getDirectory) {
         const root = await navigator.storage.getDirectory();
-        try {
-          await root.removeEntry('sqlite-editor', { recursive: true });
-        } catch {
-          // Directory might not exist
+
+        // Collect all directory names first (can't modify while iterating)
+        const dirsToDelete: string[] = [];
+        // @ts-expect-error - entries() is available
+        for await (const [name, handle] of root.entries()) {
+          if (handle.kind === 'directory') {
+            dirsToDelete.push(name);
+          }
+        }
+
+        // Delete each directory
+        for (const name of dirsToDelete) {
+          try {
+            await root.removeEntry(name, { recursive: true });
+          } catch {
+            // Ignore errors - directory might be locked
+          }
         }
       }
     } catch {

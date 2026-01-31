@@ -16,13 +16,14 @@ import { test, expect, type Page } from '@playwright/test';
 
 /**
  * Clear all storage (OPFS and IndexedDB)
+ * Must clean ALL known databases including VFS storage.
  */
 async function clearAllStorage(page: Page): Promise<void> {
   await page.evaluate(async () => {
     // Clear localStorage
     localStorage.clear();
 
-    // Clear IndexedDB
+    // Clear IndexedDB - include ALL known databases
     const deleteIdb = (name: string): Promise<void> => {
       return new Promise((resolve) => {
         const req = indexedDB.deleteDatabase(name);
@@ -32,24 +33,45 @@ async function clearAllStorage(page: Page): Promise<void> {
       });
     };
 
-    const knownDbs = ['sqlite-editor-registry', 'idb-sqlite'];
-    for (const name of knownDbs) {
-      await deleteIdb(name);
+    const knownDbs = ['sqlite-editor-registry', 'idb-sqlite', 'idb-batch-atomic'];
+
+    // Try to list all databases if available
+    if (typeof indexedDB.databases === 'function') {
+      try {
+        const dbs = await indexedDB.databases();
+        for (const db of dbs) {
+          if (db.name) {
+            await deleteIdb(db.name);
+          }
+        }
+      } catch {
+        for (const name of knownDbs) {
+          await deleteIdb(name);
+        }
+      }
+    } else {
+      for (const name of knownDbs) {
+        await deleteIdb(name);
+      }
     }
 
-    // Clear OPFS
+    // Clear ALL OPFS directories
     try {
       if (navigator.storage?.getDirectory) {
         const root = await navigator.storage.getDirectory();
-        try {
-          await root.removeEntry('sqlite-editor', { recursive: true });
-        } catch {
-          // ignore missing dir
+        const dirsToDelete: string[] = [];
+        // @ts-expect-error - entries() is available
+        for await (const [name, handle] of root.entries()) {
+          if (handle.kind === 'directory') {
+            dirsToDelete.push(name);
+          }
         }
-        try {
-          await root.removeEntry('wasm-sqlite-editor', { recursive: true });
-        } catch {
-          // ignore missing dir
+        for (const name of dirsToDelete) {
+          try {
+            await root.removeEntry(name, { recursive: true });
+          } catch {
+            // ignore
+          }
         }
       }
     } catch {

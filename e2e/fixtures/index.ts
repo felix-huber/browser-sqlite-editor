@@ -23,13 +23,21 @@ export const test = base.extend<{
           req.onblocked = () => resolve();
         });
 
-      const knownDbs = ['sqlite-editor-registry', 'idb-sqlite'];
+      // Include ALL known databases (VFS storage too)
+      const knownDbs = ['sqlite-editor-registry', 'idb-sqlite', 'idb-batch-atomic'];
 
       if (typeof indexedDB.databases === 'function') {
-        const dbs = await indexedDB.databases();
-        for (const db of dbs) {
-          if (db.name) {
-            await deleteIdb(db.name);
+        try {
+          const dbs = await indexedDB.databases();
+          for (const db of dbs) {
+            if (db.name) {
+              await deleteIdb(db.name);
+            }
+          }
+        } catch {
+          // Fall back to known list
+          for (const name of knownDbs) {
+            await deleteIdb(name);
           }
         }
       } else {
@@ -38,19 +46,23 @@ export const test = base.extend<{
         }
       }
 
+      // Clear ALL OPFS directories (not just known ones)
       if (navigator.storage?.getDirectory) {
         try {
           const root = await navigator.storage.getDirectory();
-          // Remove both old and new layout directories
-          try {
-            await root.removeEntry('sqlite-editor', { recursive: true });
-          } catch {
-            // ignore missing dir
+          const dirsToDelete: string[] = [];
+          // @ts-expect-error - entries() is available
+          for await (const [name, handle] of root.entries()) {
+            if (handle.kind === 'directory') {
+              dirsToDelete.push(name);
+            }
           }
-          try {
-            await root.removeEntry('wasm-sqlite-editor', { recursive: true });
-          } catch {
-            // ignore missing dir
+          for (const name of dirsToDelete) {
+            try {
+              await root.removeEntry(name, { recursive: true });
+            } catch {
+              // ignore locked dirs
+            }
           }
         } catch {
           // ignore OPFS errors
