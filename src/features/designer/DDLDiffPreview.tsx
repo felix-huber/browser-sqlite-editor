@@ -88,6 +88,12 @@ export interface ValidationResult {
 function generateColumnDef(col: DesignerColumnDraft): string {
   let def = `${escapeIdentifier(col.name)} ${col.type}`;
 
+  // Generated columns have special syntax and cannot have regular constraints
+  if (col.generated) {
+    def = `${escapeIdentifier(col.name)} ${col.type} GENERATED ALWAYS AS (${col.generatedExpression || 'NULL'}) ${col.generated.toUpperCase()}`;
+    return def;
+  }
+
   if (col.isPrimaryKey) {
     def += ' PRIMARY KEY';
   }
@@ -99,11 +105,6 @@ function generateColumnDef(col: DesignerColumnDraft): string {
   }
   if (col.defaultValue !== null && col.defaultValue !== undefined) {
     def += ` DEFAULT ${col.defaultValue}`;
-  }
-  if (col.generated) {
-    // Generated columns cannot have defaults; they have AS expressions
-    // The generatedExpression would be set separately
-    def = `${escapeIdentifier(col.name)} ${col.type} GENERATED ALWAYS AS (${col.generatedExpression || 'NULL'}) ${col.generated.toUpperCase()}`;
   }
 
   return def;

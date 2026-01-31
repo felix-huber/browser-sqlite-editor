@@ -1,20 +1,20 @@
 {
-  "runId": "2026-01-31T19:19:39+01:00",
-  "updatedAt": "2026-01-31T19:19:39+01:00",
+  "runId": "2026-01-31T19:19:42+01:00",
+  "updatedAt": "2026-01-31T19:19:42+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-3mp",
-    "subject": "P3-03: Prefer native ALTER TABLE",
-    "status": "completed",
-    "phase": "done",
+    "id": "bd-u9l",
+    "subject": "P3-04: DDL diff preview enhancement",
+    "status": "running",
+    "phase": "implement",
     "attempt": 1
   },
   "tools": {
     "implementer": "claude",
     "reviewer": "claude"
   },
-  "note": "all checks passed"
+  "note": "started"
 }

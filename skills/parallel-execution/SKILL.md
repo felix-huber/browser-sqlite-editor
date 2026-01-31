@@ -283,10 +283,15 @@ After each phase or full run:
 # Launch Ralph with parallel execution
 ./scripts/ralph.sh --parallel 3 --fresh-eyes 50
 
+# Recommended for CI sync (pushes after each commit)
+./scripts/ralph.sh --auto-push --beads 50
+
 # Options:
-#   --parallel N    Run up to N agents in parallel
-#   --self-heal     Enable automatic stuck task recovery
-#   --phase-gates   Wait for phase completion before next
+#   --parallel N           Run up to N agents in parallel
+#   --self-heal            Enable automatic stuck task recovery (default: on)
+#   --phase-gates          Wait for phase completion before next
+#   --auto-push            Push to remote after each successful commit
+#   --override-lock <pid>  Override stale lockfile (for agents that can't delete files)
 ```
 
 ### Without Parallelism (Sequential)

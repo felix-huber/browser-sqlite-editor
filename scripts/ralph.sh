@@ -62,6 +62,7 @@ done
 unset _args
 
 cleanup_lock() { rm -f "$RALPH_LOCK" 2>/dev/null; }
+handle_signal() { cleanup_lock; exit 130; }  # 130 = 128 + SIGINT(2)
 acquire_lock() {
   if [[ -f "$RALPH_LOCK" ]]; then
     local lock_pid
@@ -83,6 +84,7 @@ acquire_lock() {
   fi
   echo $$ > "$RALPH_LOCK"
   trap cleanup_lock EXIT
+  trap handle_signal INT TERM
 }
 acquire_lock
 
@@ -245,6 +247,10 @@ parse_args() {
         ;;
       --override-lock)
         # Already pre-parsed before acquire_lock, just consume the argument
+        if [[ -z "${2:-}" || "$2" == -* ]]; then
+          log_error "--override-lock requires a PID value"
+          exit 1
+        fi
         shift 2
         ;;
       --auto-pr)
@@ -2021,8 +2027,7 @@ get_task_by_id() {
   local task_id="$1"
   if [[ "$USE_BEADS" == "true" ]]; then
     local bead_json
-    # br show --json returns an array, extract first element
-    bead_json=$(br show "$task_id" --json 2>/dev/null | jq -c '.[0] // empty' 2>/dev/null || echo "")
+    bead_json=$(br show "$task_id" --json 2>/dev/null || echo "")
     if [[ -z "$bead_json" || "$bead_json" == "null" ]]; then
       echo ""
       return
@@ -2541,9 +2546,7 @@ get_cmd() {
 # Check if a command exists for given type
 has_cmd() {
   local cmd_type="$1"
-  local result
-  result=$(get_cmd "$cmd_type" 2>/dev/null)
-  [[ -n "$result" ]]
+  get_cmd "$cmd_type" >/dev/null 2>&1
 }
 
 # Verify the project builds successfully

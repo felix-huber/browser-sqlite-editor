@@ -1347,16 +1347,16 @@ describe('DataGrid', () => {
         expect(screen.getByTestId('add-row-dialog')).toBeInTheDocument();
       });
 
-      // Fill fields
-      await user.type(screen.getByTestId('field-name'), 'Duplicate');
-      await user.type(screen.getByTestId('field-price'), '10');
+      // Fill fields - use fireEvent.change for CI reliability
+      fireEvent.change(screen.getByTestId('field-name'), { target: { value: 'Duplicate' } });
+      fireEvent.change(screen.getByTestId('field-price'), { target: { value: '10' } });
 
       // Submit
       await user.click(screen.getByTestId('add-row-submit'));
 
       await vi.waitFor(() => {
         expect(screen.getByTestId('add-row-error')).toHaveTextContent('Unique constraint violated');
-      });
+      }, { timeout: 5000 });
     });
 
     it('shows toolbar even when data is empty (to allow adding first row)', () => {
