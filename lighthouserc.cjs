@@ -6,27 +6,20 @@ module.exports = {
       numberOfRuns: 3,
     },
     assert: {
-      // Use 'warn' level for all assertions to avoid CI failure
-      // The actual scores are logged for visibility
-      preset: 'lighthouse:no-pwa',
+      // Use recommended preset - this is a PWA with offline support
+      preset: 'lighthouse:recommended',
       assertions: {
-        // Downgrade all default assertions to warn level
-        'categories:performance': ['warn', { minScore: 0.5 }],
-        'categories:accessibility': ['warn', { minScore: 0.7 }],
-        'categories:best-practices': ['warn', { minScore: 0.7 }],
-        'categories:seo': ['warn', { minScore: 0.5 }],
-        // Disable audits that produce NaN or are flaky
+        // Error-level assertions for real enforcement (scores already 99%+)
+        'categories:performance': ['error', { minScore: 0.9 }],
+        'categories:accessibility': ['error', { minScore: 0.9 }],
+        'categories:best-practices': ['error', { minScore: 0.9 }],
+        'categories:seo': ['error', { minScore: 0.9 }],
+        // Disable only flaky/NaN-producing audits
         'lcp-lazy-loaded': 'off',
         'prioritize-lcp-image': 'off',
         'non-composited-animations': 'off',
-        // Allow some flexibility on these audits
-        'unused-javascript': 'off',
-        'unminified-javascript': 'off',
-        'errors-in-console': 'off',
-        'aria-allowed-role': 'off',
-        'color-contrast': 'off',
-        'meta-description': 'off',
-        'font-size': 'off',
+        'network-dependency-tree-insight': 'off', // New audit, flaky score=0
+        // Keep enabled: color-contrast, aria-allowed-role (now fixed)
       },
     },
     upload: {
