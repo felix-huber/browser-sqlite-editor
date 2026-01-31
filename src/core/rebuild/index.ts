@@ -33,3 +33,19 @@ export {
   type CompileCheckResult,
   type CompileCheckAllResult,
 } from './compile-check';
+
+// Strategy module for native ALTER TABLE vs rebuild decisions
+export {
+  getColumnRenameStrategy,
+  getColumnDropStrategy,
+  getTypeChangeStrategy,
+  getForeignKeyModificationStrategy,
+  getBatchModificationStrategy,
+  type SchemaModificationType,
+  type ModificationStrategy,
+  type StrategyDecision,
+  type ColumnRenameInput,
+  type ColumnDropInput,
+  type BatchModificationInput,
+  type BatchStrategyResult,
+} from './strategy';
