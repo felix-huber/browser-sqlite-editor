@@ -1,5 +1,22 @@
 import { expect, type Page } from '@playwright/test';
 
+/**
+ * Dismiss the UnsavedPrompt modal if it appears.
+ * This modal blocks navigation when there are unsaved changes.
+ * In tests, we typically want to discard changes and continue.
+ */
+export async function dismissUnsavedPromptIfVisible(page: Page, timeout = 2000) {
+  const discardButton = page.getByTestId('unsaved-prompt-discard');
+  try {
+    await discardButton.waitFor({ state: 'visible', timeout });
+    await discardButton.click();
+    // Wait for modal to close
+    await page.getByTestId('unsaved-prompt-backdrop').waitFor({ state: 'hidden', timeout: 2000 });
+  } catch {
+    // Modal didn't appear, which is fine
+  }
+}
+
 export async function waitForReady(page: Page) {
   await page.waitForLoadState('networkidle');
   const statusBar = page.locator('[data-testid="status-bar"]');
@@ -32,10 +49,16 @@ export async function createAndOpenDatabase(page: Page, dbName: string) {
   const createButton = page.getByTestId('create-button');
   await expect(createButton).toBeEnabled({ timeout: 5000 });
   await createButton.click();
-  await expect(page.getByTestId('new-database-dialog')).toBeHidden({ timeout: 5000 });
+  // Handle UnsavedPrompt modal if it appears (e.g., from previous unsaved changes)
+  // This can appear BEFORE the new-database-dialog closes
+  await dismissUnsavedPromptIfVisible(page);
+  // Wait for both the new-database-dialog and any UnsavedPrompt to be hidden
+  await expect(page.getByTestId('new-database-dialog')).toBeHidden({ timeout: 10000 });
   const recent = page.getByTestId(`recent-db-${dbName}`);
   if (await recent.isVisible().catch(() => false)) {
     await recent.click();
+    // Handle UnsavedPrompt again if it appears when opening the database
+    await dismissUnsavedPromptIfVisible(page);
   }
   await waitForReady(page);
   await expect(page.getByTestId('tab-sql')).toBeVisible({ timeout: 15000 });
@@ -60,12 +83,16 @@ export async function openDatabaseFromWelcome(page: Page, dbName: string) {
     await expect(dbRow).toBeVisible({ timeout: 15000 });
     await dbRow.click();
   }
+  // Handle UnsavedPrompt modal if it appears when switching databases
+  await dismissUnsavedPromptIfVisible(page);
   await waitForReady(page);
   await expect(page.getByTestId('tab-sql')).toBeVisible({ timeout: 15000 });
 }
 
 export async function runSql(page: Page, sql: string) {
   await page.getByTestId('tab-sql').click();
+  // Handle UnsavedPrompt modal if it appears when switching to SQL tab
+  await dismissUnsavedPromptIfVisible(page);
   const directInput = page.getByTestId('sql-input');
   if (await directInput.count()) {
     await directInput.fill(sql, { force: true });
@@ -116,6 +143,8 @@ export async function openTable(page: Page, dbName: string, tableName: string) {
   const item = page.getByTestId(`item-table-${tableName}`);
   await expect(item).toBeVisible({ timeout: 5000 });
   await item.click();
+  // Handle UnsavedPrompt modal if it appears when switching tables
+  await dismissUnsavedPromptIfVisible(page);
   await expect(page.getByTestId('data-grid')).toBeVisible({ timeout: 10000 });
 }
 
@@ -128,4 +157,6 @@ export async function openViewTab(page: Page, name: 'Table' | 'SQL' | 'Designer'
     ERD: 'tab-erd',
   };
   await page.getByTestId(mapping[name]).click();
+  // Handle UnsavedPrompt modal if it appears when switching tabs
+  await dismissUnsavedPromptIfVisible(page);
 }

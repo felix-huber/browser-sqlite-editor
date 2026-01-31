@@ -221,6 +221,27 @@ describe('verification: schema preservation check', () => {
         expect.objectContaining({ type: 'query_error' })
       )
     })
+
+    it('handles table not found in sqlite_master', async () => {
+      const originalSql = 'CREATE TABLE t (x INTEGER CHECK (x > 0))'
+      const engine = {
+        query: vi.fn().mockResolvedValue({ columns: ['sql'], rows: [] }),
+        exec: vi.fn(),
+        close: vi.fn(),
+      } as unknown as DatabaseEngine
+
+      const result = await verifySchemaPreservation(engine, 't', originalSql)
+
+      expect(result.success).toBe(false)
+      expect(result.shouldRollback).toBe(true)
+      expect(result.failures).toContainEqual(
+        expect.objectContaining({
+          type: 'query_error',
+          message: 'Table "t" not found in sqlite_master',
+        })
+      )
+      expect(result.errorMessage).toBe(UNSUPPORTED_SCHEMA_ERROR)
+    })
   })
 })
 

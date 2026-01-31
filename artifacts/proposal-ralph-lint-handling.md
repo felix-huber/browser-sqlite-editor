@@ -901,10 +901,41 @@ Add TTL or parent-task awareness:
 
 ---
 
+## Pattern 14: `br show --json` Returns Array (bd-39f)
+
+### Problem Observed
+`get_task_by_id()` in ralph.sh passes `br show --json` output to `build_task_json_from_bead()`, but:
+- `br show --json` returns an **array** like `[{...}]`
+- `build_task_json_from_bead` tries to access `.id`, `.description` directly
+- jq fails with "Cannot index array with string"
+- Verification extraction returns empty, causing Pattern 8 refresh to fail
+
+### Impact
+- Pattern 8 fix (refresh_task_verification) doesn't work for beads
+- Mid-iteration bead fixes aren't picked up
+- Tasks fail verification repeatedly
+
+### Status: ✅ FIXED
+
+Fix applied in ralph.sh `get_task_by_id()`:
+```bash
+# Before:
+bead_json=$(br show "$task_id" --json 2>/dev/null || echo "")
+
+# After:
+bead_json=$(br show "$task_id" --json 2>/dev/null | jq -c '.[0] // empty' 2>/dev/null || echo "")
+```
+
+### Note
+Running ralph instances won't pick up this fix until restarted.
+
+---
+
 ## Implementation Priority Matrix
 
 | Pattern | Severity | Effort | ROI |
 |---------|----------|--------|-----|
+| 14. br show array | High | Low | **Very High** |
 | 10. Multiple processes | High | Low | **Very High** |
 | 11. Auto-push | Medium | Low | High |
 | 6. Non-command validation | High | Medium | **Very High** |

@@ -2021,7 +2021,8 @@ get_task_by_id() {
   local task_id="$1"
   if [[ "$USE_BEADS" == "true" ]]; then
     local bead_json
-    bead_json=$(br show "$task_id" --json 2>/dev/null || echo "")
+    # br show --json returns an array, extract first element
+    bead_json=$(br show "$task_id" --json 2>/dev/null | jq -c '.[0] // empty' 2>/dev/null || echo "")
     if [[ -z "$bead_json" || "$bead_json" == "null" ]]; then
       echo ""
       return
