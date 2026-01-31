@@ -181,6 +181,170 @@ test.describe('Query Builder', () => {
 });
 
 // =============================================================================
+// PRD E2E Scenarios
+// =============================================================================
+
+test.describe('Query Builder PRD Scenarios', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupQueryDb(page);
+  });
+
+  /**
+   * E2E-US-006-01: Join 2 tables, select 3 cols, add WHERE condition;
+   * verify deterministic SQL output and parameterized values.
+   */
+  test('E2E-US-006-01: deterministic SQL with parameterized WHERE', async ({ page }) => {
+    // 1. Add both tables to canvas
+    await dragTable(page, 'users');
+    await dragTable(page, 'orders');
+
+    // 2. Create join between users.id and orders.user_id
+    await connectJoin(page);
+    await expect(page.getByTestId('join-count')).toContainText('1');
+
+    // 3. Select specific columns from users (name) and orders (total, created_at) = 3 cols
+    const usersBox = getTableBox(page, 'users');
+    const ordersBox = getTableBox(page, 'orders');
+
+    // Click on specific columns in users table (force: true to bypass overlays)
+    await usersBox.locator('[data-testid="column-checkbox-1"]').click({ force: true }); // name
+
+    // Click on specific columns in orders table
+    // Note: orders columns are: 0=id, 1=user_id, 2=total, 3=created_at
+    // Scroll into view and use evaluate to trigger the change event for better reliability
+    const totalCheckbox = ordersBox.locator('[data-testid="column-checkbox-2"]');
+    await totalCheckbox.scrollIntoViewIfNeeded();
+    await totalCheckbox.evaluate((el: HTMLInputElement) => el.click()); // total
+    await expect(totalCheckbox).toBeChecked();
+
+    const createdAtCheckbox = ordersBox.locator('[data-testid="column-checkbox-3"]');
+    await createdAtCheckbox.scrollIntoViewIfNeeded();
+    await createdAtCheckbox.evaluate((el: HTMLInputElement) => el.click()); // created_at
+    await expect(createdAtCheckbox).toBeChecked();
+
+    // 4. Add WHERE condition: name = 'Alice'
+    // Column options are in format: alias."column" (TYPE) e.g. t1."name" (TEXT)
+    await page.getByTestId('add-condition-button').click();
+    const columnSelect = page.locator('[data-testid^="condition-column-"]').first();
+    // Column options: 0=Select column..., 1=t1."id", 2=t1."name", 3=t1."age", 4+=orders columns
+    await columnSelect.selectOption({ index: 2 }); // t1."name"
+    const valueInput = page.locator('[data-testid^="condition-value-"]').first();
+    await valueInput.fill('Alice');
+
+    // 5. Verify SQL preview contains expected deterministic structure
+    // SQL format: SELECT alias."col" AS "Table.col" FROM "Table" AS alias
+    const sqlPreview = page.getByTestId('sql-preview-text');
+    await expect(sqlPreview).toContainText('SELECT');
+    await expect(sqlPreview).toContainText('t1."name"');
+    await expect(sqlPreview).toContainText('AS "users.name"'); // Deterministic alias format
+    await expect(sqlPreview).toContainText('t2."total"');
+    await expect(sqlPreview).toContainText('AS "orders.total"');
+    await expect(sqlPreview).toContainText('t2."created_at"');
+    await expect(sqlPreview).toContainText('AS "orders.created_at"');
+    await expect(sqlPreview).toContainText('FROM "users" AS t1');
+    await expect(sqlPreview).toContainText('JOIN "orders" AS t2');
+    await expect(sqlPreview).toContainText('ON t1."id" = t2."user_id"');
+    await expect(sqlPreview).toContainText('WHERE');
+    await expect(sqlPreview).toContainText('t1.name = ?');
+
+    // 6. Verify parameters are displayed
+    const paramsPreview = page.getByTestId('params-preview');
+    await expect(paramsPreview).toBeVisible();
+    await expect(paramsPreview).toContainText('Alice');
+
+    // 7. Execute the query and verify results
+    await page.getByTestId('run-button').click();
+    await expect(page.getByTestId('results-section')).toBeVisible();
+    await expect(page.getByTestId('execution-status').getByTestId('row-count')).toContainText('1 row');
+
+    // 8. Verify deterministic output - run query again and get same results
+    // The SQL generation is deterministic (same inputs produce same SQL)
+    // This is verified by re-running and checking the row count remains consistent
+    await page.getByTestId('run-button').click();
+    await expect(page.getByTestId('execution-status').getByTestId('row-count')).toContainText('1 row');
+  });
+
+  /**
+   * E2E-US-006-02: Verify that:
+   * 1. Adding the same table twice is blocked (table item becomes disabled)
+   * 2. When joining tables with same column names, result headers are unique (aliased)
+   */
+  test('E2E-US-006-02: block duplicate table; unique result headers for same-named columns', async ({ page }) => {
+    // Create additional table with same column name as users
+    await page.getByTestId('tab-sql').click();
+    await runSql(page, `
+      CREATE TABLE customers (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT
+      );
+      INSERT INTO customers (name, email) VALUES ('Customer1', 'c1@test.com');
+    `);
+    await page.getByTestId('tab-query-builder').click();
+    await expect(page.getByTestId('query-builder-view')).toBeVisible();
+
+    // Part 1: Verify duplicate table is blocked
+    // Add users table to canvas
+    await dragTable(page, 'users');
+    await expect(getTableBox(page, 'users')).toBeVisible();
+
+    // Verify users table item is now disabled (aria-disabled="true")
+    const usersTableItem = page.getByTestId('table-item-users');
+    await expect(usersTableItem).toHaveAttribute('aria-disabled', 'true');
+
+    // Verify the table item is not draggable (draggable="false" or no draggable attr when disabled)
+    await expect(usersTableItem).toHaveAttribute('draggable', 'false');
+
+    // Attempt to drag the disabled table - it should not create a second box
+    await usersTableItem.dragTo(page.getByTestId('query-builder-canvas'), { force: true });
+    // Still only one table box should exist
+    await expect(page.locator('[data-testid="table-box"]')).toHaveCount(1);
+
+    // Part 2: Verify unique result headers for columns with same name
+    // Add customers table (has 'name' column like users)
+    await dragTable(page, 'customers');
+    await expect(page.locator('[data-testid="table-box"]')).toHaveCount(2);
+
+    // Select 'name' column from both tables
+    const usersBox = getTableBox(page, 'users');
+    const customersBox = getTableBox(page, 'customers');
+    await expect(customersBox).toBeVisible();
+
+    // Select name column from users (index 1: id=0, name=1, age=2)
+    // Use scrollIntoViewIfNeeded and evaluate for reliability (tables may overlap)
+    const usersNameCheckbox = usersBox.locator('[data-testid="column-checkbox-1"]');
+    await usersNameCheckbox.scrollIntoViewIfNeeded();
+    await usersNameCheckbox.evaluate((el: HTMLInputElement) => el.click());
+    await expect(usersNameCheckbox).toBeChecked();
+
+    // Select name column from customers (index 1: id=0, name=1, email=2)
+    const customersNameCheckbox = customersBox.locator('[data-testid="column-checkbox-1"]');
+    await customersNameCheckbox.scrollIntoViewIfNeeded();
+    await customersNameCheckbox.evaluate((el: HTMLInputElement) => el.click());
+    await expect(customersNameCheckbox).toBeChecked();
+
+    // Verify SQL shows aliased column names for disambiguation
+    // Format: alias."col" AS "Table.col" - both 'name' columns get unique aliases
+    const sqlPreview = page.getByTestId('sql-preview-text');
+    await expect(sqlPreview).toContainText('t1."name"');
+    await expect(sqlPreview).toContainText('AS "users.name"');
+    await expect(sqlPreview).toContainText('t2."name"');
+    await expect(sqlPreview).toContainText('AS "customers.name"');
+
+    // Execute query and verify result headers are unique
+    await page.getByTestId('run-button').click();
+    await expect(page.getByTestId('results-section')).toBeVisible();
+
+    // Check that result grid has both column headers - each with unique table.column format
+    const resultSection = page.getByTestId('results-section');
+    // The 'users.name' column header
+    await expect(resultSection.getByRole('columnheader', { name: /users\.name/i })).toBeVisible();
+    // The 'customers.name' column header
+    await expect(resultSection.getByRole('columnheader', { name: /customers\.name/i })).toBeVisible();
+  });
+});
+
+// =============================================================================
 // Basic UI Checks
 // =============================================================================
 

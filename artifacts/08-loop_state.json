@@ -1,20 +1,20 @@
 {
-  "runId": "2026-01-31T22:35:12+01:00",
-  "updatedAt": "2026-01-31T22:35:12+01:00",
+  "runId": "2026-01-31T22:47:13+01:00",
+  "updatedAt": "2026-01-31T22:47:13+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-325",
-    "subject": "P8-02d: E2E fill — SQL editor transactions",
-    "status": "completed",
-    "phase": "done",
+    "id": "bd-1rm",
+    "subject": "P8-02e: E2E fill — Query builder deterministic output",
+    "status": "running",
+    "phase": "implement",
     "attempt": 1
   },
   "tools": {
     "implementer": "smart",
     "reviewer": "smart"
   },
-  "note": "all checks passed"
+  "note": "started"
 }
