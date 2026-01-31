@@ -49,6 +49,9 @@ async function setupDbWithTables(page: Page) {
     await runSql(page, stmt);
   }
   await waitForReady(page);
+  // Wait for sidebar to show the created tables
+  await expandDatabaseInSidebar(page, DB_NAME);
+  await expect(page.getByTestId('item-table-people')).toBeVisible({ timeout: 10000 });
   return DB_NAME;
 }
 
