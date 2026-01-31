@@ -3,6 +3,8 @@ module.exports = {
   ci: {
     collect: {
       staticDistDir: './dist',
+      // Only test index.html - offline.html and stats.html (visualizer) are not user-facing pages
+      url: ['http://localhost/index.html'],
       numberOfRuns: 3,
     },
     assert: {
@@ -14,7 +16,8 @@ module.exports = {
         'categories:accessibility': ['error', { minScore: 0.9 }],
         'categories:best-practices': ['error', { minScore: 0.9 }],
         'categories:seo': ['error', { minScore: 0.9 }],
-        // Disable only flaky/NaN-producing audits
+        // Disable flaky/NaN-producing audits and audits not applicable to SPA
+        'unused-javascript': 'off', // SPA bundles load full app upfront; tree-shaking already applied
         'lcp-lazy-loaded': 'off',
         'prioritize-lcp-image': 'off',
         'non-composited-animations': 'off',
