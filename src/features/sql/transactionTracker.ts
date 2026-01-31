@@ -137,9 +137,9 @@ export async function executeWithTransactionTracking(
   engine: DatabaseEngine,
   sql: string,
   tracker: TransactionTracker,
-  options: { autoRollbackOrphan?: boolean } = {},
+  options: { autoRollbackOrphan?: boolean; params?: unknown[] } = {},
 ): Promise<TransactionExecutionResult> {
-  const { autoRollbackOrphan = true } = options;
+  const { autoRollbackOrphan = true, params } = options;
   const statements = splitStatements(sql);
   const results: StatementExecutionResult[] = [];
   const warnings: TransactionWarning[] = [];
@@ -171,11 +171,13 @@ export async function executeWithTransactionTracking(
 
       try {
         if (stmtType === 'SELECT') {
-          const queryResult = await engine.query(stmt);
+          // Pass params for single-statement queries
+          const queryResult = await engine.query(stmt, params);
           result.queryResult = queryResult;
           result.rowsAffected = queryResult.rowsAffected;
         } else {
-          const execResult: ExecResult = await engine.exec(stmt);
+          // Pass params for single-statement exec
+          const execResult: ExecResult = await engine.exec(stmt, params);
           result.rowsAffected = execResult.rowsAffected;
           result.lastInsertId = execResult.lastInsertId;
 

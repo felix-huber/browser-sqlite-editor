@@ -9,6 +9,7 @@ import { getRegistry, toFilename } from '../db-registry';
 import { resolveDbPath } from '../storage';
 import { getIdbDbSize } from '../idb-storage';
 import { openDatabase } from '../sqlite-engine';
+import { resetSessionTracker } from './query';
 
 export type PostResponse = (response: WorkerResponse, requestId?: number) => void;
 
@@ -18,6 +19,9 @@ export async function handleOpenRequest(
   postResponse: PostResponse
 ): Promise<void> {
   try {
+    // Reset transaction tracker when opening a new database
+    resetSessionTracker();
+
     const { path, vfsName } = await resolveDbPath(request.dbName);
     const readOnly = request.readOnly ?? false;
     const createIfMissing = vfsName === OPFS_VFS_NAME && !readOnly;
@@ -39,6 +43,9 @@ export async function handleCloseRequest(
   postResponse: PostResponse
 ): Promise<void> {
   try {
+    // Reset transaction tracker when closing the database
+    resetSessionTracker();
+
     const engine = getEngine();
     await engine.close();
     postResponse({ type: 'success' }, id);

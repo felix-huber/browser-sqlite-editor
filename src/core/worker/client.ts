@@ -20,6 +20,7 @@ import type {
   DatabaseRegistry,
   StorageMode,
 } from '../../types';
+import type { TransactionWarning } from '../../features/sql/transactionTracker';
 
 // =============================================================================
 // Error Types
@@ -285,15 +286,22 @@ export class WorkerClient {
     sql: string,
     params?: unknown[],
     options?: { limit?: number; offset?: number }
-  ): Promise<QueryResult> {
-    const response = await this.request<{ type: 'queryResult'; result: QueryResult }>({
+  ): Promise<QueryResult & { transactionWarnings?: TransactionWarning[] }> {
+    const response = await this.request<{
+      type: 'queryResult';
+      result: QueryResult;
+      transactionWarnings?: TransactionWarning[];
+    }>({
       type: 'query',
       sql,
       params,
       limit: options?.limit,
       offset: options?.offset,
     });
-    return response.result;
+    return {
+      ...response.result,
+      transactionWarnings: response.transactionWarnings,
+    };
   }
 
   /**
@@ -302,13 +310,23 @@ export class WorkerClient {
   async exec(
     sql: string,
     params?: unknown[]
-  ): Promise<{ rowsAffected?: number }> {
-    const response = await this.request<{ type: 'success'; data?: { rowsAffected?: number } }>({
+  ): Promise<{ rowsAffected?: number; transactionWarnings?: TransactionWarning[] }> {
+    const response = await this.request<{
+      type: 'success';
+      data?: {
+        rowsAffected?: number;
+        transactionWarnings?: TransactionWarning[];
+      };
+    }>({
       type: 'exec',
       sql,
       params,
     });
-    return { rowsAffected: (response.data as { rowsAffected?: number } | undefined)?.rowsAffected };
+    const data = response.data;
+    return {
+      rowsAffected: data?.rowsAffected,
+      transactionWarnings: data?.transactionWarnings,
+    };
   }
 
   /**

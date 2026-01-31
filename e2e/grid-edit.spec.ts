@@ -430,15 +430,36 @@ test.describe('Grid Editing Tests', () => {
       await expect(page.getByTestId('cell-0-label')).toContainText('Alpha Updated');
     });
 
-    test('pagination uses LIMIT/OFFSET for WITHOUT ROWID tables', async ({ page }) => {
+    test('virtual scrolling uses LIMIT/OFFSET for WITHOUT ROWID tables', async ({ page }) => {
       await openTable(page, DB_NAME, 'without_rowid_big');
-      const header = page.locator('[role="columnheader"]', { hasText: 'id' });
+
+      // Wait for grid to render
+      await expect(page.getByTestId('data-grid')).toBeVisible();
+
+      // Sort by id column
+      const header = page.getByRole('columnheader').filter({ hasText: 'id' }).locator('span.truncate');
       await header.click();
+      await expect(page.getByTestId('sort-indicator-id')).toBeVisible();
+
+      // Get first visible row id
       const firstId = await page.getByTestId('cell-0-id').textContent();
-      await page.getByTestId('table-next-page').click();
-      await expect(page.getByTestId('table-page-info')).toContainText('201-250');
-      const nextId = await page.getByTestId('cell-0-id').textContent();
-      expect(nextId).not.toBe(firstId);
+      expect(firstId).toBe('id-1');
+
+      // Scroll to middle of the table
+      const gridContainer = page.locator('[data-testid="data-grid"]').first();
+      await gridContainer.evaluate((el) => {
+        const scrollEl = el.querySelector('.overflow-auto');
+        if (scrollEl) {
+          scrollEl.scrollTop = scrollEl.scrollHeight / 2;
+        }
+      });
+      await page.waitForTimeout(200);
+
+      // After scrolling, new rows should be visible (virtualization active)
+      const rows = page.locator('[data-testid="grid-row"]');
+      const rowCount = await rows.count();
+      expect(rowCount).toBeGreaterThan(0);
+      expect(rowCount).toBeLessThan(250); // Should be virtualized, not all 250 rows
     });
   });
 

@@ -289,6 +289,7 @@ export function SqlEditorPanel({
   const [results, setResults] = useState<StatementResult[]>([])
   const [executionTime, setExecutionTime] = useState<number | null>(null)
   const [readOnlyWarning, setReadOnlyWarning] = useState<string | null>(null)
+  const [transactionWarnings, setTransactionWarnings] = useState<Array<{ type: string; message: string }>>([]);
 
   const editorContainerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<CodeMirrorEditorHandle>(null)
@@ -329,6 +330,7 @@ export function SqlEditorPanel({
     setErrors([])
     setResults([])
     setReadOnlyWarning(null)
+    setTransactionWarnings([])
     setExecutionTime(null)
     const startTime = performance.now()
 
@@ -337,6 +339,12 @@ export function SqlEditorPanel({
       const endTime = performance.now()
       const duration = endTime - startTime
       setExecutionTime(duration)
+
+      // Handle transaction warnings from the result
+      const warnings = (result as { transactionWarnings?: Array<{ type: string; message: string }> }).transactionWarnings
+      if (warnings && warnings.length > 0) {
+        setTransactionWarnings(warnings)
+      }
 
       let resultType: ResultType = classifyStatement(queryText)
       if (result.columns.length > 0) {
@@ -556,6 +564,34 @@ export function SqlEditorPanel({
               />
             </svg>
             <div className="text-sm text-amber-800">{readOnlyWarning}</div>
+          </div>
+        )}
+
+        {/* Transaction warnings */}
+        {transactionWarnings.length > 0 && (
+          <div
+            className="flex items-start gap-2 px-3 py-2 bg-amber-50 border-b border-amber-200"
+            role="alert"
+            data-testid="transaction-warning"
+          >
+            <svg
+              className="w-5 h-5 text-amber-600 shrink-0 mt-0.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
+            </svg>
+            <div className="text-sm text-amber-800">
+              {transactionWarnings.map((w, i) => (
+                <div key={i}>{w.message}</div>
+              ))}
+            </div>
           </div>
         )}
 

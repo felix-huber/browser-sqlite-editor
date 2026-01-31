@@ -5,8 +5,35 @@
 import type { WorkerRequest, WorkerResponse, WorkerErrorCode } from '../../types';
 import { getEngine } from '../../core/engine/db-engine';
 import { registerQuery, requestCancellation } from '../query-cancel';
+import {
+  createTransactionTracker,
+  executeWithTransactionTracking,
+  type TransactionTracker,
+  type TransactionWarning,
+} from '../../features/sql/transactionTracker';
 
 export type PostResponse = (response: WorkerResponse, requestId?: number) => void;
+
+/**
+ * Session-level transaction tracker.
+ * Persists across requests within the same worker session.
+ * Reset when database is closed/opened.
+ */
+let sessionTracker: TransactionTracker = createTransactionTracker();
+
+/**
+ * Reset the session tracker (called on database close/open).
+ */
+export function resetSessionTracker(): void {
+  sessionTracker = createTransactionTracker();
+}
+
+/**
+ * Get the current session tracker (for testing).
+ */
+export function getSessionTracker(): TransactionTracker {
+  return sessionTracker;
+}
 
 function normalizeQueryError(err: unknown): { message: string; code: WorkerErrorCode } {
   const normalized =
@@ -44,8 +71,41 @@ export async function handleQueryRequest(
     if (!engine.isReady()) {
       throw new Error('No database open. Please open a database first.');
     }
-    const result = await engine.query(request.sql, request.params);
-    postResponse({ type: 'queryResult', result }, id);
+
+    // Build SQL with pagination if provided
+    let sql = request.sql;
+    if (request.limit !== undefined) {
+      // Append LIMIT/OFFSET to the SQL for pagination
+      sql = `${sql.replace(/;\s*$/, '')} LIMIT ${request.limit}`;
+      if (request.offset !== undefined) {
+        sql += ` OFFSET ${request.offset}`;
+      }
+    }
+
+    // Use transaction tracking for query execution
+    const trackingResult = await executeWithTransactionTracking(
+      engine,
+      sql,
+      sessionTracker,
+      { autoRollbackOrphan: true, params: request.params }
+    );
+
+    // Get the query result from the tracking result
+    // For SELECT queries, the result is in the first statement's queryResult
+    const firstResult = trackingResult.results[0];
+    const result = firstResult?.queryResult ?? {
+      columns: [],
+      columnTypes: [],
+      rows: [],
+      rowsAffected: trackingResult.totalRowsAffected,
+    };
+
+    // Include warnings in the response if any
+    const warnings = trackingResult.warnings.length > 0
+      ? trackingResult.warnings
+      : undefined;
+
+    postResponse({ type: 'queryResult', result, transactionWarnings: warnings }, id);
   } catch (err) {
     const { message, code } = normalizeQueryError(err);
     postResponse({ type: 'error', message, code }, id);
@@ -65,8 +125,36 @@ export async function handleExecRequest(
     if (!engine.isReady()) {
       throw new Error('No database open. Please open a database first.');
     }
-    const result = await engine.exec(request.sql, request.params);
-    postResponse({ type: 'success', data: result }, id);
+
+    // Use transaction tracking for execution
+    const trackingResult = await executeWithTransactionTracking(
+      engine,
+      request.sql,
+      sessionTracker,
+      { autoRollbackOrphan: true, params: request.params }
+    );
+
+    // Include warnings in the response data
+    const responseData: {
+      rowsAffected: number;
+      lastInsertId?: number;
+      transactionWarnings?: TransactionWarning[];
+    } = {
+      rowsAffected: trackingResult.totalRowsAffected,
+    };
+
+    // Get lastInsertId from the last result if available
+    const lastResult = trackingResult.results[trackingResult.results.length - 1];
+    if (lastResult?.lastInsertId !== undefined) {
+      responseData.lastInsertId = lastResult.lastInsertId;
+    }
+
+    // Include warnings if any
+    if (trackingResult.warnings.length > 0) {
+      responseData.transactionWarnings = trackingResult.warnings;
+    }
+
+    postResponse({ type: 'success', data: responseData }, id);
   } catch (err) {
     const { message, code } = normalizeQueryError(err);
     postResponse({ type: 'error', message, code }, id);

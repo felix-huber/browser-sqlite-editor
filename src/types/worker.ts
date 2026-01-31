@@ -154,7 +154,7 @@ export type WorkerResponse =
   | { type: 'persistenceDegraded'; dbName: string }
   | { type: 'schemaResult'; schema: SchemaInfo }
   | { type: 'tableInfoResult'; tableInfo: TableInfo }
-  | { type: 'queryResult'; result: QueryResult }
+  | { type: 'queryResult'; result: QueryResult; transactionWarnings?: Array<{ type: string; message: string; sql?: string }> }
   | { type: 'foreignKeysResult'; foreignKeys: ForeignKeyInfo[] }
   | { type: 'registryResult'; registry: DatabaseRegistry }
   | { type: 'flushAndCloseResult'; success: boolean; error?: FlushAndCloseError }

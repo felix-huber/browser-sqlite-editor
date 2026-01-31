@@ -34,17 +34,11 @@ describe('Transaction Edge Cases', () => {
 
   beforeEach(() => {
     execCalls = [];
+    // Simple mock that records calls and returns success by default
+    // Tests that need error behavior configure the mock themselves
     mockEngine = {
       exec: vi.fn().mockImplementation((sql: string) => {
         execCalls.push(sql);
-        // Simulate SQLite error for COMMIT without transaction
-        if (sql.trim().toUpperCase().startsWith('COMMIT') && !execCalls.includes('BEGIN')) {
-          const previousCalls = execCalls.slice(0, -1);
-          const hasBegin = previousCalls.some(c => c.trim().toUpperCase().startsWith('BEGIN'));
-          if (!hasBegin) {
-            return Promise.reject(new Error('cannot commit - no transaction is active'));
-          }
-        }
         return Promise.resolve(mockExecResult);
       }),
       query: vi.fn().mockResolvedValue(mockQueryResult),
@@ -156,12 +150,12 @@ describe('Transaction Edge Cases', () => {
   });
 
   describe('COMMIT without BEGIN', () => {
-    it('stops execution and shows error on COMMIT without BEGIN', async () => {
-      // Reset mock to properly simulate COMMIT without BEGIN error
+    it('propagates SQLite error when COMMIT is issued without active transaction', async () => {
+      // Configure mock to fail on COMMIT without transaction (as SQLite does)
       mockEngine.exec = vi.fn().mockImplementation((sql: string) => {
         execCalls.push(sql);
         const normalized = sql.trim().toUpperCase();
-        if (normalized.startsWith('COMMIT')) {
+        if (normalized === 'COMMIT' || normalized.startsWith('COMMIT ')) {
           return Promise.reject(new Error('cannot commit - no transaction is active'));
         }
         return Promise.resolve(mockExecResult);
@@ -172,27 +166,12 @@ describe('Transaction Edge Cases', () => {
       ).rejects.toThrow('cannot commit - no transaction is active');
     });
 
-    it('shows specific error message for orphan COMMIT', async () => {
+    it('stops execution after COMMIT without BEGIN fails', async () => {
+      // First statement is orphan COMMIT (fails), second should not run
       mockEngine.exec = vi.fn().mockImplementation((sql: string) => {
         execCalls.push(sql);
-        if (sql.trim().toUpperCase().startsWith('COMMIT')) {
-          return Promise.reject(new Error('cannot commit - no transaction is active'));
-        }
-        return Promise.resolve(mockExecResult);
-      });
-
-      try {
-        await executeWithTransactionTracking(mockEngine, 'COMMIT', tracker);
-        expect.fail('Should have thrown');
-      } catch (err) {
-        expect((err as Error).message).toContain('no transaction is active');
-      }
-    });
-
-    it('stops execution after COMMIT error (no subsequent statements run)', async () => {
-      mockEngine.exec = vi.fn().mockImplementation((sql: string) => {
-        execCalls.push(sql);
-        if (sql.trim().toUpperCase().startsWith('COMMIT')) {
+        const normalized = sql.trim().toUpperCase();
+        if (normalized === 'COMMIT' || normalized.startsWith('COMMIT ')) {
           return Promise.reject(new Error('cannot commit - no transaction is active'));
         }
         return Promise.resolve(mockExecResult);
@@ -208,8 +187,98 @@ describe('Transaction Edge Cases', () => {
         // Expected
       }
 
-      // INSERT should not have been called
-      expect(execCalls.filter(c => c.includes('INSERT'))).toHaveLength(0);
+      // Only COMMIT should have been called, not INSERT
+      expect(execCalls.some(c => c.trim().toUpperCase().startsWith('COMMIT'))).toBe(true);
+      expect(execCalls.some(c => c.includes('INSERT'))).toBe(false);
+    });
+
+    it('transaction tracker state unchanged after COMMIT without BEGIN fails', async () => {
+      mockEngine.exec = vi.fn().mockImplementation((sql: string) => {
+        execCalls.push(sql);
+        const normalized = sql.trim().toUpperCase();
+        if (normalized === 'COMMIT' || normalized.startsWith('COMMIT ')) {
+          return Promise.reject(new Error('cannot commit - no transaction is active'));
+        }
+        return Promise.resolve(mockExecResult);
+      });
+
+      expect(tracker.isInTransaction()).toBe(false);
+
+      try {
+        await executeWithTransactionTracking(mockEngine, 'COMMIT', tracker);
+      } catch {
+        // Expected
+      }
+
+      // State should still be not in transaction (was already false)
+      expect(tracker.isInTransaction()).toBe(false);
+    });
+  });
+
+  describe('Error propagation and execution halting', () => {
+    it('propagates errors from the database engine', async () => {
+      // Configure mock to fail on specific INSERT statement
+      mockEngine.exec = vi.fn().mockImplementation((sql: string) => {
+        execCalls.push(sql);
+        if (sql.includes('fail_table')) {
+          return Promise.reject(new Error('simulated database error'));
+        }
+        return Promise.resolve(mockExecResult);
+      });
+
+      await expect(
+        executeWithTransactionTracking(mockEngine, 'INSERT INTO fail_table VALUES (1)', tracker)
+      ).rejects.toThrow('simulated database error');
+    });
+
+    it('stops execution after first error (no subsequent statements run)', async () => {
+      // First statement fails, second should not run
+      mockEngine.exec = vi.fn().mockImplementation((sql: string) => {
+        execCalls.push(sql);
+        if (sql.includes('first_table')) {
+          return Promise.reject(new Error('first statement failed'));
+        }
+        return Promise.resolve(mockExecResult);
+      });
+
+      try {
+        await executeWithTransactionTracking(
+          mockEngine,
+          'INSERT INTO first_table VALUES (1); INSERT INTO second_table VALUES (1)',
+          tracker
+        );
+      } catch {
+        // Expected
+      }
+
+      // Only first_table insert should have been called, not second_table
+      expect(execCalls.some(c => c.includes('first_table'))).toBe(true);
+      expect(execCalls.some(c => c.includes('second_table'))).toBe(false);
+    });
+
+    it('clears transaction state when error occurs during transaction', async () => {
+      mockEngine.exec = vi.fn().mockImplementation((sql: string) => {
+        execCalls.push(sql);
+        if (sql.includes('fail_table')) {
+          return Promise.reject(new Error('statement failed'));
+        }
+        return Promise.resolve(mockExecResult);
+      });
+
+      try {
+        await executeWithTransactionTracking(
+          mockEngine,
+          'BEGIN; INSERT INTO fail_table VALUES (1)',
+          tracker
+        );
+      } catch {
+        // Expected
+      }
+
+      // Transaction state should be cleared
+      expect(tracker.isInTransaction()).toBe(false);
+      // ROLLBACK should have been issued
+      expect(execCalls).toContain('ROLLBACK');
     });
   });
 
