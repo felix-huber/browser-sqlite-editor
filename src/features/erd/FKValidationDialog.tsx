@@ -14,6 +14,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import type { ForeignKeyAction } from '../../types/index'
 import type { ParentColumnValidation, DataIntegrityResult } from './FKValidation'
+import { DDLDiffPreview } from '../../shared/components/DDLDiffPreview'
 
 // =============================================================================
 // Types
@@ -258,12 +259,14 @@ export function FKValidationDialog({
                     You can create a UNIQUE index on this column to enable the FK:
                   </p>
                   {showDDLPreview && createUniqueIndexDDL && (
-                    <pre
-                      className="text-xs bg-navy-100 p-2 rounded overflow-x-auto text-navy-800"
-                      data-testid="create-index-ddl-preview"
-                    >
-                      {createUniqueIndexDDL}
-                    </pre>
+                    <div data-testid="create-index-ddl-preview">
+                      <DDLDiffPreview
+                        originalSql=""
+                        proposedSql={createUniqueIndexDDL}
+                        dependentObjects={[]}
+                        netEffectSummary={`Create UNIQUE index on ${pendingFK?.parentTable}.${pendingFK?.parentColumn}`}
+                      />
+                    </div>
                   )}
                   <div className="flex items-center gap-2">
                     <button

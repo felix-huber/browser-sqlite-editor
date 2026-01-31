@@ -16,6 +16,10 @@
 import { useMemo } from 'react';
 import type { TableInfo, DesignerColumnDraft } from '../../types';
 import { escapeIdentifier } from '../../core/sql/escape';
+import {
+  DDLDiffPreview as SharedDDLDiffPreview,
+  type DependentObject,
+} from '../../shared/components/DDLDiffPreview';
 
 // =============================================================================
 // Types
@@ -34,6 +38,8 @@ export interface DDLDiffPreviewProps {
   onApply?: () => void;
   /** Called when Cancel is clicked */
   onCancel?: () => void;
+  /** Rollback error message to display */
+  rollbackError?: string;
 }
 
 export interface DiffLine {
@@ -551,6 +557,7 @@ export function DDLDiffPreview({
   isReadOnly = false,
   onApply,
   onCancel,
+  rollbackError,
 }: DDLDiffPreviewProps) {
   // Analyze changes
   const analysis = useMemo(
@@ -559,13 +566,10 @@ export function DDLDiffPreview({
   );
 
   // Generate SQL for display
-  const { currentSql, newSql, diffLines, operationSteps, affectedObjects, validation } =
+  const { currentSql, newSql, operationSteps, validation, sharedDependentObjects, netEffectSummary } =
     useMemo(() => {
       const newSql = generateCreateTable(tableName, columns);
       const currentSql = existingTable?.createSql || '';
-
-      // Generate diff
-      const diffLines = generateDiff(currentSql, newSql);
 
       // Generate operation steps based on change type
       let operationSteps: OperationStep[] = [];
@@ -587,6 +591,34 @@ export function DDLDiffPreview({
         ? getAffectedObjects(existingTable, analysis.changeType)
         : [];
 
+      // Convert to shared DependentObject format for SharedDDLDiffPreview
+      const sharedDependentObjects: DependentObject[] = affectedObjects.map((obj) => ({
+        type: obj.type,
+        name: obj.name,
+      }));
+
+      // Generate net effect summary for SharedDDLDiffPreview
+      const summaryParts: string[] = [];
+      if (analysis.columnsToAdd.length > 0) {
+        summaryParts.push(`Add ${analysis.columnsToAdd.length} column(s)`);
+      }
+      if (analysis.columnsRemoved.length > 0) {
+        summaryParts.push(`Remove ${analysis.columnsRemoved.length} column(s)`);
+      }
+      if (analysis.columnsRenamed.length > 0) {
+        summaryParts.push(`Rename ${analysis.columnsRenamed.length} column(s)`);
+      }
+      if (analysis.typeChanges.length > 0) {
+        summaryParts.push(`${analysis.typeChanges.length} type change(s)`);
+      }
+      if (analysis.constraintChanges.length > 0) {
+        summaryParts.push(`${analysis.constraintChanges.length} constraint change(s)`);
+      }
+      if (affectedObjects.length > 0) {
+        summaryParts.push(`${affectedObjects.length} object(s) will be recreated`);
+      }
+      const netEffectSummary = summaryParts.length > 0 ? summaryParts.join('; ') : 'No changes';
+
       // Validate
       const validation = validateChanges(
         existingTable,
@@ -596,7 +628,7 @@ export function DDLDiffPreview({
         isReadOnly
       );
 
-      return { currentSql, newSql, diffLines, operationSteps, affectedObjects, validation };
+      return { currentSql, newSql, operationSteps, validation, sharedDependentObjects, netEffectSummary };
     }, [existingTable, columns, tableName, analysis, isReadOnly]);
 
   // If no existing table (create mode), show simplified view
@@ -636,97 +668,14 @@ export function DDLDiffPreview({
       </div>
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
-        {/* Split View: Current vs New */}
-        <div className="grid grid-cols-2 gap-4" data-testid="sql-diff-split">
-          {/* Current SQL */}
-          <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-            <div className="px-3 py-2 bg-gray-50 border-b text-xs font-medium text-gray-600">
-              Current Schema
-            </div>
-            <pre
-              className="p-3 text-sm font-mono text-gray-600 whitespace-pre-wrap overflow-x-auto max-h-64 overflow-y-auto"
-              data-testid="current-sql"
-            >
-              {currentSql}
-            </pre>
-          </div>
-
-          {/* New SQL */}
-          <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-            <div className="px-3 py-2 bg-gray-50 border-b text-xs font-medium text-gray-600">
-              New Schema
-            </div>
-            <pre
-              className="p-3 text-sm font-mono text-gray-800 whitespace-pre-wrap overflow-x-auto max-h-64 overflow-y-auto"
-              data-testid="new-sql"
-            >
-              {newSql}
-            </pre>
-          </div>
-        </div>
-
-        {/* Diff View */}
-        <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-          <div className="px-3 py-2 bg-gray-50 border-b text-xs font-medium text-gray-600">
-            Line-by-Line Diff
-          </div>
-          <div
-            className="p-3 font-mono text-sm max-h-48 overflow-y-auto"
-            data-testid="diff-view"
-          >
-            {diffLines.map((line, idx) => (
-              <div
-                key={idx}
-                className={`px-2 py-0.5 ${
-                  line.type === 'added'
-                    ? 'bg-green-50 text-green-800'
-                    : line.type === 'removed'
-                    ? 'bg-red-50 text-red-800'
-                    : 'text-gray-700'
-                }`}
-                data-testid={`diff-line-${line.type}`}
-              >
-                <span className="inline-block w-4 text-gray-400">
-                  {line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}
-                </span>
-                {line.content}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Affected Objects */}
-        {affectedObjects.length > 0 && (
-          <div
-            className="rounded-lg border border-amber-200 bg-amber-50 overflow-hidden"
-            data-testid="affected-objects"
-          >
-            <div className="px-3 py-2 bg-amber-100 border-b border-amber-200 text-xs font-medium text-amber-800">
-              Affected Objects
-            </div>
-            <ul className="p-3 space-y-2">
-              {affectedObjects.map((obj, idx) => (
-                <li key={idx} className="flex items-center gap-2 text-sm">
-                  <span
-                    className={`px-1.5 py-0.5 text-xs font-medium rounded ${
-                      obj.type === 'index'
-                        ? 'bg-blue-100 text-blue-700'
-                        : obj.type === 'trigger'
-                        ? 'bg-purple-100 text-purple-700'
-                        : 'bg-cyan-100 text-cyan-700'
-                    }`}
-                  >
-                    {obj.type.toUpperCase()}
-                  </span>
-                  <span className="text-gray-700">{obj.name}</span>
-                  <span className="text-gray-500 text-xs">
-                    ({obj.action === 'drop_and_recreate' ? 'will be recreated' : 'may be affected'})
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        {/* Use shared DDLDiffPreview for diff visualization */}
+        <SharedDDLDiffPreview
+          originalSql={currentSql}
+          proposedSql={newSql}
+          dependentObjects={sharedDependentObjects}
+          netEffectSummary={netEffectSummary}
+          rollbackError={rollbackError}
+        />
 
         {/* Operation Preview */}
         {operationSteps.length > 0 && (

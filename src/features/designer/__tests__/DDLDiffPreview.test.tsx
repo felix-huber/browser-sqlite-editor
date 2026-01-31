@@ -219,10 +219,12 @@ describe('getAffectedObjects', () => {
       />
     );
 
-    expect(screen.getByTestId('affected-objects')).toBeInTheDocument();
-    expect(screen.getByText('INDEX')).toBeInTheDocument();
+    // Shared component uses 'ddl-diff-deps' for dependent objects
+    expect(screen.getByTestId('ddl-diff-deps')).toBeInTheDocument();
+    expect(screen.getByText('Index:')).toBeInTheDocument();
     expect(screen.getByText('idx_users_email')).toBeInTheDocument();
-    expect(screen.getByText(/will be recreated/)).toBeInTheDocument();
+    // The button toggle shows the count message
+    expect(screen.getByTestId('ddl-diff-deps-toggle')).toHaveTextContent(/will be dropped and recreated/);
   });
 
   it('does not show affected objects for simple add column', () => {
@@ -246,8 +248,8 @@ describe('getAffectedObjects', () => {
       />
     );
 
-    // Should not show affected objects section for add_columns
-    expect(screen.queryByTestId('affected-objects')).not.toBeInTheDocument();
+    // Should not show affected objects section for add_columns (shared component uses ddl-diff-deps)
+    expect(screen.queryByTestId('ddl-diff-deps')).not.toBeInTheDocument();
   });
 });
 
@@ -560,10 +562,10 @@ describe('DDLDiffPreview Component', () => {
       />
     );
 
-    expect(screen.getByTestId('sql-diff-split')).toBeInTheDocument();
-    expect(screen.getByTestId('current-sql')).toBeInTheDocument();
-    expect(screen.getByTestId('new-sql')).toBeInTheDocument();
-    expect(screen.getByTestId('diff-view')).toBeInTheDocument();
+    // Shared DDLDiffPreview component is used for diff visualization
+    expect(screen.getByTestId('ddl-diff-original')).toBeInTheDocument();
+    expect(screen.getByTestId('ddl-diff-proposed')).toBeInTheDocument();
+    expect(screen.getByTestId('ddl-diff-summary')).toBeInTheDocument();
   });
 
   it('calls onApply when Apply button clicked', () => {
@@ -647,10 +649,10 @@ describe('DDLDiffPreview Component', () => {
       />
     );
 
-    // Added lines should have green styling
-    const addedLines = screen.getAllByTestId('diff-line-added');
+    // Added lines in shared component use data-diff-type attribute with green styling
+    const addedLines = document.querySelectorAll('[data-diff-type="added"]');
     expect(addedLines.length).toBeGreaterThan(0);
-    expect(addedLines[0]).toHaveClass('bg-green-50');
+    expect(addedLines[0]).toHaveClass('bg-green-900/30');
   });
 
   it('shows diff highlighting for removed lines', () => {
@@ -668,9 +670,9 @@ describe('DDLDiffPreview Component', () => {
       />
     );
 
-    // Removed lines should have red styling
-    const removedLines = screen.getAllByTestId('diff-line-removed');
+    // Removed lines in shared component use data-diff-type attribute with red styling
+    const removedLines = document.querySelectorAll('[data-diff-type="removed"]');
     expect(removedLines.length).toBeGreaterThan(0);
-    expect(removedLines[0]).toHaveClass('bg-red-50');
+    expect(removedLines[0]).toHaveClass('bg-red-900/30');
   });
 });
