@@ -5,7 +5,7 @@
  * keeping the UI responsive during heavy operations.
  */
 
-import type { WorkerRequest, WorkerResponse } from '../types';
+import type { WorkerRequest, WorkerResponse, WorkerErrorCode } from '../types';
 import {
   isStorageError,
   normalizeStorageError,
@@ -44,6 +44,57 @@ import {
   handleDropColumnRequest,
   handleRebuildTableRequest,
 } from './handlers/schema';
+
+// =============================================================================
+// Read-Only Error Detection (Native SQLite check via PRAGMA query_only)
+// =============================================================================
+
+/**
+ * Error patterns that indicate a read-only violation.
+ * SQLite returns these messages when PRAGMA query_only = ON is set
+ * and a write operation is attempted.
+ *
+ * This uses native SQLite's enforcement rather than string-based SQL parsing,
+ * per PRD requirements for sqlite3_stmt_readonly() equivalent behavior.
+ */
+const READ_ONLY_ERROR_PATTERNS = [
+  'attempt to write a readonly database',
+  'authorization denied',
+  'database is read-only',
+];
+
+/**
+ * Check if an error indicates a read-only violation.
+ * Uses native SQLite error detection rather than regex-based SQL parsing.
+ *
+ * @param err - Error to check
+ * @returns true if the error is a read-only violation
+ */
+export function isReadOnlyError(err: unknown): boolean {
+  if (!err) return false;
+
+  const message = err instanceof Error
+    ? err.message.toLowerCase()
+    : String(err).toLowerCase();
+
+  return READ_ONLY_ERROR_PATTERNS.some(pattern => message.includes(pattern));
+}
+
+/**
+ * Normalize a read-only error with a clear, user-friendly message.
+ *
+ * @param err - Original error
+ * @returns Enhanced error with clear explanation of read-only restriction
+ */
+export function normalizeReadOnlyError(_err: unknown): {
+  message: string;
+  code: WorkerErrorCode;
+} {
+  return {
+    message: 'Database is in read-only mode. Write operations (INSERT, UPDATE, DELETE, DDL) are not allowed. Another tab may hold the write lock.',
+    code: 'LOCK_HELD',
+  };
+}
 
 /**
  * Tagged request with correlation ID from main thread
@@ -256,6 +307,20 @@ self.addEventListener('message', (event: WorkerMessageEvent) => {
   // Allow cancellation messages to interrupt queued work
   if (event.data?.request?.type === 'cancel') {
     handleMessage(event).catch((err) => {
+      // Check for read-only errors and provide clear message
+      if (isReadOnlyError(err)) {
+        const { message, code } = normalizeReadOnlyError(err);
+        postResponse(
+          {
+            type: 'error',
+            message,
+            code,
+          },
+          event.data?.id
+        );
+        return;
+      }
+
       const message = err instanceof Error ? err.message : String(err);
       postResponse(
         {
@@ -272,6 +337,20 @@ self.addEventListener('message', (event: WorkerMessageEvent) => {
   messageQueue = messageQueue
     .then(() => handleMessage(event))
     .catch((err) => {
+      // Check for read-only errors and provide clear message
+      if (isReadOnlyError(err)) {
+        const { message, code } = normalizeReadOnlyError(err);
+        postResponse(
+          {
+            type: 'error',
+            message,
+            code,
+          },
+          event.data?.id
+        );
+        return;
+      }
+
       const message = err instanceof Error ? err.message : String(err);
       postResponse(
         {

@@ -6,9 +6,9 @@ Tracking structural issues observed during ralph.sh execution that may need code
 
 ### Progress Snapshot
 - **Start**: 36/56 beads (64%) at session 1 start
-- **Current**: 39/56 beads done (69.6%), bd-1xx fresh-eyes review in progress
-- **Remaining**: 17 beads (16 ready, 1 in progress)
-- **Last Update**: 2026-01-31 19:40
+- **Current**: 40/56 beads done (71%), bd-22t in progress
+- **Remaining**: 16 beads (15 ready, 1 in progress)
+- **Last Update**: 2026-01-31 19:43
 
 ### Beads Completed This Session (New Ralph Run)
 | Iteration | Bead | Task | Time |
@@ -16,7 +16,8 @@ Tracking structural issues observed during ralph.sh execution that may need code
 | 1 | bd-4z7 | P2-07: Database export quota-exceeded handling | 19:08 |
 | 2 | bd-3mp | P3-03: Prefer native ALTER TABLE | 19:19 |
 | 3 | bd-u9l | P3-04: DDL diff preview enhancement | 19:32 |
-| 4 | bd-1xx | P4-03: ERD DDL diff preview | in-progress |
+| 4 | bd-1xx | P4-03: ERD DDL diff preview | ✅ 19:42 |
+| 5 | bd-22t | P6-03: sqlite3_stmt_readonly check | in-progress |
 
 ### Previously Fixed Issues
 
@@ -34,6 +35,12 @@ Tracking structural issues observed during ralph.sh execution that may need code
 - bd-1xx currently in fresh-eyes review
 - Test output shows expected ErrorBoundary test errors (intentional throws, not failures)
 - All 3088 tests passing in build verification
+
+**Check 2 (19:43)**: bd-1xx completed successfully
+- 4 beads completed this session (bd-4z7, bd-3mp, bd-u9l, bd-1xx)
+- No verification failures
+- bd-22t (P6-03: sqlite3_stmt_readonly check) now in progress
+- ETA shows ~16 min remaining at current pace
 
 ---
 
