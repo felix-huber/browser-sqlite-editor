@@ -17,6 +17,119 @@ test.describe('SQL editor (real UI)', () => {
     await setupDatabase(page);
   });
 
+  /**
+   * E2E-US-005-02: Multi-statement script shows DML + SELECT
+   * Execute a script containing INSERT followed by SELECT and verify DML result displayed
+   * and SELECT confirms persisted data.
+   */
+  test('E2E-US-005-02: multi-statement script shows DML + SELECT', async ({ page }) => {
+    // Run a multi-statement script with INSERT and SELECT
+    await runSql(page, `
+      INSERT INTO users (name, age) VALUES ('Carol', 28);
+      SELECT name, age FROM users WHERE name = 'Carol';
+    `);
+
+    // Should show results panel (INSERT result is displayed since it's first DML)
+    await expect(page.getByTestId('results-table')).toBeVisible();
+
+    // Verify the INSERT actually persisted by running a fresh SELECT
+    await runSql(page, "SELECT name, age FROM users WHERE name = 'Carol'");
+    await expect(page.getByTestId('results-table')).toBeVisible();
+    await expect(page.getByTestId('cell-0-name')).toHaveText('Carol');
+    await expect(page.getByTestId('cell-0-age')).toHaveText('28');
+  });
+
+  /**
+   * E2E-US-005-03: Mid-script error rolls back
+   * Execute a script with explicit BEGIN where mid-statement fails; verify rollback.
+   * Note: Without explicit BEGIN, SQLite auto-commits each statement separately.
+   */
+  test('E2E-US-005-03: mid-script error rolls back', async ({ page }) => {
+    // Get initial count
+    await runSql(page, 'SELECT COUNT(*) as cnt FROM users');
+    const initialCountCell = page.getByTestId('cell-0-cnt');
+    const initialCount = await initialCountCell.textContent();
+
+    // Run a script with explicit BEGIN that should fail mid-execution
+    // First INSERT is valid, second refers to non-existent table causing error
+    await runSql(page, `
+      BEGIN;
+      INSERT INTO users (name, age) VALUES ('Dave', 35);
+      INSERT INTO nonexistent_table (col) VALUES (1);
+      COMMIT;
+    `);
+
+    // Should show error panel
+    await expect(page.getByTestId('error-display')).toBeVisible();
+
+    // Verify the first INSERT was rolled back - count should be unchanged
+    await runSql(page, 'SELECT COUNT(*) as cnt FROM users');
+    await expect(page.getByTestId('cell-0-cnt')).toHaveText(initialCount!);
+
+    // Double-check: Dave should not exist
+    await runSql(page, "SELECT COUNT(*) as cnt FROM users WHERE name = 'Dave'");
+    await expect(page.getByTestId('cell-0-cnt')).toHaveText('0');
+  });
+
+  /**
+   * E2E-US-005-04: Explicit BEGIN then error rolls back
+   * Execute BEGIN; INSERT; failing statement; verify INSERT was rolled back.
+   */
+  test('E2E-US-005-04: explicit BEGIN then error rolls back', async ({ page }) => {
+    // Get initial count
+    await runSql(page, 'SELECT COUNT(*) as cnt FROM users');
+    const initialCountCell = page.getByTestId('cell-0-cnt');
+    const initialCount = await initialCountCell.textContent();
+
+    // Run explicit transaction that fails before COMMIT
+    await runSql(page, `
+      BEGIN;
+      INSERT INTO users (name, age) VALUES ('Frank', 40);
+      SELECT * FROM nonexistent_table;
+      COMMIT;
+    `);
+
+    // Should show error panel
+    await expect(page.getByTestId('error-display')).toBeVisible();
+
+    // Verify the INSERT was rolled back - count should be unchanged
+    await runSql(page, 'SELECT COUNT(*) as cnt FROM users');
+    await expect(page.getByTestId('cell-0-cnt')).toHaveText(initialCount!);
+
+    // Double-check: Frank should not exist
+    await runSql(page, "SELECT COUNT(*) as cnt FROM users WHERE name = 'Frank'");
+    await expect(page.getByTestId('cell-0-cnt')).toHaveText('0');
+  });
+
+  /**
+   * E2E-US-005-05: BEGIN without COMMIT shows auto-rollback warning
+   * Execute BEGIN; INSERT; (no COMMIT); verify warning about orphan transaction.
+   */
+  test('E2E-US-005-05: BEGIN without COMMIT auto-rollback warning', async ({ page }) => {
+    // Get initial count
+    await runSql(page, 'SELECT COUNT(*) as cnt FROM users');
+    const initialCountCell = page.getByTestId('cell-0-cnt');
+    const initialCount = await initialCountCell.textContent();
+
+    // Run a script with BEGIN but no COMMIT
+    await runSql(page, `
+      BEGIN;
+      INSERT INTO users (name, age) VALUES ('Grace', 45);
+    `);
+
+    // Should show transaction warning about orphan BEGIN
+    await expect(page.getByTestId('transaction-warning')).toBeVisible();
+    await expect(page.getByTestId('transaction-warning')).toContainText('auto-rollback');
+
+    // Verify the INSERT was auto-rolled back - count should be unchanged
+    await runSql(page, 'SELECT COUNT(*) as cnt FROM users');
+    await expect(page.getByTestId('cell-0-cnt')).toHaveText(initialCount!);
+
+    // Double-check: Grace should not exist
+    await runSql(page, "SELECT COUNT(*) as cnt FROM users WHERE name = 'Grace'");
+    await expect(page.getByTestId('cell-0-cnt')).toHaveText('0');
+  });
+
   test('runs SELECT queries and renders results grid', async ({ page }) => {
     await runSql(page, 'SELECT id, name FROM users ORDER BY id');
     await expect(page.getByTestId('results-table')).toBeVisible();

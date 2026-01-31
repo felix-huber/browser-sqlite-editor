@@ -6,15 +6,27 @@ Tracking structural issues observed during ralph.sh execution that may need code
 
 ### Progress Snapshot
 - **Start**: 36/56 beads (64%) at session 1 start
-- **Current**: 43/56 beads done (76%), RALPH BLOCKED
-- **Remaining**: 13 beads (12 ready, 1 stuck - bd-1jc)
-- **Last Update**: 2026-01-31 21:25
+- **Current**: 46/56 beads done (82%), ralph running
+- **Remaining**: 10 beads
+- **Last Update**: 2026-01-31 22:30
 
 ### CI Progress
-- E2E shard 1: ✅ PASSING (after test fixes)
-- E2E shard 2: ❌ Still failing (run 21550039981)
-- Lighthouse: ❌ Still failing (no .lighthouseci/ generated)
+- E2E shard 1: ✅ PASSING
+- E2E shard 2: ❌ Still failing (runs 21550466852, 21550845001)
+  - Error: `sqlite3_open_v2` fails for all table-designer tests
+  - Also: `[DatabaseRegistry] Failed to migrate registry: SyntaxError: Unexpected end of JSON input`
+- Lighthouse: ✅ PASSING (after .cjs rename)
 - Build/Perf: ✅ PASSING
+
+### Issue 23: OPFS/SQLite Fails for table-designer in CI (E2E Shard 2)
+- **Discovered**: 2026-01-31 22:00
+- **Root Cause**: Unknown - deeper than test fixture cleanup
+  - Registry migration fails with JSON parse error
+  - sqlite3_open_v2 fails for all table-designer tests
+  - Previous tests (import, migration, multitab) all pass
+- **Attempted Fixes**:
+  1. `13a906a fix: use base playwright test for table-designer to avoid OPFS cleanup issues` - didn't help
+- **Status**: 🔴 BLOCKING CI - agent a5b0055 investigating
 
 ### Issue 21: xargs Strips Quotes in Verification Commands
 - **Discovered**: 2026-01-31 22:00

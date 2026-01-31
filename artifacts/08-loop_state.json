@@ -1,20 +1,20 @@
 {
-  "runId": "2026-01-31T22:25:42+01:00",
-  "updatedAt": "2026-01-31T22:25:42+01:00",
+  "runId": "2026-01-31T22:25:45+01:00",
+  "updatedAt": "2026-01-31T22:25:45+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-2v4",
-    "subject": "P8-02c: E2E fill — ERD FK create/edit/delete",
-    "status": "completed",
-    "phase": "done",
+    "id": "bd-325",
+    "subject": "P8-02d: E2E fill — SQL editor transactions",
+    "status": "running",
+    "phase": "implement",
     "attempt": 1
   },
   "tools": {
     "implementer": "smart",
     "reviewer": "smart"
   },
-  "note": "all checks passed"
+  "note": "started"
 }
