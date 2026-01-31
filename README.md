@@ -1,8 +1,8 @@
 # SQLocal - Local SQLite Browser Editor
 
-Run SQLite in your browser. No server. No signup. Your data stays yours.
+Offline SQLite editor in your browser. Visual table designer, ERD diagrams, SQL editor with autocomplete. No server needed.
 
-**100% browser-based SQLite editor powered by WASM. Private. Offline-ready. Open source.**
+**100% browser-based, powered by WASM. Private. Open source.**
 
 [![Build](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml/badge.svg)](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml)
 [![E2E Tests](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml)
