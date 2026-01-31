@@ -63,3 +63,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-39f | P3-01d: Post-rebuild verification + guardrails | FAILED | - | verification failed |
 | bd-39f | P3-01d: Post-rebuild verification + guardrails | FAILED | - | verification failed |
 | bd-39f | P3-01d: Post-rebuild verification + guardrails | DONE | 5713bb889cc87fbb3c87afca09ff8c680b2d366c | clean |
+| bd-o24 | P3-02: Pre-flight dependency scan | DONE | 7b54743877602a4668761f014ad2098062a0e9ca | clean |
