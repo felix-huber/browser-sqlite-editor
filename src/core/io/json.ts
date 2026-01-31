@@ -190,9 +190,11 @@ export function parseJSON(jsonString: string): ParseResult {
       searchOffset++;
     }
 
+    // Calculate element line for error messages
+    const elementLine = getLineNumber(lineStarts, searchOffset);
+
     // Each element must be a plain object - check before finding position
     if (item === null || typeof item !== 'object' || Array.isArray(item)) {
-      const elementLine = getLineNumber(lineStarts, searchOffset);
       return {
         columns: [],
         rows: [],

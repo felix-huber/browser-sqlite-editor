@@ -37,3 +37,6 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-2kg | P2-06: JSON export BLOB placeholder format | DONE | 6e8110daeddaadbbb5d47a141e2318dc2d1dbd2f | clean review |
 | bd-4z7 | P2-07: Database export quota-exceeded handling | FAILED | - | review/verification failure |
 | bd-zsh | P6-01: Error line/column mapping | DONE | 788a6b927948c2ad1f3149bfd9cefadef5921758 | clean review |
+| bd-22t | P6-03: sqlite3_stmt_readonly check | FAILED | - | review/verification failure |
+| bd-1fx | P7-02: Offline guarantee verification | FAILED | - | review/verification failure |
+| bd-3l1 | P8-01: E2E coverage audit | FAILED | - | review/verification failure |

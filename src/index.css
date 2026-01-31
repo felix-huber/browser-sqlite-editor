@@ -1,8 +1,5 @@
 @import "tailwindcss";
 
-/* Import Inter font from Google Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700;800;900&display=swap');
-
 /* Custom design tokens (Tailwind v4 CSS-based config) */
 @theme {
   /* Navy color palette */
@@ -31,8 +28,8 @@
   --color-amber-900: #78350f;
   --color-amber-950: #451a03;
 
-  /* Font family */
-  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* Font family - system fonts only for offline capability */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 /* Apply base styles */

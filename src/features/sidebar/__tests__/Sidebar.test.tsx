@@ -85,7 +85,9 @@ describe('Sidebar', () => {
     expect(screen.getByTestId('db-tree-another-db')).toBeInTheDocument();
   });
 
-  it('filters databases by search input', async () => {
+  it('search filter shows all databases (filter only applies to schema items)', async () => {
+    // Per PRD US-012: filter only searches within active DB schema tree
+    // Databases are always shown regardless of filter
     mockState.databases = mockDatabases;
     mockUseDatabases.mockReturnValue(mockDatabases);
     render(<Sidebar />);
@@ -95,24 +97,48 @@ describe('Sidebar', () => {
 
     // Wait for debounce (150ms) + buffer
     await waitFor(() => {
+      // Both databases should still be visible (filter applies to schema items, not DBs)
       expect(screen.getByTestId('db-tree-test-db')).toBeInTheDocument();
-      expect(screen.queryByTestId('db-tree-another-db')).not.toBeInTheDocument();
+      expect(screen.getByTestId('db-tree-another-db')).toBeInTheDocument();
     }, { timeout: 300 });
   });
 
-  it('shows "No matching results" when search filter has no matches', async () => {
-    mockState.databases = mockDatabases;
+  it('search filter is passed only to active database', async () => {
+    // Per PRD US-012: filter only applies to active DB schema tree
+    // Non-active DBs get empty searchFilter
+    mockState = {
+      activeDbId: 'test-db',
+      schema: {
+        tables: ['users', 'test_users', 'orders'],
+        views: [],
+        indexes: [],
+      },
+      databases: mockDatabases,
+      isReadOnly: false,
+      lockHolder: null,
+      storageStatus: 'ok' as const,
+      storageMode: null,
+    };
     mockUseDatabases.mockReturnValue(mockDatabases);
+    mockUseDatabaseStore.mockImplementation((selector: (state: typeof mockState) => unknown) => selector(mockState));
+
     render(<Sidebar />);
 
+    // Expand active database to show schema
+    const dbRow = screen.getByTestId('db-row-test-db');
+    fireEvent.click(dbRow);
+
+    // Type filter
     const searchInput = screen.getByTestId('search-input');
-    fireEvent.change(searchInput, { target: { value: 'nonexistent' } });
+    fireEvent.change(searchInput, { target: { value: 'user' } });
 
     // Wait for debounce
     await waitFor(() => {
-      expect(screen.getByTestId('empty-state')).toHaveTextContent(
-        'No matches for'
-      );
+      // Schema items matching filter should be visible
+      expect(screen.getByTestId('item-table-users')).toBeInTheDocument();
+      expect(screen.getByTestId('item-table-test_users')).toBeInTheDocument();
+      // Non-matching item should not be visible
+      expect(screen.queryByTestId('item-table-orders')).not.toBeInTheDocument();
     }, { timeout: 300 });
   });
 
@@ -263,58 +289,77 @@ describe('Sidebar', () => {
       expect(searchInput).toHaveValue('');
     });
 
-    it('shows query text in empty state when no matches', async () => {
-      mockState.databases = mockDatabases;
+    it('shows "No matching items" in active DB when filter has no schema matches', async () => {
+      // Per PRD US-012: filter searches within active DB schema tree
+      // When no items match, the active DB shows "No matching items"
+      mockState = {
+        activeDbId: 'test-db',
+        schema: {
+          tables: ['users', 'orders'],
+          views: [],
+          indexes: [],
+        },
+        databases: mockDatabases,
+        isReadOnly: false,
+        lockHolder: null,
+        storageStatus: 'ok' as const,
+        storageMode: null,
+      };
       mockUseDatabases.mockReturnValue(mockDatabases);
+      mockUseDatabaseStore.mockImplementation((selector: (state: typeof mockState) => unknown) => selector(mockState));
+
       render(<Sidebar />);
+
+      // Expand active database
+      const dbRow = screen.getByTestId('db-row-test-db');
+      fireEvent.click(dbRow);
 
       const searchInput = screen.getByTestId('search-input');
       fireEvent.change(searchInput, { target: { value: 'nonexistent' } });
 
       // Wait for debounce
       await waitFor(() => {
-        expect(screen.getByTestId('empty-state')).toHaveTextContent('No matches for "nonexistent"');
+        // All databases should still be visible
+        expect(screen.getByTestId('db-tree-test-db')).toBeInTheDocument();
+        expect(screen.getByTestId('db-tree-another-db')).toBeInTheDocument();
+        // Active DB should show "No matching items"
+        expect(screen.getByTestId('empty-schema')).toHaveTextContent('No matching items');
       }, { timeout: 300 });
-    });
-
-    it('shows clear search button in empty state', async () => {
-      mockState.databases = mockDatabases;
-      mockUseDatabases.mockReturnValue(mockDatabases);
-      render(<Sidebar />);
-
-      const searchInput = screen.getByTestId('search-input');
-      fireEvent.change(searchInput, { target: { value: 'nonexistent' } });
-
-      await waitFor(() => {
-        expect(screen.getByTestId('empty-state-clear-button')).toBeInTheDocument();
-      }, { timeout: 300 });
-    });
-
-    it('clears search from empty state clear button', async () => {
-      mockState.databases = mockDatabases;
-      mockUseDatabases.mockReturnValue(mockDatabases);
-      render(<Sidebar />);
-
-      const searchInput = screen.getByTestId('search-input');
-      fireEvent.change(searchInput, { target: { value: 'nonexistent' } });
-
-      await waitFor(() => {
-        expect(screen.getByTestId('empty-state-clear-button')).toBeInTheDocument();
-      }, { timeout: 300 });
-
-      fireEvent.click(screen.getByTestId('empty-state-clear-button'));
-
-      expect(searchInput).toHaveValue('');
     });
 
     it('debounces search input (150ms delay)', async () => {
-      mockState.databases = mockDatabases;
+      // Per PRD US-012: filter searches within active DB schema tree
+      mockState = {
+        activeDbId: 'test-db',
+        schema: {
+          tables: ['users', 'test_table', 'orders'],
+          views: [],
+          indexes: [],
+        },
+        databases: mockDatabases,
+        isReadOnly: false,
+        lockHolder: null,
+        storageStatus: 'ok' as const,
+        storageMode: null,
+      };
       mockUseDatabases.mockReturnValue(mockDatabases);
+      mockUseDatabaseStore.mockImplementation((selector: (state: typeof mockState) => unknown) => selector(mockState));
 
       vi.useFakeTimers();
 
       try {
         render(<Sidebar />);
+
+        // Expand active database
+        const dbRow = screen.getByTestId('db-row-test-db');
+        await act(async () => {
+          fireEvent.click(dbRow);
+        });
+
+        // All tables visible initially
+        expect(screen.getByTestId('item-table-users')).toBeInTheDocument();
+        expect(screen.getByTestId('item-table-test_table')).toBeInTheDocument();
+        expect(screen.getByTestId('item-table-orders')).toBeInTheDocument();
 
         const searchInput = screen.getByTestId('search-input');
 
@@ -332,31 +377,52 @@ describe('Sidebar', () => {
           fireEvent.change(searchInput, { target: { value: 'test' } });
         });
 
-        // Filter should not be applied yet (still shows all databases)
-        expect(screen.getByTestId('db-tree-test-db')).toBeInTheDocument();
-        expect(screen.getByTestId('db-tree-another-db')).toBeInTheDocument();
+        // Filter should not be applied yet (all tables still visible)
+        expect(screen.getByTestId('item-table-users')).toBeInTheDocument();
+        expect(screen.getByTestId('item-table-test_table')).toBeInTheDocument();
+        expect(screen.getByTestId('item-table-orders')).toBeInTheDocument();
 
         // Advance timer past debounce
         await act(async () => {
           vi.advanceTimersByTime(200);
         });
 
-        // Now filter should be applied
-        expect(screen.getByTestId('db-tree-test-db')).toBeInTheDocument();
-        expect(screen.queryByTestId('db-tree-another-db')).not.toBeInTheDocument();
+        // Now filter should be applied - only test_table matches "test"
+        expect(screen.getByTestId('item-table-test_table')).toBeInTheDocument();
+        expect(screen.queryByTestId('item-table-users')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('item-table-orders')).not.toBeInTheDocument();
       } finally {
         vi.useRealTimers();
       }
     });
 
-    it('requires minimum 2 characters to filter', async () => {
-      mockState.databases = mockDatabases;
+    it('requires minimum 2 characters to filter schema items', async () => {
+      mockState = {
+        activeDbId: 'test-db',
+        schema: {
+          tables: ['users', 'test_table', 'orders'],
+          views: [],
+          indexes: [],
+        },
+        databases: mockDatabases,
+        isReadOnly: false,
+        lockHolder: null,
+        storageStatus: 'ok' as const,
+        storageMode: null,
+      };
       mockUseDatabases.mockReturnValue(mockDatabases);
+      mockUseDatabaseStore.mockImplementation((selector: (state: typeof mockState) => unknown) => selector(mockState));
 
       vi.useFakeTimers();
 
       try {
         render(<Sidebar />);
+
+        // Expand active database
+        const dbRow = screen.getByTestId('db-row-test-db');
+        await act(async () => {
+          fireEvent.click(dbRow);
+        });
 
         const searchInput = screen.getByTestId('search-input');
 
@@ -370,11 +436,12 @@ describe('Sidebar', () => {
           vi.advanceTimersByTime(200);
         });
 
-        // Should still show all databases (1 char doesn't filter)
-        expect(screen.getByTestId('db-tree-test-db')).toBeInTheDocument();
-        expect(screen.getByTestId('db-tree-another-db')).toBeInTheDocument();
+        // Should still show all tables (1 char doesn't filter)
+        expect(screen.getByTestId('item-table-users')).toBeInTheDocument();
+        expect(screen.getByTestId('item-table-test_table')).toBeInTheDocument();
+        expect(screen.getByTestId('item-table-orders')).toBeInTheDocument();
 
-        // Now type 2 chars
+        // Now type 2 chars - "te" matches "test_table"
         await act(async () => {
           fireEvent.change(searchInput, { target: { value: 'te' } });
         });
@@ -384,33 +451,55 @@ describe('Sidebar', () => {
         });
 
         // Now filter should be applied
-        expect(screen.getByTestId('db-tree-test-db')).toBeInTheDocument();
-        expect(screen.queryByTestId('db-tree-another-db')).not.toBeInTheDocument();
+        expect(screen.getByTestId('item-table-test_table')).toBeInTheDocument();
+        expect(screen.queryByTestId('item-table-users')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('item-table-orders')).not.toBeInTheDocument();
       } finally {
         vi.useRealTimers();
       }
     });
 
-    it('is case insensitive', async () => {
-      mockState.databases = mockDatabases;
+    it('schema filter is case insensitive', async () => {
+      mockState = {
+        activeDbId: 'test-db',
+        schema: {
+          tables: ['Users', 'Test_Table', 'ORDERS'],
+          views: [],
+          indexes: [],
+        },
+        databases: mockDatabases,
+        isReadOnly: false,
+        lockHolder: null,
+        storageStatus: 'ok' as const,
+        storageMode: null,
+      };
       mockUseDatabases.mockReturnValue(mockDatabases);
+      mockUseDatabaseStore.mockImplementation((selector: (state: typeof mockState) => unknown) => selector(mockState));
 
       vi.useFakeTimers();
 
       try {
         render(<Sidebar />);
 
-        const searchInput = screen.getByTestId('search-input');
+        // Expand active database
+        const dbRow = screen.getByTestId('db-row-test-db');
         await act(async () => {
-          fireEvent.change(searchInput, { target: { value: 'TEST' } });
+          fireEvent.click(dbRow);
+        });
+
+        const searchInput = screen.getByTestId('search-input');
+        // Search for "USER" (uppercase) should match "Users"
+        await act(async () => {
+          fireEvent.change(searchInput, { target: { value: 'USER' } });
         });
 
         await act(async () => {
           vi.advanceTimersByTime(200);
         });
 
-        expect(screen.getByTestId('db-tree-test-db')).toBeInTheDocument();
-        expect(screen.queryByTestId('db-tree-another-db')).not.toBeInTheDocument();
+        expect(screen.getByTestId('item-table-Users')).toBeInTheDocument();
+        expect(screen.queryByTestId('item-table-Test_Table')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('item-table-ORDERS')).not.toBeInTheDocument();
       } finally {
         vi.useRealTimers();
       }

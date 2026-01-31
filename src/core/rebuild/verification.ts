@@ -10,7 +10,6 @@
  */
 
 import type { DatabaseEngine } from '../engine/db-engine'
-import { quoteIdentifier } from './utils'
 
 /**
  * PRD-specified error message for unsupported schema features.

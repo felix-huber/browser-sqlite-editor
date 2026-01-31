@@ -11,7 +11,7 @@
  * - Match highlighting in search results
  */
 
-import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useDatabases, useDatabaseStore } from '../../store';
 import { DBTree } from './DBTree';
 
@@ -112,16 +112,10 @@ export function Sidebar({
     prevSearchFilterRef.current = searchFilter;
   }, [searchFilter, databases, expandedDbs]);
 
-  // Filter databases by search
-  const filteredDatabases = useMemo(() => {
-    if (!searchFilter.trim()) {
-      return databases;
-    }
-    const lowerFilter = searchFilter.toLowerCase();
-    return databases.filter((db) =>
-      db.name.toLowerCase().includes(lowerFilter)
-    );
-  }, [databases, searchFilter]);
+  // Per PRD US-012: filter only searches within the active DB schema tree
+  // Non-active DBs remain name-only, so we show all databases
+  // The filtering of schema items happens in DBTree component
+  const filteredDatabases = databases;
 
   // Toggle database expansion
   const handleToggleExpand = useCallback((dbName: string) => {
@@ -243,32 +237,35 @@ export function Sidebar({
         className="flex-1 overflow-y-auto p-2"
         aria-label="Database navigator"
       >
-        {filteredDatabases.length === 0 ? (
+        {databases.length === 0 ? (
           <EmptyState
-            hasFilter={!!searchFilter.trim()}
-            filterText={searchFilter.trim()}
+            hasFilter={false}
             onClearSearch={clearSearch}
           />
         ) : (
           <ul className="space-y-1" role="tree" aria-label="Databases">
-            {filteredDatabases.map((db) => (
-              <DBTree
-                key={db.name}
-                database={db}
-                isExpanded={expandedDbs.has(db.name)}
-                isActive={db.name === activeDbId}
-                searchFilter={searchFilter}
-                onToggleExpand={() => handleToggleExpand(db.name)}
-                onOpenDatabase={onOpenDatabase}
-                onSelectTable={(tableName) =>
-                  handleSelectTable(db.name, tableName)
-                }
-                onSelectView={(viewName) => handleSelectView(db.name, viewName)}
-                onSelectIndex={(indexName) =>
-                  handleSelectIndex(db.name, indexName)
-                }
-              />
-            ))}
+            {filteredDatabases.map((db) => {
+              const isActive = db.name === activeDbId;
+              return (
+                <DBTree
+                  key={db.name}
+                  database={db}
+                  isExpanded={expandedDbs.has(db.name)}
+                  isActive={isActive}
+                  // Per PRD US-012: filter only applies to active DB schema
+                  searchFilter={isActive ? searchFilter : ''}
+                  onToggleExpand={() => handleToggleExpand(db.name)}
+                  onOpenDatabase={onOpenDatabase}
+                  onSelectTable={(tableName) =>
+                    handleSelectTable(db.name, tableName)
+                  }
+                  onSelectView={(viewName) => handleSelectView(db.name, viewName)}
+                  onSelectIndex={(indexName) =>
+                    handleSelectIndex(db.name, indexName)
+                  }
+                />
+              );
+            })}
           </ul>
         )}
       </nav>
