@@ -1,13 +1,13 @@
 {
-  "runId": "2026-01-31T12:51:42+01:00",
-  "updatedAt": "2026-01-31T12:59:11+01:00",
+  "runId": "2026-01-31T13:17:49+01:00",
+  "updatedAt": "2026-01-31T13:28:59+01:00",
   "mode": {
     "loop": false,
     "beads": true
   },
   "task": {
-    "id": "bd-qdl",
-    "subject": "P4-02: FK creation validation",
+    "id": "bd-3l1",
+    "subject": "P8-01: E2E coverage audit",
     "status": "completed",
     "phase": "review",
     "attempt": 2
