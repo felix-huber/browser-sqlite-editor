@@ -1,6 +1,6 @@
 {
-  "runId": "2026-02-01T00:11:02+01:00",
-  "updatedAt": "2026-02-01T00:11:02+01:00",
+  "runId": "2026-02-01T00:17:21+01:00",
+  "updatedAt": "2026-02-01T00:17:21+01:00",
   "mode": {
     "loop": true,
     "beads": true
@@ -8,13 +8,13 @@
   "task": {
     "id": "bd-ljh",
     "subject": "P8-02h: E2E fill — Import failure rollback messaging",
-    "status": "running",
-    "phase": "implement",
+    "status": "completed",
+    "phase": "done",
     "attempt": 1
   },
   "tools": {
     "implementer": "smart",
     "reviewer": "smart"
   },
-  "note": "started"
+  "note": "all checks passed"
 }
