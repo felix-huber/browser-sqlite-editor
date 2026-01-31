@@ -19,6 +19,8 @@ Tracking structural issues observed during ralph.sh execution that may need code
 | **21**: xargs quote stripping | ✅ IMPLEMENTED | Lines 1229-1231: Pure bash whitespace trim |
 | **22**: E2E vs Vitest --grep | ✅ IMPLEMENTED | Line 1243: `[[ "$cmd" != *"e2e"* ]]` check |
 | **23**: OPFS/SQLite CI | N/A | Not a ralph.sh issue (E2E test infrastructure) |
+| **24**: Bead missing Verification field | 🔴 STRUCTURAL | Beads MUST have `Verification:` section or ralph loops infinitely |
+| **25**: Stale IN_PROGRESS beads | 🔴 STRUCTURAL | Ralph loops on beads stuck as in_progress; need manual reset |
 
 ---
 
@@ -213,3 +215,53 @@ Tracking structural issues observed during ralph.sh execution that may need code
 
 - Pattern 14 fix (`jq '.[0]'`) is now applied in BOTH `get_next_task_beads` (line 2023) AND `get_task_by_id` (line 2040). Both functions handle array-or-object responses correctly.
 - Issue 18 is now IMPLEMENTED. The fix uses `jq 'if type == "array" then .[0] else . end'` to handle both response formats from `br show`.
+
+---
+
+## Issue 24: Bead Missing Verification Field (CRITICAL)
+
+- **Symptom**: Ralph loops infinitely, burning through iterations with error:
+  ```
+  [ERROR] Task bd-XXX missing verification/backpressure.
+  [ERROR] Add task verification, set RALPH_DEFAULT_VERIFY, or use --default-verify.
+  [WARN] Marked beads task as blocked (failed)
+  ```
+- **Root Cause**: Beads created without a `Verification:` section in description
+- **Status**: 🔴 STRUCTURAL - Requires bead creation discipline
+- **Impact**: Ralph burns iterations (observed 30+ wasted iterations in one session)
+- **Fix**: ALL beads MUST include a Verification section:
+  ```
+  Verification:
+  - <command to verify success, e.g., npm run build && npm test>
+  ```
+- **Prevention**: When creating beads via `br create`, ALWAYS include:
+  ```bash
+  br create "Title" --description "Description...
+
+  Verification:
+  - npm run lint
+  - npm run typecheck
+  - npm test
+
+  Acceptance: <criteria>"
+  ```
+- **Affected Beads (2026-01-31)**: bd-3fq, bd-29u (both fixed by adding Verification section)
+
+---
+
+## Issue 25: Stale IN_PROGRESS Beads Cause Infinite Loop
+
+- **Symptom**: Ralph picks up a bead that's already IN_PROGRESS, can't work on it, moves to next iteration, picks it up again
+- **Root Cause**: Bead stuck in IN_PROGRESS state from previous failed/aborted ralph run
+- **Status**: 🔴 STRUCTURAL - Needs detection/auto-reset logic
+- **Impact**: Ralph loops indefinitely on the same stuck bead
+- **Workaround**: Manually reset stuck beads:
+  ```bash
+  br update bd-XXX --status open
+  ```
+- **Proposed Fix for ralph.sh**: Add stale IN_PROGRESS detection:
+  ```bash
+  # Check if bead has been in_progress for >30 min without activity
+  # If so, reset to open status before picking up
+  ```
+- **Related**: ralph.sh should mark beads as "blocked" or "failed" instead of leaving them in_progress when verification fails
