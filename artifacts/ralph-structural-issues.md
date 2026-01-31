@@ -6,9 +6,9 @@ Tracking structural issues observed during ralph.sh execution that may need code
 
 ### Progress Snapshot
 - **Start**: 36/56 beads (64%) at session 1 start
-- **Current**: 40/56 beads done (71%), bd-22t in progress
-- **Remaining**: 16 beads (15 ready, 1 in progress)
-- **Last Update**: 2026-01-31 19:43
+- **Current**: 41/56 beads done (73%), bd-9kc in progress
+- **Remaining**: 15 beads (14 ready, 1 in progress)
+- **Last Update**: 2026-01-31 19:53
 
 ### Beads Completed This Session (New Ralph Run)
 | Iteration | Bead | Task | Time |
@@ -17,7 +17,8 @@ Tracking structural issues observed during ralph.sh execution that may need code
 | 2 | bd-3mp | P3-03: Prefer native ALTER TABLE | 19:19 |
 | 3 | bd-u9l | P3-04: DDL diff preview enhancement | 19:32 |
 | 4 | bd-1xx | P4-03: ERD DDL diff preview | ✅ 19:42 |
-| 5 | bd-22t | P6-03: sqlite3_stmt_readonly check | in-progress |
+| 5 | bd-22t | P6-03: sqlite3_stmt_readonly check | 19:52 |
+| 6 | bd-9kc | US-006: Query builder result column aliases | in-progress |
 
 ### Previously Fixed Issues
 
@@ -41,6 +42,12 @@ Tracking structural issues observed during ralph.sh execution that may need code
 - No verification failures
 - bd-22t (P6-03: sqlite3_stmt_readonly check) now in progress
 - ETA shows ~16 min remaining at current pace
+
+**Check 3 (19:53)**: bd-22t completed, bd-9kc starting
+- 5 beads completed this session
+- 41/56 done (73%)
+- No structural issues detected
+- All iterations passing verification on first attempt
 
 ---
 

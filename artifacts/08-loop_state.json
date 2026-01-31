@@ -1,20 +1,20 @@
 {
-  "runId": "2026-01-31T19:53:48+01:00",
-  "updatedAt": "2026-01-31T19:53:48+01:00",
+  "runId": "2026-01-31T19:53:51+01:00",
+  "updatedAt": "2026-01-31T19:53:51+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-22t",
-    "subject": "P6-03: sqlite3_stmt_readonly check",
-    "status": "completed",
-    "phase": "done",
+    "id": "bd-9kc",
+    "subject": "US-006: Query builder result column aliases",
+    "status": "running",
+    "phase": "implement",
     "attempt": 1
   },
   "tools": {
     "implementer": "claude",
     "reviewer": "claude"
   },
-  "note": "all checks passed"
+  "note": "started"
 }

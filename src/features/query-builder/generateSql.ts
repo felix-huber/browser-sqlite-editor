@@ -15,7 +15,7 @@ import type { WhereCondition, WhereClauseResult } from './WhereBuilder'
 import type { SortCondition } from './OrderByBuilder'
 import { generateWhereClause } from './WhereBuilder'
 import { generateOrderByClause } from './OrderByBuilder'
-import { quoteIdentifier } from '../../core/sql/helpers'
+import { quoteIdentifier, generateAlias } from '../../core/sql/helpers'
 
 /** Options for SQL generation */
 export interface GenerateSqlOptions {
@@ -80,16 +80,18 @@ export function generateSql(options: GenerateSqlOptions): GenerateSqlResult {
     })
   }
 
-  // Build SELECT columns
+  // Build SELECT columns with deterministic aliases: "Table"."Column" AS "Table.Column"
   const selectColumns: string[] = []
   for (const node of tableNodes) {
-    const { alias, selectedColumns } = node.data
+    const { tableName, alias, selectedColumns } = node.data
     if (selectedColumns.length === 0) {
       // If no columns selected, select all with alias.*
       selectColumns.push(`${alias}.*`)
     } else {
       for (const col of selectedColumns) {
-        selectColumns.push(`${alias}.${quoteIdentifier(col)}`)
+        // Use deterministic alias format: "Table"."Column" AS "Table.Column"
+        const qualifiedAlias = quoteIdentifier(generateAlias(tableName, col))
+        selectColumns.push(`${alias}.${quoteIdentifier(col)} AS ${qualifiedAlias}`)
       }
     }
   }

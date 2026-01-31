@@ -127,6 +127,38 @@ describe('generateSql', () => {
       expect(result.sql).toContain('t2."order_id"')
       expect(result.sql).toContain('t2."amount"')
     })
+
+    // E2E-US-006-01: deterministic SQL output test
+    it('generates deterministic column aliases in "Table.Column" format', () => {
+      const result = generateSql(
+        createOptions({
+          tableNodes: [createTableNode('users', 't1', ['id', 'name'])],
+        })
+      )
+
+      // Verify deterministic alias format: t1."column" AS "users.column"
+      expect(result.sql).toContain('t1."id" AS "users.id"')
+      expect(result.sql).toContain('t1."name" AS "users.name"')
+    })
+
+    // E2E-US-006-02: duplicate column name test - multi-table queries have unique aliases
+    it('ensures unique column aliases in multi-table queries', () => {
+      const result = generateSql(
+        createOptions({
+          tableNodes: [
+            createTableNode('users', 't1', ['id', 'name']),
+            createTableNode('orders', 't2', ['id', 'name', 'total']),
+          ],
+        })
+      )
+
+      // Both tables have 'id' and 'name' columns - aliases must be unique
+      expect(result.sql).toContain('t1."id" AS "users.id"')
+      expect(result.sql).toContain('t1."name" AS "users.name"')
+      expect(result.sql).toContain('t2."id" AS "orders.id"')
+      expect(result.sql).toContain('t2."name" AS "orders.name"')
+      expect(result.sql).toContain('t2."total" AS "orders.total"')
+    })
   })
 
   describe('FROM clause', () => {
