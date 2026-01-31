@@ -1,6 +1,6 @@
 {
-  "runId": "2026-02-01T00:02:44+01:00",
-  "updatedAt": "2026-02-01T00:02:44+01:00",
+  "runId": "2026-02-01T00:10:59+01:00",
+  "updatedAt": "2026-02-01T00:10:59+01:00",
   "mode": {
     "loop": true,
     "beads": true
@@ -8,13 +8,13 @@
   "task": {
     "id": "bd-1he",
     "subject": "P8-02g: E2E fill — CSV/JSON import rules",
-    "status": "running",
-    "phase": "implement",
+    "status": "completed",
+    "phase": "done",
     "attempt": 1
   },
   "tools": {
     "implementer": "smart",
     "reviewer": "smart"
   },
-  "note": "started"
+  "note": "all checks passed"
 }

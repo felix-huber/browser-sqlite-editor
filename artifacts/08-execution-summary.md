@@ -84,3 +84,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-1rm | P8-02e: E2E fill — Query builder deterministic output | FAILED | - | tool failed (rc=124) |
 | bd-1rm | P8-02e: E2E fill — Query builder deterministic output | DONE | 4078d6a1e72ab743ec50903198ecb9bd0494c509 | clean |
 | bd-xki | P8-02f: E2E fill — Grid edits + BLOB/generated columns | DONE | 4edd2d5442861e09ad8686e37b411462b8f39283 | clean |
+| bd-1he | P8-02g: E2E fill — CSV/JSON import rules | DONE | e8eb337c27ed8d5770c86c8dcc3fe9a765a6056d | clean |
