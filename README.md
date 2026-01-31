@@ -4,9 +4,7 @@ Offline SQLite editor in your browser. Visual table designer, ERD diagrams, SQL 
 
 **100% browser-based, powered by WASM. Private. Open source.**
 
-[![Build](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml/badge.svg)](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml)
-[![E2E Tests](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml)
-[![Lighthouse](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml)
+[![CI](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml/badge.svg)](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![PWA](https://img.shields.io/badge/PWA-installable-blueviolet)](https://web.dev/progressive-web-apps/)
 
