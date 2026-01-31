@@ -1351,6 +1351,12 @@ describe('DataGrid', () => {
       fireEvent.change(screen.getByTestId('field-name'), { target: { value: 'Duplicate' } });
       fireEvent.change(screen.getByTestId('field-price'), { target: { value: '10' } });
 
+      // Wait for React state to update before submitting
+      await vi.waitFor(() => {
+        expect(screen.getByTestId('field-name')).toHaveValue('Duplicate');
+        expect(screen.getByTestId('field-price')).toHaveValue(10);
+      });
+
       // Submit
       await user.click(screen.getByTestId('add-row-submit'));
 

@@ -1,20 +1,20 @@
 {
-  "runId": "2026-01-31T19:32:46+01:00",
-  "updatedAt": "2026-01-31T19:32:46+01:00",
+  "runId": "2026-01-31T19:32:49+01:00",
+  "updatedAt": "2026-01-31T19:32:49+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-u9l",
-    "subject": "P3-04: DDL diff preview enhancement",
-    "status": "completed",
-    "phase": "done",
+    "id": "bd-1xx",
+    "subject": "P4-03: ERD DDL diff preview",
+    "status": "running",
+    "phase": "implement",
     "attempt": 1
   },
   "tools": {
     "implementer": "claude",
     "reviewer": "claude"
   },
-  "note": "all checks passed"
+  "note": "started"
 }

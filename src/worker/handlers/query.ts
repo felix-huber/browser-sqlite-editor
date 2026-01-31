@@ -127,11 +127,13 @@ export async function handleExecRequest(
     }
 
     // Use transaction tracking for execution
+    // skipAutoRollback allows programmatic transactions spanning multiple calls
+    const autoRollbackOrphan = !request.skipAutoRollback;
     const trackingResult = await executeWithTransactionTracking(
       engine,
       request.sql,
       sessionTracker,
-      { autoRollbackOrphan: true, params: request.params }
+      { autoRollbackOrphan, params: request.params }
     );
 
     // Include warnings in the response data

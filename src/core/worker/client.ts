@@ -306,10 +306,13 @@ export class WorkerClient {
 
   /**
    * Execute an INSERT/UPDATE/DELETE/DDL statement
+   * @param skipAutoRollback If true, disables auto-rollback of orphan transactions.
+   *                         Used for programmatic transactions spanning multiple calls.
    */
   async exec(
     sql: string,
-    params?: unknown[]
+    params?: unknown[],
+    options?: { skipAutoRollback?: boolean }
   ): Promise<{ rowsAffected?: number; transactionWarnings?: TransactionWarning[] }> {
     const response = await this.request<{
       type: 'success';
@@ -321,6 +324,7 @@ export class WorkerClient {
       type: 'exec',
       sql,
       params,
+      skipAutoRollback: options?.skipAutoRollback,
     });
     const data = response.data;
     return {

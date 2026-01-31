@@ -560,12 +560,13 @@ function App() {
       if (!client) throw new Error('Worker not initialized');
       if (!activeDbId) throw new Error('No active database');
 
+      // Create executor with skipAutoRollback to allow multi-call transactions
       const executor = {
         exec: async (sql: string, params?: unknown[]) => {
-          await client.exec(sql, params);
+          await client.exec(sql, params, { skipAutoRollback: true });
         },
         run: async (sql: string, params?: unknown[]) => {
-          const result = await client.exec(sql, params);
+          const result = await client.exec(sql, params, { skipAutoRollback: true });
           return { changes: result.rowsAffected ?? 0 };
         },
       };

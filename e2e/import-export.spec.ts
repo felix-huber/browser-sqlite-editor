@@ -142,7 +142,9 @@ test.describe('Import/Export (real UI)', () => {
     const download = await downloadPromise;
     const jsonContent = await saveDownloadText(download, 'json');
     const parsed = JSON.parse(jsonContent);
-    expect(parsed[0].data).toMatch(/^base64:/);
+    // JSON export uses structured BLOB format with __blob_base64__ key
+    expect(parsed[0].data).toHaveProperty('__blob_base64__');
+    expect(parsed[0].data.__blob_base64__).toMatch(/^[A-Za-z0-9+/]+=*$/);
   });
 
   test('exports SQL with CREATE TABLE and INSERT statements', async ({ page }) => {
