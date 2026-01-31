@@ -42,6 +42,18 @@ async function waitForWorkerReady(page: Page) {
 export async function createAndOpenDatabase(page: Page, dbName: string) {
   await page.goto('/');
   await expect(page.locator('[data-testid="welcome-screen"]')).toBeVisible();
+  // Ensure OPFS directories exist (may have been deleted by test fixtures)
+  await page.evaluate(async () => {
+    if (navigator.storage?.getDirectory) {
+      try {
+        const root = await navigator.storage.getDirectory();
+        const appDir = await root.getDirectoryHandle('wasm-sqlite-editor', { create: true });
+        await appDir.getDirectoryHandle('databases', { create: true });
+      } catch {
+        // OPFS not available, worker will use IDB fallback
+      }
+    }
+  });
   await waitForWorkerReady(page);
   await page.getByTestId('new-database-button').click();
   await expect(page.getByTestId('new-database-dialog')).toBeVisible();

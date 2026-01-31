@@ -2,8 +2,19 @@
  * Rebuild plan generation.
  */
 
-import type { RebuildPlan, RebuildOperation, TableDependents } from './types';
+import type {
+  RebuildPlan,
+  RebuildOperation,
+  TableDependents,
+  SqliteMasterObject,
+} from './types';
 import { escapeRegExp, quoteIdentifier } from './utils';
+import {
+  scanDependenciesForTable,
+  scanDependenciesForColumn,
+  scanDependenciesForColumns,
+  type DependencyScanResult,
+} from './dependency-scan';
 
 /**
  * Generates a rebuild plan for a table.
@@ -412,4 +423,62 @@ export function generateRebuildPlanWithColumnMapping(
     dependents,
     affectsOtherTables: dependents.incomingForeignKeys.length > 0,
   };
+}
+
+/**
+ * Pre-flight dependency scan options.
+ */
+export interface PreflightScanOptions {
+  /** Table being modified */
+  tableName: string;
+  /** Columns being modified (for column-level scans) */
+  modifiedColumns?: string[];
+  /** Rows from sqlite_master */
+  masterRows: SqliteMasterObject[];
+}
+
+/**
+ * Runs pre-flight dependency scan before generating a rebuild plan.
+ *
+ * This is Phase 1 of the PRD's two-phase dependency handling:
+ * - Scans sqlite_master SQL text for references to target table/column
+ * - Returns user-facing dependency warning listing affected objects
+ * - Best-effort: may miss obfuscated references
+ *
+ * Call this before generateRebuildPlan to show the user a warning
+ * about dependent objects that may be affected by the rebuild.
+ *
+ * @param options Scan options
+ * @returns Scan result with warnings
+ */
+export function runPreflightDependencyScan(
+  options: PreflightScanOptions
+): DependencyScanResult {
+  const { tableName, modifiedColumns, masterRows } = options;
+
+  if (modifiedColumns && modifiedColumns.length > 0) {
+    // Column-level scan for specific columns being modified
+    return scanDependenciesForColumns(tableName, modifiedColumns, masterRows);
+  }
+
+  // Table-level scan
+  return scanDependenciesForTable(tableName, masterRows);
+}
+
+/**
+ * Runs pre-flight scan for a single column modification.
+ *
+ * Use this when renaming or dropping a specific column.
+ *
+ * @param tableName Table containing the column
+ * @param columnName Column being modified
+ * @param masterRows Rows from sqlite_master
+ * @returns Scan result with warnings
+ */
+export function runPreflightColumnScan(
+  tableName: string,
+  columnName: string,
+  masterRows: SqliteMasterObject[]
+): DependencyScanResult {
+  return scanDependenciesForColumn(tableName, columnName, masterRows);
 }

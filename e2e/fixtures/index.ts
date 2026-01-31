@@ -57,8 +57,31 @@ export const test = base.extend<{
         }
       }
     });
-    // Reload after clearing storage to avoid races with app initialization.
+    // Reload after clearing storage and wait for WASM worker to be fully ready.
     await _page.goto('/', { waitUntil: 'domcontentloaded' });
+    // Ensure OPFS directories exist (they were deleted above)
+    await _page.evaluate(async () => {
+      if (navigator.storage?.getDirectory) {
+        try {
+          const root = await navigator.storage.getDirectory();
+          const appDir = await root.getDirectoryHandle('wasm-sqlite-editor', { create: true });
+          await appDir.getDirectoryHandle('databases', { create: true });
+        } catch {
+          // OPFS not available or not in worker context
+        }
+      }
+    });
+    // Wait for the WASM worker to initialize and be ready to accept commands
+    await _page.waitForFunction(async () => {
+      const api = (window as Window & { __sqliteEditorTest?: { getRegistry?: () => Promise<unknown> } }).__sqliteEditorTest;
+      if (!api?.getRegistry) return false;
+      try {
+        const registry = await api.getRegistry();
+        return registry !== null;
+      } catch {
+        return false;
+      }
+    }, { timeout: 30000 });
     await use();
   }, { auto: true }],
 });
