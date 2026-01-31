@@ -68,3 +68,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-4z7 | P2-07: Database export quota-exceeded handling | DONE | bfe638317568e7fc94eb0d22752d4e80019794ed | clean |
 | bd-3mp | P3-03: Prefer native ALTER TABLE | DONE | ebf9e425b9a368c505e0cc0d53ca45ce6566a9e3 | clean |
 | bd-u9l | P3-04: DDL diff preview enhancement | DONE | f8c81ce3909205ac6ef7b99a8ea98163c42ea297 | clean |
+| bd-1xx | P4-03: ERD DDL diff preview | DONE | 0f91a444eda0d3a524739b8667911a26487811b6 | clean |
