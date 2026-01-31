@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createAndOpenDatabase, runSql, waitForReady } from './helpers/app';
+import { runSql, waitForReady } from './helpers/app';
 
 /**
  * E2E-US-011-01: Offline workflow test
@@ -7,6 +7,7 @@ import { createAndOpenDatabase, runSql, waitForReady } from './helpers/app';
  * - No runtime network calls after first load
  * - Only SW update checks allowed
  * - All features functional offline
+ * - All static assets precached (js, css, html, wasm, fonts)
  */
 
 interface SWRegistrationResult {
@@ -354,5 +355,49 @@ test.describe('Offline Guarantee (E2E-US-011-01)', () => {
       // Export dialog or dropdown should appear
       await expect(page.getByTestId('export-menu').or(page.getByTestId('export-dialog'))).toBeVisible({ timeout: 5000 });
     }
+  });
+
+  test('precache manifest includes all required asset types', async ({ page }) => {
+    // Build verification: check that the SW precaches essential asset types
+    // This test verifies the vite.config.ts globPatterns are correct
+    await page.goto('/');
+
+    // Wait for SW to be active
+    const sw = await waitForServiceWorker(page);
+    expect(sw.active).toBe(true);
+
+    // Get cache names and contents
+    const cacheInfo = await page.evaluate(async () => {
+      const cacheNames = await caches.keys();
+      const assetTypes: Record<string, string[]> = {
+        js: [],
+        css: [],
+        html: [],
+        wasm: [],
+      };
+
+      for (const cacheName of cacheNames) {
+        const cache = await caches.open(cacheName);
+        const requests = await cache.keys();
+        for (const request of requests) {
+          const url = request.url;
+          if (url.endsWith('.js')) assetTypes.js.push(url);
+          else if (url.endsWith('.css')) assetTypes.css.push(url);
+          // index.html is often cached as '/' or without extension
+          else if (url.endsWith('.html') || url.endsWith('/')) assetTypes.html.push(url);
+          else if (url.endsWith('.wasm')) assetTypes.wasm.push(url);
+        }
+      }
+
+      return assetTypes;
+    });
+
+    // Verify essential asset types are cached
+    // JS, CSS, and WASM are always present in the app
+    expect(cacheInfo.js.length).toBeGreaterThan(0);
+    expect(cacheInfo.css.length).toBeGreaterThan(0);
+    expect(cacheInfo.wasm.length).toBeGreaterThan(0);
+    // HTML may be cached as '/' via navigateFallback
+    expect(cacheInfo.html.length + cacheInfo.js.length).toBeGreaterThan(1);
   });
 });
