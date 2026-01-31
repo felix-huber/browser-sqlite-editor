@@ -1,13 +1,13 @@
 {
   "runId": "2026-01-31T00:28:10+01:00",
-  "updatedAt": "2026-01-31T04:04:18+01:00",
+  "updatedAt": "2026-01-31T04:07:02+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-1ig",
-    "subject": "P3-01a: DDL parser for CREATE TABLE (AST)",
+    "id": "bd-2gl",
+    "subject": "P3-01b: Apply column add/rename via AST patch",
     "status": "completed",
     "phase": "review",
     "attempt": 1
