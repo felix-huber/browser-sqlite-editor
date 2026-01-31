@@ -247,9 +247,15 @@ test.describe('Security (CSP Workflow)', () => {
       await page.waitForTimeout(500);
     }
 
-    // Close the dialog (whether import succeeded or showed error)
-    await page.getByTestId('close-button').click();
-    await expect(page.getByTestId('import-dialog')).not.toBeVisible();
+    // Close the dialog if still visible (import success may auto-close)
+    const dialogStillVisible = await page.getByTestId('import-dialog').isVisible().catch(() => false);
+    if (dialogStillVisible) {
+      const closeButton = page.getByTestId('close-button');
+      if (await closeButton.isVisible().catch(() => false)) {
+        await closeButton.click();
+      }
+    }
+    await expect(page.getByTestId('import-dialog')).not.toBeVisible({ timeout: 10000 });
 
     // 6. Test export - open export dialog
     await openTable(page, CSP_DB_NAME, 'csp_test');
