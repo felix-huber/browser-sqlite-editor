@@ -36,3 +36,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-6sr | P2-04: JSON import flat-only enforcement | FAILED | - | review/verification failure |
 | bd-2kg | P2-06: JSON export BLOB placeholder format | DONE | 6e8110daeddaadbbb5d47a141e2318dc2d1dbd2f | clean review |
 | bd-4z7 | P2-07: Database export quota-exceeded handling | FAILED | - | review/verification failure |
+| bd-zsh | P6-01: Error line/column mapping | DONE | 788a6b927948c2ad1f3149bfd9cefadef5921758 | clean review |
