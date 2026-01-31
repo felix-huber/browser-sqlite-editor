@@ -1,6 +1,6 @@
 {
-  "runId": "2026-01-31T17:00:27+01:00",
-  "updatedAt": "2026-01-31T17:00:27+01:00",
+  "runId": "2026-01-31T17:10:03+01:00",
+  "updatedAt": "2026-01-31T17:10:03+01:00",
   "mode": {
     "loop": true,
     "beads": true
@@ -8,13 +8,13 @@
   "task": {
     "id": "bd-b05",
     "subject": "P2-00: Perf/memory regression harness",
-    "status": "running",
-    "phase": "implement",
+    "status": "completed",
+    "phase": "done",
     "attempt": 1
   },
   "tools": {
     "implementer": "claude",
     "reviewer": "claude"
   },
-  "note": "started"
+  "note": "all checks passed"
 }
