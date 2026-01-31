@@ -53,3 +53,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-b05 | P2-00: Perf/memory regression harness | DONE | d2280e5304cefff7edb7f5c87c05fad95049a96e | clean |
 | bd-2y1 | P4-04: FK creation dialog with action configuration | FAILED | - | verification failed |
 | bd-2y1 | P4-04: FK creation dialog with action configuration | FAILED | - | verification failed |
+| bd-2y1 | P4-04: FK creation dialog with action configuration | DONE | cde677dab355127eb49adad7dec5feb5af5b4dc2 | clean |
