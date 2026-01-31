@@ -322,9 +322,11 @@ export function ERDView({ onOpenDesigner, onDirtyChange }: ERDViewProps) {
       }
 
       if (changed) {
-        await saveLayout(activeDbId, layout);
-        // Clear positions dirty after successful save
-        setPositionsDirty(false);
+        const saved = await saveLayout(activeDbId, layout);
+        // Clear positions dirty only after successful save
+        if (saved) {
+          setPositionsDirty(false);
+        }
       }
     },
     [activeDbId, setPositionsDirty]

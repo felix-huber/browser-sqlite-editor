@@ -521,6 +521,8 @@ export function ERDCanvas({
           onShowToast?.('Foreign key updated successfully', 'success')
           setEditDialogOpen(false)
           setEditingFK(null)
+          // Clear dirty state after successful save
+          onFKDialogDirtyChange?.(false)
         }
       } catch (err) {
         onShowToast?.(
@@ -531,7 +533,7 @@ export function ERDCanvas({
         setIsSaving(false)
       }
     },
-    [editingFK, onEditFK, setEdges, onShowToast]
+    [editingFK, onEditFK, setEdges, onShowToast, onFKDialogDirtyChange]
   )
 
   /**
@@ -541,8 +543,10 @@ export function ERDCanvas({
     if (!isSaving) {
       setEditDialogOpen(false)
       setEditingFK(null)
+      // Clear dirty state when dialog is closed
+      onFKDialogDirtyChange?.(false)
     }
-  }, [isSaving])
+  }, [isSaving, onFKDialogDirtyChange])
 
   /**
    * Handle confirm delete from delete dialog
@@ -690,14 +694,13 @@ export function ERDCanvas({
           showInteractive
           position="bottom-right"
         />
-        {/* Draft indicator */}
+        {/* Draft indicator - matches designer pattern */}
         {isDirty && (
           <div
-            className="absolute top-4 left-4 z-10 flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700"
+            className="absolute top-4 left-4 z-10 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-600"
             data-testid="erd-draft-indicator"
           >
-            <span className="w-2 h-2 rounded-full bg-amber-500" />
-            <span>Unsaved changes</span>
+            Unsaved changes
           </div>
         )}
         <MiniMap

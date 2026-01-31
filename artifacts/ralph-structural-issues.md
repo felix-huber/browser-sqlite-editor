@@ -6,9 +6,9 @@ Tracking structural issues observed during ralph.sh execution that may need code
 
 ### Progress Snapshot
 - **Start**: 36/56 beads (64%) at session 1 start
-- **Current**: 41/56 beads done (73%), bd-9kc in progress
-- **Remaining**: 15 beads (14 ready, 1 in progress)
-- **Last Update**: 2026-01-31 19:53
+- **Current**: 42/56 beads done (75%), RALPH RUNNING
+- **Remaining**: 14 beads (13 ready, 1 in progress - bd-rqg)
+- **Last Update**: 2026-01-31 20:20
 
 ### Beads Completed This Session (New Ralph Run)
 | Iteration | Bead | Task | Time |
@@ -18,7 +18,7 @@ Tracking structural issues observed during ralph.sh execution that may need code
 | 3 | bd-u9l | P3-04: DDL diff preview enhancement | 19:32 |
 | 4 | bd-1xx | P4-03: ERD DDL diff preview | ✅ 19:42 |
 | 5 | bd-22t | P6-03: sqlite3_stmt_readonly check | 19:52 |
-| 6 | bd-9kc | US-006: Query builder result column aliases | in-progress |
+| 6 | bd-9kc | US-006: Query builder result column aliases | 20:00 |
 
 ### Previously Fixed Issues
 
@@ -49,9 +49,74 @@ Tracking structural issues observed during ralph.sh execution that may need code
 - No structural issues detected
 - All iterations passing verification on first attempt
 
+**Check 4 (20:03)**: RALPH STOPPED - JQ PARSE ERRORS
+- bd-9kc completed successfully (42/56 = 75%)
+- **ISSUE DETECTED**: Ralph exited during iteration 7 task selection
+- jq parse errors: "Invalid numeric literal at line 1, column 2" (4x)
+- Ralph process no longer running, lock file removed
+- Likely cause: `br ready --json` returning unexpected format
+
 ---
 
 ## Issue Template
+
+### Issue 15: log_warn/log_error Corrupt JSON Output
+- **Bead**: (iteration 7 task selection)
+- **Iteration**: 7
+- **Symptom**: Ralph stopped after jq parse errors during `br ready` parsing
+- **Root Cause**: **CONFIRMED** - `log_warn` and `log_error` in ralph.sh output to stdout instead of stderr. When `ensure_task_verification()` calls `log_warn` and then returns JSON via `printf`, the output becomes:
+  ```
+  [WARN] Task bd-rqg missing verification...
+  { ... JSON ... }
+  ```
+  jq sees `[WARN]` and tries to parse it as JSON array, fails with "Invalid numeric literal"
+- **Fix Applied**: Changed log_warn and log_error to output to stderr:
+  ```bash
+  log_warn() { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
+  log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
+  ```
+- **Status**: 🟢 Fixed - Ralph now running successfully
+
+### Issue 16: Lighthouse CI Config Mismatch (PWA)
+- **CI Run**: 21549482704
+- **Symptom**: Lighthouse job fails with exit code 1, no `.lighthouseci/` directory created
+- **Root Cause**: lighthouserc.js requires PWA assertions (`service-worker`, `works-offline`) but:
+  - No `dist/sw.js` service worker exists
+  - App may not have full PWA implementation
+- **Evidence**:
+  ```
+  X lighthouse in 2m14s
+  ! No files were found with the provided path: .lighthouseci/
+  X Process completed with exit code 1.
+  ```
+- **Proposed Fix**:
+  1. Remove PWA assertions if app isn't PWA (`service-worker: 'off'`, `works-offline: 'off'`)
+  2. Or implement actual PWA support with service worker
+  3. Add `continue-on-error: true` to lighthouse job if it's informational only
+- **Status**: 🔴 New - CI BLOCKING
+
+### Issue 17: Multiple Claude Instances for Same Task
+- **Observation**: 5 timeout processes for bd-rqg running simultaneously
+- **Expected**: 1 process per task
+- **Possible Causes**:
+  1. ralph.sh spawning new instances without killing previous
+  2. Cleanup on iteration completion not working
+  3. Previous ralph instances not fully terminated
+- **Impact**: Resource waste, potential race conditions
+- **Proposed Fix**: Investigate ralph.sh process management, ensure task PIDs are tracked and cleaned up
+- **Status**: 🟡 Analyzing
+
+### Issue 18: get_task_by_id() JSON Corruption (Caught by Fresh Eyes)
+- **Discovered During**: bd-rqg fresh eyes review pass 1
+- **Symptom**: Potential JSON escape sequence corruption
+- **Root Cause**: `get_task_by_id()` was using `build_task_json_from_bead()` which captures JSON to a bash variable, potentially corrupting escape sequences
+- **Fix Applied**: Updated to use temp files with `build_task_json_from_bead_file()` for consistency
+- **Status**: 🟢 Fixed (by autonomous agent during task execution)
+- **Note**: This validates the fresh eyes review pattern - it catches structural issues!
+
+---
+
+## Issue Template (Original)
 
 ### Issue N: [Short Title]
 - **Bead**: bd-XXX
@@ -84,5 +149,6 @@ Tracking structural issues observed during ralph.sh execution that may need code
 ## Monitoring Notes
 
 - Subagent tasked with CI fixes (a249505)
-- Ralph running with `--loop --max-tasks 20`
-- Build verification currently passing
+- Ralph **stopped** at iteration 7 due to jq parse errors
+- 42/56 beads complete (75%)
+- Needs restart or investigation of br ready output format

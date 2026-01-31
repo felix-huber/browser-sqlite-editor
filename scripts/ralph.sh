@@ -152,8 +152,8 @@ NC='\033[0m' # No Color
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 log_tool() { echo -e "${CYAN}[TOOL]${NC} $1"; }
 
 # Parse arguments
@@ -1067,6 +1067,48 @@ extract_section() {
     found && /^[A-Z][A-Za-z ]+:/ {exit}
     found {print}
   ' | sed -e 's/^[ -]*//'
+}
+
+# Build task JSON from bead file (avoids variable capture issues with escape sequences)
+build_task_json_from_bead_file() {
+  local bead_file="$1"
+  local id
+  local title
+  local desc
+  local labels_json
+  id=$(jq -r '.id' "$bead_file")
+  title=$(jq -r '.title' "$bead_file")
+  # Use a temp file for description to preserve escape sequences
+  local desc_file=$(mktemp)
+  jq -r '.description // ""' "$bead_file" > "$desc_file"
+  desc=$(cat "$desc_file")
+  rm -f "$desc_file"
+  labels_json=$(jq -c '.labels // [] | map(ascii_downcase)' "$bead_file")
+
+  local verification
+  local llm_verification
+  local allowed_paths
+  verification=$(extract_section "$desc" '^(Verification:|VERIFICATION:)')
+  llm_verification=$(extract_section "$desc" '^(LLM Verification:|LLM VERIFY:|Subjective Checks:|SUBJECTIVE CHECKS:)')
+  allowed_paths=$(extract_section "$desc" '^(Allowed Paths:|ALLOWED PATHS:|Files to modify:|FILES TO MODIFY:)')
+
+  jq -n \
+    --arg id "$id" \
+    --arg subject "$title" \
+    --arg description "$desc" \
+    --arg verification "$verification" \
+    --arg llmVerification "$llm_verification" \
+    --arg allowedPaths "$allowed_paths" \
+    --argjson tags "$labels_json" \
+    '{
+      id: $id,
+      subject: $subject,
+      description: $description,
+      tags: $tags,
+      allowedPaths: ($allowedPaths | split("\n") | map(select(length>0))),
+      verification: ($verification | split("\n") | map(select(length>0))),
+      llmVerification: ($llmVerification | split("\n") | map(select(length>0)))
+    }'
 }
 
 build_task_json_from_bead() {
@@ -2004,35 +2046,56 @@ get_next_task_graph() {
 get_next_task_beads() {
   # br ready --json returns tasks with no open blockers
   # Format: [{"id": "bd-a1b2", "title": "...", "priority": 1, "type": "task", ...}]
-  local ready_tasks
-  ready_tasks=$(br ready --json 2>/dev/null || echo "[]")
-  
-  if [[ "$ready_tasks" == "[]" || -z "$ready_tasks" ]]; then
+  # Note: br may output INFO lines to stdout (e.g. "2026-01-31T... INFO ..."),
+  # so we filter to skip lines starting with timestamps.
+  # IMPORTANT: Don't capture JSON to a bash variable - it breaks escape sequences.
+  # Use temp files instead to preserve exact JSON formatting.
+  local tmp_ready=$(mktemp)
+  br ready --json 2>/dev/null | sed '/^[0-9]/d' > "$tmp_ready" || echo "[]" > "$tmp_ready"
+
+  local count
+  count=$(jq 'length' "$tmp_ready" 2>/dev/null || echo "0")
+  if [[ "$count" -eq 0 ]]; then
+    rm -f "$tmp_ready"
     echo ""
     return
   fi
-  
+
   # Get the first ready task and convert to our format
-  local bead_json
-  bead_json=$(echo "$ready_tasks" | jq -c '.[0]')
-  if [[ -z "$bead_json" || "$bead_json" == "null" ]]; then
+  local tmp_bead=$(mktemp)
+  jq -c '.[0]' "$tmp_ready" > "$tmp_bead" 2>/dev/null
+  rm -f "$tmp_ready"
+
+  if [[ ! -s "$tmp_bead" ]] || grep -q '^null$' "$tmp_bead"; then
+    rm -f "$tmp_bead"
     echo ""
     return
   fi
-  build_task_json_from_bead "$bead_json"
+
+  build_task_json_from_bead_file "$tmp_bead"
+  rm -f "$tmp_bead"
 }
 
 # Get task by ID
 get_task_by_id() {
   local task_id="$1"
   if [[ "$USE_BEADS" == "true" ]]; then
-    local bead_json
-    bead_json=$(br show "$task_id" --json 2>/dev/null || echo "")
-    if [[ -z "$bead_json" || "$bead_json" == "null" ]]; then
+    # Use temp file to avoid variable capture issues with escape sequences
+    local tmp_raw=$(mktemp)
+    br show "$task_id" --json 2>/dev/null | sed '/^[0-9]/d' > "$tmp_raw" || echo "[]" > "$tmp_raw"
+
+    # br show returns an array, extract first element
+    local tmp_bead=$(mktemp)
+    jq -c '.[0]' "$tmp_raw" > "$tmp_bead" 2>/dev/null
+    rm -f "$tmp_raw"
+
+    if [[ ! -s "$tmp_bead" ]] || grep -q '^null$' "$tmp_bead"; then
+      rm -f "$tmp_bead"
       echo ""
       return
     fi
-    build_task_json_from_bead "$bead_json"
+    build_task_json_from_bead_file "$tmp_bead"
+    rm -f "$tmp_bead"
   else
     jq -r --arg id "$task_id" '.tasks[] | select(.id == $id)' "$TASK_GRAPH"
   fi
@@ -2892,7 +2955,14 @@ count_tasks() {
       in_progress) br_status="in_progress" ;;
       failed) br_status="blocked" ;;
     esac
-    br list --status "$br_status" --json 2>/dev/null | jq 'length' || echo "0"
+    # Use temp file to avoid variable capture issues with escape sequences
+    local tmp=$(mktemp)
+    RUST_LOG= br list --status "$br_status" --json 2>/dev/null | sed '/^[0-9]/d' > "$tmp" || echo "[]" > "$tmp"
+    local count
+    count=$(jq 'length' "$tmp" 2>/dev/null || echo "0")
+    rm -f "$tmp"
+    # Ensure we always output a number (jq on empty file returns nothing)
+    echo "${count:-0}"
   else
     jq --arg s "$status" '[.tasks[] | select(.status == $s)] | length' "$TASK_GRAPH"
   fi
