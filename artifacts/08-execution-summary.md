@@ -87,3 +87,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-1he | P8-02g: E2E fill — CSV/JSON import rules | DONE | e8eb337c27ed8d5770c86c8dcc3fe9a765a6056d | clean |
 | bd-ljh | P8-02h: E2E fill — Import failure rollback messaging | DONE | 90f2bb1862dd4e5f1ddd6c388f5aa9f043b7ff27 | clean |
 | bd-3sd | P8-02i: E2E fill — Export quota exceeded snapshot | DONE | bb52d1853989dc680203aa29be97f8f972d28ece | clean |
+| bd-3fq | Fix Lighthouse CI assertions to pass | DONE | f1c2ea647d59cbe12e53f91ef2dd6770ffb7685a | clean |
