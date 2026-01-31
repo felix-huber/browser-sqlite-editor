@@ -95,7 +95,8 @@ async function createLegacyDatabase(page: Page, name: string): Promise<string> {
 /**
  * Check if a file exists in the NEW layout (/wasm-sqlite-editor/databases/*.sqlite)
  */
-async function _checkNewLayoutFile(page: Page, filename: string): Promise<boolean> {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function checkNewLayoutFile(page: Page, filename: string): Promise<boolean> {
   return page.evaluate(async (fname: string): Promise<boolean> => {
     try {
       const root = await navigator.storage.getDirectory();

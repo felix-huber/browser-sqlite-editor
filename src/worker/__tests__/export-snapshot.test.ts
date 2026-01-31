@@ -72,8 +72,6 @@ function createMockStorageAdapter(options: {
   databaseData?: Uint8Array;
   exportFileData?: Uint8Array;
   readFails?: boolean;
-  writeFails?: boolean;
-  writeError?: Error;
 } = {}): ExportStorageAdapter {
   const {
     opfsAvailable = true,
@@ -81,8 +79,6 @@ function createMockStorageAdapter(options: {
     databaseData = createMockSQLiteData(1024),
     exportFileData = createMockSQLiteData(1024),
     readFails = false,
-    _writeFails = false,
-    _writeError = new DOMException('Quota exceeded', 'QuotaExceededError'),
   } = options;
 
   return {
