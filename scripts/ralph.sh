@@ -1405,6 +1405,8 @@ _exec_with_timeout() {
   fi
 
   # Build and execute the pipeline
+  # NOTE: Issue #20 - tee pipeline may have buffering issues with some CLIs
+  # If output doesn't appear, check if CLI buffers output in non-TTY mode
   if [[ -n "$timeout_cmd" ]]; then
     if [[ -n "$log_file" ]]; then
       "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" 2>&1 | tee "$tmp_output" | tee -a "$log_file"

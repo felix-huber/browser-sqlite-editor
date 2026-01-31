@@ -6,9 +6,40 @@ Tracking structural issues observed during ralph.sh execution that may need code
 
 ### Progress Snapshot
 - **Start**: 36/56 beads (64%) at session 1 start
-- **Current**: 42/56 beads done (75%), RALPH RUNNING
-- **Remaining**: 14 beads (13 ready, 1 in progress - bd-rqg)
-- **Last Update**: 2026-01-31 20:20
+- **Current**: 43/56 beads done (76%), RALPH BLOCKED
+- **Remaining**: 13 beads (12 ready, 1 stuck - bd-1jc)
+- **Last Update**: 2026-01-31 21:25
+
+### CI Progress
+- E2E shard 1: ✅ PASSING (after test fixes)
+- E2E shard 2: ❌ Still failing (run 21550039981)
+- Lighthouse: ❌ Still failing (no .lighthouseci/ generated)
+- Build/Perf: ✅ PASSING
+
+### Issue 20: PTY Buffering Prevents Output Capture
+- **Discovered**: 2026-01-31 21:05
+- **Root Cause**: **CONFIRMED** - Claude CLI output isn't flushing through `timeout | tee` pipeline
+  ```bash
+  # This produces empty log:
+  timeout 1m claude -p "hello" 2>&1 | tee output.log
+
+  # This works:
+  timeout 1m claude -p "hello" > output.log 2>&1
+
+  # This also works (with PTY):
+  script -q output.log timeout 1m claude -p "hello"
+  ```
+- **Technical Cause**:
+  - Claude CLI likely detects non-TTY and buffers output
+  - Pipe to tee doesn't trigger flush
+  - Output only appears after process exits
+- **Proposed Fixes**:
+  1. Replace `| tee` with direct redirection: `> "$log_file" 2>&1`
+  2. Use `script` wrapper for PTY emulation
+  3. Use `unbuffer` (from expect package): `unbuffer timeout ... | tee`
+  4. Set `PYTHONUNBUFFERED=1` or similar if applicable
+- **Impact**: All ralph spawns produce no visible output in logs
+- **Status**: 🔴 BLOCKING - requires ralph.sh fix
 
 ### Beads Completed This Session (New Ralph Run)
 | Iteration | Bead | Task | Time |
@@ -19,6 +50,7 @@ Tracking structural issues observed during ralph.sh execution that may need code
 | 4 | bd-1xx | P4-03: ERD DDL diff preview | ✅ 19:42 |
 | 5 | bd-22t | P6-03: sqlite3_stmt_readonly check | 19:52 |
 | 6 | bd-9kc | US-006: Query builder result column aliases | 20:00 |
+| 7 | bd-rqg | P4-05: ERD draft state tracking | ✅ 20:27 |
 
 ### Previously Fixed Issues
 
@@ -113,6 +145,22 @@ Tracking structural issues observed during ralph.sh execution that may need code
 - **Fix Applied**: Updated to use temp files with `build_task_json_from_bead_file()` for consistency
 - **Status**: 🟢 Fixed (by autonomous agent during task execution)
 - **Note**: This validates the fresh eyes review pattern - it catches structural issues!
+
+### Issue 19: Multiple Ralph Processes Competing
+- **Discovered**: 2026-01-31 20:37
+- **Symptom**: Ralph logs "Spawning claude instance..." repeatedly, appears stuck
+- **Root Cause**: **CONFIRMED** - 10 ralph.sh processes running simultaneously
+  - Multiple ralph instances competing for same tasks
+  - Each seeing bd-1jc as "ready" and trying to spawn
+  - Output from multiple instances interleaving in log
+- **Evidence**:
+  - `pgrep -f "ralph.sh"` showed 10 PIDs
+  - Log showed "ITERATION 2" appearing twice back-to-back
+- **Fix Applied**: Killed all ralph processes with `pkill -f "ralph.sh"`
+- **Prevention**:
+  1. ralph.sh should use flock or lock file to prevent multiple instances
+  2. Better cleanup when ralph exits
+- **Status**: 🟢 Fixed (manual intervention)
 
 ---
 
