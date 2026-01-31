@@ -62,3 +62,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-3t7 | P2-08: Size warnings on open + DB growth | DONE | e2e359e9ff7133a8f311284e24920adda7d76984 | clean |
 | bd-39f | P3-01d: Post-rebuild verification + guardrails | FAILED | - | verification failed |
 | bd-39f | P3-01d: Post-rebuild verification + guardrails | FAILED | - | verification failed |
+| bd-39f | P3-01d: Post-rebuild verification + guardrails | DONE | 5713bb889cc87fbb3c87afca09ff8c680b2d366c | clean |
