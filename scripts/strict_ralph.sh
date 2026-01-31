@@ -693,12 +693,19 @@ Review requirements:
 - Verify tests are real (behavioral) and not tautological.
 - Verify no regressions or missing edge cases.
 
-If no issues found, output exactly:
+If no issues found, output exactly one line:
 NO_ISSUES_FOUND
 
-If issues found, list each as:
-[P1] Issue title - file:line
-  Description and suggested fix.
+If issues found, list each issue on its own line with this EXACT format (no markdown, no asterisks):
+[P1] Issue title - file:line-line
+[P2] Issue title - file:line
+[P3] Issue title - file:line
+
+Followed by a brief description. Example:
+[P1] Missing error handling - src/utils.ts:42-45
+The function does not catch exceptions from the async call.
+
+IMPORTANT: Start each issue line with [P1], [P2], or [P3] directly - no markdown formatting, no asterisks, no bullet points.
 EOF
 }
 
@@ -836,7 +843,12 @@ run_task_loop() {
       return 0
     fi
 
-    issues=$(echo "$review_output" | grep -E '^\[P[123]\]' || true)
+    # Match [P1], [P2], [P3] anywhere in line (handles markdown formatting like **[P1]** or - [P1])
+    issues=$(echo "$review_output" | grep -E '\[P[123]\]' || true)
+    if [[ -z "$issues" ]]; then
+      # Try alternative formats: P1:, P2:, P3: at start of line or after markdown
+      issues=$(echo "$review_output" | grep -E '(^|\*\*|\- )P[123]:' || true)
+    fi
     if [[ -z "$issues" ]]; then
       log "Review output contained no parsable issues. Failing for safety."
       echo "$review_output"
@@ -923,8 +935,30 @@ main() {
   log "Task: $TASK_ID - $SUBJECT"
   update_loop_state "starting" "implement" 0 "task selected"
   log_progress "START task $TASK_ID - $SUBJECT"
-  run_task_loop
-  log_progress "COMPLETE task $TASK_ID - $SUBJECT (no auto-commit)"
+  update_task_status "$TASK_ID" "running"
+  if ! run_task_loop; then
+    update_task_status "$TASK_ID" "error"
+    fail "Task $TASK_ID failed review."
+  fi
+  commit_task
+  local ch
+  if [[ "$AUTO_COMMIT" == "true" ]]; then
+    ch=$(git rev-parse HEAD 2>/dev/null || echo "")
+    update_task_status "$TASK_ID" "committed" "$ch"
+    log_progress "COMPLETE task $TASK_ID - $SUBJECT ($ch)"
+    # Commit any state files modified after task commit
+    if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+      git add -A
+      git commit -m "chore: update state after $TASK_ID" --no-verify 2>/dev/null || true
+      if [[ "$AUTO_PUSH" == "true" ]]; then
+        git push 2>/dev/null || true
+      fi
+    fi
+  else
+    update_task_status "$TASK_ID" "complete"
+    log_progress "COMPLETE task $TASK_ID - $SUBJECT (no auto-commit)"
+    log "Auto-commit disabled. Commit your changes manually."
+  fi
   exit 0
 }
 
