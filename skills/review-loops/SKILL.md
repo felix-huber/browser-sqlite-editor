@@ -200,6 +200,11 @@ just wrote and other existing code you just modified with "fresh eyes"
 looking super carefully for any obvious bugs, errors, problems, issues,
 confusion, etc.
 
+CRITICAL: Check integration! Trace the user flow end-to-end:
+- How does a user actually trigger this feature?
+- Is your new hook/component/util actually called from somewhere?
+- Creating code is NOT enough - it must be wired into the existing UI/API.
+
 Carefully fix anything you uncover. Use ultrathink.
 ```
 

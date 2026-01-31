@@ -47,3 +47,6 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-3v0 | P5-03: Filter semantics per PRD | DONE | cf1297d36b63bd2e89a3179e9d8a9621fd50150d | clean review |
 | bd-3u2 | P7-03: Security E2E tests | DONE | 613ec0ea07bb4a6bfc6b5c7d5df378a71512df0f | clean |
 | bd-3u2 | P7-03: Security E2E tests | DONE | 01478eca2d2080b7c045dba6d93613183c11f7fe | clean |
+| bd-b05 | P2-00: Perf/memory regression harness | FAILED | - | tool failed (rc=143) |
+| bd-b05 | P2-00: Perf/memory regression harness | FAILED | - | verification failed |
+| bd-b05 | P2-00: Perf/memory regression harness | FAILED | - | verification failed |

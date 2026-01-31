@@ -6,7 +6,7 @@
  * - Export memory (no OOM)
  * - Trace + metrics artifacts for CI
  *
- * Run with: npm run test:perf -- --project=chromium
+ * Run with: npm run test:perf
  */
 
 import { test, expect, type Page, type CDPSession } from '@playwright/test';

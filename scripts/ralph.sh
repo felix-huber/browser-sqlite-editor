@@ -89,7 +89,12 @@ VERIFY_BUILD="true"    # Run npm run build after each task (default: true)
 VERIFY_TYPECHECK="true" # Run npm run typecheck after each task (default: true)
 VERIFY_LINT="true"     # Run npm run lint after each task (default: true)
 VERIFY_TESTS="true"    # Run npm test after each task (default: true)
+SCOPED_TESTS_ONLY="false"  # Skip global npm test if task has scoped verification
 BUILD_FAIL_COUNT=0     # Track consecutive build failures
+LAST_FAIL_SIGNATURE=""  # Hash of last failure for flaky detection
+LAST_FAIL_TASK_ID=""    # Task ID of last failure
+SAME_FAIL_COUNT=0       # Count of identical consecutive failures
+FLAKY_FAIL_THRESHOLD=3  # Skip task after this many identical failures
 
 # Council of Subagents review (multi-agent verification pattern)
 # Uses specialized subagents: Analyst (quality), Sentinel (anti-patterns), Designer (UI), Healer (fixes)
@@ -236,6 +241,10 @@ parse_args() {
         ;;
       --no-verify-tests)
         VERIFY_TESTS="false"
+        shift
+        ;;
+      --scoped-tests-only)
+        SCOPED_TESTS_ONLY="true"
         shift
         ;;
       --council-review)
@@ -396,6 +405,7 @@ Options:
   --no-verify-lint             Disable lint verification
   --verify-tests               Enable test verification (default: on)
   --no-verify-tests            Disable test verification
+  --scoped-tests-only          Skip global npm test if task has scoped verification
   --council-review             Enable Council of Subagents review (Analyst/Sentinel/Designer/Healer)
   --no-council-review          Disable council review (default)
 
@@ -1940,6 +1950,81 @@ mark_task_completed() {
   fi
 }
 
+# Compute a signature from error output for flaky detection
+# Returns a short hash of the error's key characteristics
+compute_fail_signature() {
+  local error_output="$1"
+  # Extract key error identifiers: test names, file:line, error messages
+  local filtered
+  filtered=$(echo "$error_output" | grep -iE "fail|error|timeout|✗" | head -10)
+  # Cross-platform hash (md5sum on Linux, md5 on macOS)
+  if command -v md5sum &>/dev/null; then
+    echo "$filtered" | md5sum | cut -c1-8
+  elif command -v md5 &>/dev/null; then
+    echo "$filtered" | md5 | cut -c1-8
+  else
+    # Fallback: use first 8 chars of base64-encoded content
+    echo "$filtered" | head -c 100 | base64 | cut -c1-8
+  fi
+}
+
+# Check if this is a repeated flaky failure and should be skipped
+# Returns 0 if should skip, 1 if should continue retrying
+# Tracks both task ID and error signature to detect:
+# 1. Same task failing repeatedly with same error (flaky test)
+# 2. Different tasks failing with same error (global breakage)
+check_flaky_skip() {
+  local task_id="$1"
+  local error_output="$2"
+
+  local signature
+  signature=$(compute_fail_signature "$error_output")
+
+  # Check if same task AND same signature
+  if [[ "$task_id" == "$LAST_FAIL_TASK_ID" && "$signature" == "$LAST_FAIL_SIGNATURE" ]]; then
+    SAME_FAIL_COUNT=$((SAME_FAIL_COUNT + 1))
+    log_warn "Same task failing with same error ($SAME_FAIL_COUNT/$FLAKY_FAIL_THRESHOLD)"
+  elif [[ "$signature" == "$LAST_FAIL_SIGNATURE" ]]; then
+    # Different task, same error - might be global issue
+    SAME_FAIL_COUNT=$((SAME_FAIL_COUNT + 1))
+    log_warn "Different task, same error pattern ($SAME_FAIL_COUNT/$FLAKY_FAIL_THRESHOLD)"
+  else
+    # Different error - reset counter
+    LAST_FAIL_TASK_ID="$task_id"
+    LAST_FAIL_SIGNATURE="$signature"
+    SAME_FAIL_COUNT=1
+  fi
+
+  if [[ "$SAME_FAIL_COUNT" -ge "$FLAKY_FAIL_THRESHOLD" ]]; then
+    log_error "════════════════════════════════════════════════════════════════════"
+    log_error "REPEATED FAILURE DETECTED - Skipping after $SAME_FAIL_COUNT identical failures"
+    log_error "════════════════════════════════════════════════════════════════════"
+    mark_task_blocked_flaky "$task_id" "$signature"
+    # Reset for next task
+    LAST_FAIL_TASK_ID=""
+    LAST_FAIL_SIGNATURE=""
+    SAME_FAIL_COUNT=0
+    return 0  # Should skip
+  fi
+  return 1  # Should continue retrying
+}
+
+# Mark task as blocked due to flaky test
+mark_task_blocked_flaky() {
+  local task_id="$1"
+  local signature="$2"
+  if [[ "$USE_BEADS" == "true" ]]; then
+    br update "$task_id" --status blocked --comment "Blocked: flaky test (signature: $signature). Needs manual investigation." 2>/dev/null || true
+    log_warn "Marked beads task $task_id as blocked (flaky test)"
+  else
+    local tmp=$(mktemp)
+    jq --arg id "$task_id" --arg sig "$signature" '
+      .tasks = [.tasks[] | if .id == $id then .status = "blocked" | .blockedReason = "flaky_test" | .failSignature = $sig else . end]
+    ' "$TASK_GRAPH" > "$tmp" && mv "$tmp" "$TASK_GRAPH"
+    log_warn "Marked task $task_id as blocked (flaky test)"
+  fi
+}
+
 # Mark task as failed
 mark_task_failed() {
   local task_id="$1"
@@ -2250,8 +2335,10 @@ has_npm_script() {
 
 # Verify the project builds successfully
 # Returns 0 on success, 1 on failure
+# Args: task_id [has_scoped_tests]
 verify_build() {
   local task_id="$1"
+  local has_scoped_tests="${2:-false}"
   local log_file="$LOGS_DIR/${task_id}-build.log"
 
   # Ensure log directory exists
@@ -2408,7 +2495,10 @@ verify_build() {
   fi
 
   # Step 3: Run Tests (CRITICAL for TDD verification)
-  if [[ "${VERIFY_TESTS:-true}" == "true" ]]; then
+  # Skip global tests if --scoped-tests-only and task has its own test verification
+  if [[ "${SCOPED_TESTS_ONLY:-false}" == "true" && "$has_scoped_tests" == "true" ]]; then
+    log_info "⏭️ Skipping global tests (task has scoped test verification)"
+  elif [[ "${VERIFY_TESTS:-true}" == "true" ]]; then
     log_info "Running tests..."
 
     if has_npm_script "test"; then
@@ -2419,7 +2509,15 @@ verify_build() {
       set -e
 
       if [[ $test_exit -eq 0 ]]; then
-        log_success "✅ Tests PASSED"
+        # Sanity check: verify tests actually ran (Option I from proposal)
+        local tests_ran
+        tests_ran=$(echo "$test_output" | grep -oE '[0-9]+ (passed|passing)' | grep -oE '^[0-9]+' | head -1 || echo "")
+        if [[ -z "$tests_ran" || "$tests_ran" -eq 0 ]]; then
+          log_warn "⚠️ Tests passed but 0 tests detected - check verification command"
+          log_warn "   This may indicate a misconfigured test command"
+        else
+          log_success "✅ Tests PASSED ($tests_ran tests)"
+        fi
       else
         log_error "❌ Tests FAILED"
         tests_passed=false
@@ -2957,6 +3055,12 @@ main() {
     log_info "ITERATION $i of $MAX_ITERATIONS"
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+    # Sync external fixes before each iteration
+    if git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null; then
+      # No staged or unstaged changes - safe to pull
+      git pull --rebase origin "$(git rev-parse --abbrev-ref HEAD)" 2>/dev/null || true
+    fi
+
     # SELF-HEAL: Check for stalled tasks and recover them
     if [[ "${SELF_HEAL:-true}" == "true" ]]; then
       local heal_attempt
@@ -3126,10 +3230,33 @@ main() {
 
       # CRITICAL: Verify build BEFORE any reviews
       # This catches TypeScript errors, broken imports, and integration issues
-      if ! verify_build "$task_id"; then
+      local has_scoped_tests="false"
+      if [[ -n "$task_verification" ]] && echo "$task_verification" | grep -qiE "test|spec|jest|vitest|playwright"; then
+        has_scoped_tests="true"
+      fi
+      if ! verify_build "$task_id" "$has_scoped_tests"; then
         # Build failed - task is NOT complete despite agent's claim
         log_error "Build verification FAILED - task is NOT complete!"
         log_error "The agent said TASK_COMPLETE but the code doesn't compile."
+
+        # Check for flaky test pattern (same failure repeated)
+        local build_log="$LOGS_DIR/${task_id}-build.log"
+        local error_output=""
+        [[ -f "$build_log" ]] && error_output=$(cat "$build_log")
+
+        if check_flaky_skip "$task_id" "$error_output"; then
+          # Flaky failure detected - task marked as blocked, skip to next
+          clear_task_tracking "$task_id"
+          {
+            echo ""
+            echo "### Iteration $i - $(date -Iseconds)"
+            echo "- Task: $task_id - $subject"
+            echo "- Status: ⚠️ BLOCKED (flaky test - $FLAKY_FAIL_THRESHOLD identical failures)"
+          } >> "$PROGRESS_FILE"
+          print_status
+          sleep 2
+          continue
+        fi
 
         # Mark task as failed (not completed!)
         mark_task_failed "$task_id"
@@ -3202,7 +3329,7 @@ main() {
       # RE-VERIFY after reviews (Healer may have modified code)
       if [[ "$ran_reviews" == "true" ]]; then
         log_info "Re-verifying build after reviews..."
-        if ! verify_build "$task_id"; then
+        if ! verify_build "$task_id" "$has_scoped_tests"; then
           log_error "Post-review verification FAILED!"
           log_error "Reviews may have introduced issues."
           mark_task_failed "$task_id"

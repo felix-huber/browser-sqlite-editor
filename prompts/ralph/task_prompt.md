@@ -69,12 +69,16 @@ Determine if this is a testable task by checking tags:
 2. Examine all relevant files & dependencies first
 3. If anything is ambiguous, check the plan and UX spec
 4. Implement changes for ALL acceptance criteria
-5. Write any additional unit tests for edge cases discovered
-6. Keep work **atomic and committable**
-7. For each file: read first, edit carefully, preserve formatting
-8. Run verification commands
-9. **MANDATORY: Self-review with fresh eyes** (see below)
-10. If all verifications pass, output `<promise>TASK_COMPLETE</promise>` followed by details
+5. **INTEGRATION CHECK**: Trace the user flow end-to-end. Ask yourself:
+   - "How does a user actually trigger this feature?"
+   - "Is my new code wired into the existing UI/API?"
+   - Creating a hook/component/util is NOT enough - it must be called from somewhere
+6. Write any additional unit tests for edge cases discovered
+7. Keep work **atomic and committable**
+8. For each file: read first, edit carefully, preserve formatting
+9. Run verification commands
+10. **MANDATORY: Self-review with fresh eyes** (see below)
+11. If all verifications pass, output `<promise>TASK_COMPLETE</promise>` followed by details
     (Do NOT commit or push - Ralph handles branching/commits/PRs)
     See "When Complete" section below for the exact output format.
 
@@ -93,6 +97,24 @@ If you encounter an error:
 2. Check if it's a missing dependency (install it)
 3. Check if it's a type error (fix the types)
 4. If stuck for >5 minutes, document the blocker and output: `<promise>TASK_BLOCKED</promise>`
+
+## Build Verification Requirements
+
+Ralph will run these checks after you complete. Your task is NOT complete until ALL pass:
+- `npm run lint` (0 errors)
+- `npm run typecheck` (0 errors)
+- `npm run build` (succeeds)
+- `npm run test` (all pass)
+
+**IMPORTANT:** If lint/typecheck fails on files you did NOT modify, you MUST still fix them. Pre-existing issues block your task. Common quick fixes:
+
+| Error | Fix |
+|-------|-----|
+| `'X' is defined but never used` | Remove import or prefix with `_` |
+| `'window/document/navigator' is not defined` | Add `/* global window, document, navigator */` at top |
+| `Unnecessary escape character` | Remove the backslash |
+
+Do NOT output `TASK_COMPLETE` if any verification step fails.
 
 ## 👀 Self-Review With Fresh Eyes (MANDATORY - 4 PASSES)
 

@@ -115,3 +115,418 @@ Implement **A + B + C** together:
 
 1. `scripts/ralph.sh` - Add pre-flight lint check and git pull
 2. `prompts/ralph/task_prompt.md` - Add lint fix instructions
+
+---
+
+# Additional Pattern: Incomplete Integration (bd-qdl)
+
+## Problem Observed
+
+bd-qdl (FK validation) failed 3 times despite having:
+- Complete hook implementation (`useFKValidation.ts`)
+- Complete dialog UI (`FKValidationDialog.tsx`)
+- Comprehensive unit tests
+
+**Root cause:** The hook was never integrated into `ERDCanvas.tsx`. Code exists but isn't wired up.
+
+## Structural Fix Proposal
+
+### Option E: Integration Checklist in Bead Descriptions
+
+Update bead creation workflow to include explicit integration points:
+
+```markdown
+## Implementation Checklist
+
+- [ ] Core logic implemented: `src/features/erd/FKValidation.ts`
+- [ ] Hook created: `src/features/erd/useFKValidation.ts`
+- [ ] UI component updated: `src/features/erd/FKValidationDialog.tsx`
+- [ ] **INTEGRATION REQUIRED**: Wire hook into `ERDCanvas.tsx` onConnect callback
+- [ ] Unit tests pass
+- [ ] E2E test for full workflow
+```
+
+### Option F: Integration Verification in Ralph
+
+Add to ralph.sh build verification:
+```bash
+# Check if new hooks/components are actually imported somewhere
+new_exports=$(git diff --name-only | grep -E '\.(ts|tsx)$' | xargs grep -l 'export')
+for file in $new_exports; do
+  export_name=$(grep -oP 'export (const|function|class) \K\w+' "$file" | head -1)
+  if [ -n "$export_name" ]; then
+    # Check if it's imported anywhere else
+    importers=$(grep -r "import.*$export_name" --include="*.ts" --include="*.tsx" | grep -v "$file")
+    if [ -z "$importers" ]; then
+      echo "[WARN] $export_name in $file is exported but never imported"
+    fi
+  fi
+done
+```
+
+## Summary of All Patterns
+
+| Pattern | Symptom | Fix |
+|---------|---------|-----|
+| Pre-existing lint errors | Task fails on unrelated lint issues | Pre-flight lint check + context |
+| Incomplete integration | Code exists but isn't wired | Integration checklist + import verification |
+| **Unrelated test failures** | Bead fails due to flaky tests outside its scope | Bead-scoped test verification |
+
+---
+
+# Pattern 3: Unrelated Test Failures (bd-b05)
+
+## Problem Observed
+
+bd-b05 (Perf/memory regression harness) fails verification because:
+- Verification runs `npm run test:perf -- --project=chromium` (284 tests!)
+- Table-designer tests (259-264) timeout - unrelated to perf harness
+- Import tests fail intermittently
+- 248 tests pass but verification fails on unrelated failures
+
+## Root Cause
+
+Ralph's verification is too broad. A bead about "perf harness" shouldn't fail because table-designer tests are flaky.
+
+## Proposed Fix: Bead-Scoped Test Verification
+
+### Option 1: Add `verify_tests` to bead descriptions
+```markdown
+## Bead: bd-b05
+Subject: P2-00: Perf/memory regression harness
+verify_tests: npm run test:e2e -- e2e/perf/
+```
+
+### Option 2: Infer scope from bead subject in ralph.sh
+```bash
+# Extract keywords from bead subject
+subject="P2-00: Perf/memory regression harness"
+keywords=$(echo "$subject" | tr '[:upper:]' '[:lower:]' | grep -oE '[a-z]+' | sort -u)
+
+# Map keywords to test directories
+if echo "$keywords" | grep -qE "perf|memory|regression"; then
+  test_pattern="e2e/perf/"
+elif echo "$keywords" | grep -qE "security|csp|xss"; then
+  test_pattern="e2e/security.spec.ts"
+else
+  test_pattern=""  # Run all tests
+fi
+
+# Run scoped verification
+if [ -n "$test_pattern" ]; then
+  npm run test:e2e -- "$test_pattern"
+else
+  npm run test:e2e
+fi
+```
+
+### Option 3: Flaky test baseline
+Before starting a bead, capture failing tests as baseline:
+```bash
+baseline=$(npm run test:e2e --reporter=json 2>/dev/null | jq -r '.failures[].fullTitle')
+# After implementation, only fail on NEW failures
+```
+
+## Recommendation
+
+Implement Option 1 (explicit verify_tests in bead). It's:
+- Explicit and clear
+- Controllable per-bead
+- Doesn't require inference logic
+
+---
+
+# Self-Healing Suggestions for ralph.sh
+
+## Goal
+Ralph should unblock itself when encountering flaky/unrelated test failures rather than getting stuck.
+
+## Suggestion 1: Test Blame Analysis
+Only fail on tests that import changed files:
+```bash
+# In verify_build()
+changed=$(git diff --name-only HEAD~1 | grep -E '\.(ts|tsx)$')
+if [[ -n "$changed" ]]; then
+  npm run test -- --findRelatedTests $changed
+else
+  npm run test
+fi
+```
+
+## Suggestion 2: Flaky Test Auto-Skip
+If a test fails 3+ consecutive times across different beads, auto-skip it:
+```bash
+# Track failures in .ralph/test-failures.log
+if grep -c "^$failing_test$" .ralph/test-failures.log | grep -q "^[3-9]"; then
+  log_warn "Skipping known flaky test: $failing_test"
+  # Add to skip list
+fi
+```
+
+## Suggestion 3: Exponential Backoff on Same Failure
+If the same test fails 3+ times on the SAME bead, move to next bead:
+```bash
+if [[ $consecutive_same_failure -ge 3 ]]; then
+  log_warn "Bead blocked by flaky test - moving to next task"
+  mark_task_blocked "$task_id" "flaky_test:$failing_test"
+  continue
+fi
+```
+
+## Suggestion 4: Create Follow-up Beads for Flaky Tests
+When tests fail due to timeouts, create a maintenance bead:
+```bash
+if echo "$test_output" | grep -q "Timeout exceeded"; then
+  br create "E2E-FIX: Timeout in $test_name" --priority P3 --tags maintenance
+fi
+```
+
+## Already Implemented
+- `--scoped-tests-only` flag (added by other agent)
+- Git pull between iterations
+- Integration check in prompts
+
+---
+
+# Pattern 4: Incorrect Verification Commands in Bead Descriptions (bd-b05)
+
+## Problem Observed
+
+bd-b05 (Perf harness) stuck for 6+ iterations because:
+- Bead description says: `npm run test:perf -- --project=chromium`
+- But `playwright.config.ts` has `chromium` project with `testIgnore: '**/perf/**'`
+- So the command effectively runs NO perf tests
+- Ralph keeps retrying because "verification fails" (no tests ran)
+
+## Root Cause
+
+The bead verification command was incorrect from the start:
+- Correct: `npm run test:perf` (uses `--project=perf` by default)
+- Wrong: `npm run test:perf -- --project=chromium` (chromium ignores perf tests)
+
+This is a **bead authoring error** that ralph can't auto-detect.
+
+## Structural Fixes
+
+### Option G: Bead Verification Validation
+
+Add to beads_rust or ralph.sh - validate verification commands before starting:
+
+```bash
+# In ralph.sh before spawning implementer
+verify_cmd=$(br show "$task_id" --json | jq -r '.verification // empty')
+
+if [[ -n "$verify_cmd" ]]; then
+  # Dry-run the verification to check it's valid
+  if ! timeout 30 bash -c "$verify_cmd --help" >/dev/null 2>&1; then
+    log_warn "Verification command may be invalid: $verify_cmd"
+  fi
+
+  # Check for common mistakes
+  if [[ "$verify_cmd" == *"test:perf"* && "$verify_cmd" == *"--project=chromium"* ]]; then
+    log_error "Invalid: test:perf with --project=chromium (chromium ignores perf tests)"
+    # Auto-fix or block the bead
+  fi
+fi
+```
+
+### Option H: Verification Command Syntax Checker
+
+Add a validation step when creating beads:
+
+```bash
+# In beads creation workflow
+function validate_verification() {
+  local cmd="$1"
+
+  # Check npm scripts exist
+  if [[ "$cmd" == "npm run"* ]]; then
+    script=$(echo "$cmd" | awk '{print $3}')
+    if ! grep -q "\"$script\":" package.json; then
+      echo "[ERROR] npm script '$script' not found in package.json"
+      return 1
+    fi
+  fi
+
+  # Check for conflicting flags
+  if [[ "$cmd" == *"--project="*"--project="* ]]; then
+    echo "[ERROR] Multiple --project flags detected"
+    return 1
+  fi
+}
+```
+
+### Option I: Test Run Sanity Check
+
+After running verification tests, check that tests actually ran:
+
+```bash
+# In ralph.sh verify_task()
+test_output=$(npm run test:perf 2>&1)
+tests_run=$(echo "$test_output" | grep -oP '\d+ passed' | grep -oP '\d+' || echo "0")
+
+if [[ "$tests_run" -eq 0 ]]; then
+  log_error "Verification ran 0 tests - check verification command"
+  # Flag this bead for review
+fi
+```
+
+## Recommendation
+
+Implement **Option I** immediately - it catches the symptom (0 tests ran) regardless of the root cause.
+
+## Files Modified
+
+bd-b05 verification command corrected from:
+```
+npm run test:perf -- --project=chromium
+```
+to:
+```
+npm run test:perf
+```
+
+---
+
+# Pattern 5: Web Server Crash Mid-Test (Observed 2026-01-31)
+
+## Problem Observed
+
+During perf test iteration, 30 tests failed with `net::ERR_CONNECTION_REFUSED` because the Vite preview server crashed mid-run.
+
+## Root Cause
+
+Playwright's `webServer` config starts the server once and reuses it. If the server crashes:
+- All remaining tests fail with CONNECTION_REFUSED
+- Ralph sees "30 failed" and marks task as blocked
+- No automatic server restart
+
+## Structural Fixes
+
+### Option J: Health Check Before Running Tests
+
+Add to ralph.sh before running test verification:
+```bash
+# In verify_task()
+max_retries=3
+for i in $(seq 1 $max_retries); do
+  if curl -s http://localhost:4173 >/dev/null 2>&1; then
+    break
+  fi
+  log_warn "Web server not responding, attempting restart..."
+  pkill -f "vite preview" 2>/dev/null || true
+  npm run build && npm run preview &
+  sleep 5
+done
+```
+
+### Option K: Detect Server Crash in Test Output
+
+```bash
+# After running tests
+if echo "$test_output" | grep -q "ERR_CONNECTION_REFUSED"; then
+  log_warn "Web server crashed during tests - restarting and retrying"
+  # Restart server and retry tests
+  pkill -f "vite preview" 2>/dev/null || true
+  npm run build && npm run preview &
+  sleep 5
+  # Re-run tests
+  test_output=$(npm run test:e2e 2>&1)
+fi
+```
+
+### Option L: Use Fresh Server Per Test Run
+
+Modify playwright.config.ts to always start fresh server:
+```typescript
+webServer: {
+  command: 'npm run build && npm run preview',
+  url: 'http://localhost:4173',
+  reuseExistingServer: false,  // Always start fresh
+  timeout: 60000,
+}
+```
+
+## Recommendation
+
+Implement **Option K** - detect the crash pattern and auto-retry. This is the most robust solution that doesn't require config changes.
+
+---
+
+# Pattern 6: Non-Command Text in Verification Section (bd-b05)
+
+## Problem Observed
+
+bd-b05 (Perf harness) failed even after verification command was corrected because:
+- Verification section had two bullet points:
+  - `npm run test:perf` (valid command)
+  - `CI artifacts show memory traces` (description, not a command)
+- Ralph tried to execute BOTH as bash commands
+- Second line failed: `bash: CI: Kommando nicht gefunden` (German: "CI: command not found")
+
+## Root Cause
+
+Bead descriptions often include descriptive text that looks like verification steps but aren't actual commands:
+```markdown
+Verification:
+- npm run test:perf
+- CI artifacts show memory traces  ← Not a command!
+```
+
+Ralph parses each bullet point under "Verification:" as a command to execute.
+
+## Structural Fixes
+
+### Option M: Command Validation Before Execution
+
+Add to ralph.sh before running verification:
+```bash
+# In run_task_verification()
+for cmd in $verification_commands; do
+  # Check if it looks like a valid command
+  first_word=$(echo "$cmd" | awk '{print $1}')
+  if ! command -v "$first_word" >/dev/null 2>&1 && \
+     ! [[ "$first_word" =~ ^(npm|npx|node|./|python|cargo|make) ]]; then
+    log_warn "Skipping non-command verification: $cmd"
+    continue
+  fi
+  # Run the command
+  bash -lc "$cmd"
+done
+```
+
+### Option N: Verification Syntax Standardization
+
+Require verification commands to be in code blocks:
+```markdown
+Verification:
+\`\`\`bash
+npm run test:perf
+\`\`\`
+Notes: CI artifacts are saved to e2e/perf/results/
+```
+
+### Option O: Dry-Run Detection
+
+Before running, check if the command would fail immediately:
+```bash
+# Quick syntax check
+if ! bash -n -c "$cmd" 2>/dev/null; then
+  log_warn "Invalid command syntax: $cmd"
+  continue
+fi
+```
+
+## Files Modified
+
+bd-b05 verification corrected from:
+```
+Verification:
+- npm run test:perf
+- CI artifacts show memory traces
+```
+to:
+```
+Verification:
+- npm run test:perf
+```
