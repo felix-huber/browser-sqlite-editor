@@ -8,6 +8,7 @@ import { OPFS_VFS_NAME, getOPFSDatabaseSize } from '../../core/engine/opfs-vfs';
 import { getRegistry, toFilename } from '../db-registry';
 import { resolveDbPath } from '../storage';
 import { getIdbDbSize } from '../idb-storage';
+import { openDatabase } from '../sqlite-engine';
 
 export type PostResponse = (response: WorkerResponse, requestId?: number) => void;
 
@@ -17,15 +18,11 @@ export async function handleOpenRequest(
   postResponse: PostResponse
 ): Promise<void> {
   try {
-    const engine = getEngine();
-    if (!engine.isReady()) {
-      await engine.initialize();
-    }
     const { path, vfsName } = await resolveDbPath(request.dbName);
     const readOnly = request.readOnly ?? false;
     const createIfMissing = vfsName === OPFS_VFS_NAME && !readOnly;
-    await engine.open(path, vfsName, { readOnly, createIfMissing });
-    postResponse({ type: 'lockStatus', isWriter: !(request.readOnly ?? false) }, id);
+    await openDatabase(path, vfsName, { readOnly, createIfMissing });
+    postResponse({ type: 'lockStatus', isWriter: !readOnly }, id);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     postResponse({
@@ -61,12 +58,8 @@ export async function handleCreateDbRequest(
   postResponse: PostResponse
 ): Promise<void> {
   try {
-    const engine = getEngine();
-    if (!engine.isReady()) {
-      await engine.initialize();
-    }
     const { path, vfsName } = await resolveDbPath(request.name, { allowCreate: true });
-    await engine.open(path, vfsName, { createIfMissing: true });
+    await openDatabase(path, vfsName, { createIfMissing: true });
     const registry = getRegistry();
     if (!registry.isInitialized()) {
       await registry.init();
