@@ -1359,4 +1359,145 @@ value3,Charlie,charlie_duplicate,green`;
     await runSql(page, 'SELECT COUNT(*) AS count FROM header_test');
     await expect(page.getByTestId('cell-0-count')).toHaveText('3');
   });
+
+  /**
+   * E2E-US-008-03: Append to NOT NULL table with missing column fails; 0 rows committed
+   *
+   * Acceptance criteria:
+   * - Create a table with a NOT NULL column
+   * - Try to append CSV data that's missing the NOT NULL column
+   * - Verify that the import fails with an error
+   * - Verify that 0 rows were committed (rollback occurred)
+   */
+  test('E2E-US-008-03: append missing NOT NULL column fails; 0 rows committed', async ({ page }) => {
+    // Create a table with a NOT NULL column that has no default
+    await runSql(page, `
+      CREATE TABLE notnull_test (
+        id INTEGER PRIMARY KEY,
+        required_field TEXT NOT NULL,
+        optional_field TEXT
+      )
+    `);
+
+    // Insert an initial row to verify rollback preserves existing data
+    await runSql(page, `
+      INSERT INTO notnull_test (id, required_field, optional_field)
+      VALUES (1, 'existing', 'data')
+    `);
+
+    // Verify initial count
+    await runSql(page, 'SELECT COUNT(*) AS count FROM notnull_test');
+    await expect(page.getByTestId('cell-0-count')).toHaveText('1');
+
+    // Create CSV that is missing the required_field column
+    // This CSV only has 'id' and 'optional_field', missing 'required_field'
+    const csvContent = `id,optional_field
+2,value2
+3,value3
+4,value4`;
+
+    const csvPath = writeTempFile('missing_notnull.csv', csvContent);
+
+    // Open import dialog
+    await openImportDialogWithFile(page, csvPath);
+
+    // Switch to append mode
+    await page.getByTestId('target-append').click();
+
+    // Select the notnull_test table
+    await page.getByTestId('table-name-select').selectOption('notnull_test');
+
+    // Click import button
+    await page.getByTestId('import-button').click();
+
+    // Should show error state (import failed)
+    await expect(page.getByTestId('error-state')).toBeVisible({ timeout: 15000 });
+
+    // Close the dialog
+    await page.getByTestId('close-button').click();
+
+    // THE KEY ACCEPTANCE CRITERIA: Verify no rows were added - count should still be 1
+    // This confirms the rollback occurred and 0 rows were committed
+    await runSql(page, 'SELECT COUNT(*) AS count FROM notnull_test');
+    await expect(page.getByTestId('cell-0-count')).toHaveText('1');
+
+    // Verify the original row is still intact (existing data preserved)
+    await runSql(page, 'SELECT required_field FROM notnull_test WHERE id = 1');
+    await expect(page.getByTestId('cell-0-required_field')).toHaveText('existing');
+  });
+
+  /**
+   * E2E-US-008-04: Append causing UNIQUE violation fails; 0 rows committed
+   *
+   * Acceptance criteria:
+   * - Create a table with a UNIQUE constraint on a column
+   * - Insert an initial row with a specific unique value
+   * - Try to append CSV data that contains a duplicate unique value
+   * - Verify that the import fails with an error
+   * - Verify that 0 rows were committed (rollback occurred)
+   */
+  test('E2E-US-008-04: append UNIQUE violation fails; 0 rows committed', async ({ page }) => {
+    // Create a table with a UNIQUE constraint on email
+    await runSql(page, `
+      CREATE TABLE unique_test (
+        id INTEGER PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        name TEXT
+      )
+    `);
+
+    // Insert initial rows with known email addresses
+    await runSql(page, `
+      INSERT INTO unique_test (id, email, name) VALUES
+        (1, 'alice@example.com', 'Alice'),
+        (2, 'bob@example.com', 'Bob')
+    `);
+
+    // Verify initial count
+    await runSql(page, 'SELECT COUNT(*) AS count FROM unique_test');
+    await expect(page.getByTestId('cell-0-count')).toHaveText('2');
+
+    // Create CSV that attempts to insert a duplicate email (alice@example.com)
+    // Even though the first row (charlie) would be valid, the second row
+    // has a duplicate email that should cause the entire import to fail
+    const csvContent = `id,email,name
+3,charlie@example.com,Charlie
+4,alice@example.com,Alice Duplicate
+5,dave@example.com,Dave`;
+
+    const csvPath = writeTempFile('duplicate_unique.csv', csvContent);
+
+    // Open import dialog
+    await openImportDialogWithFile(page, csvPath);
+
+    // Switch to append mode
+    await page.getByTestId('target-append').click();
+
+    // Select the unique_test table
+    await page.getByTestId('table-name-select').selectOption('unique_test');
+
+    // Click import button
+    await page.getByTestId('import-button').click();
+
+    // Should show error state (import failed)
+    await expect(page.getByTestId('error-state')).toBeVisible({ timeout: 15000 });
+
+    // Close the dialog
+    await page.getByTestId('close-button').click();
+
+    // THE KEY ACCEPTANCE CRITERIA: Verify no rows were added - count should still be 2
+    // This confirms the rollback occurred and 0 rows were committed
+    await runSql(page, 'SELECT COUNT(*) AS count FROM unique_test');
+    await expect(page.getByTestId('cell-0-count')).toHaveText('2');
+
+    // Verify the original rows are still intact and no partial import occurred
+    await runSql(page, 'SELECT email FROM unique_test ORDER BY id');
+    await expect(page.getByTestId('cell-0-email')).toHaveText('alice@example.com');
+    await expect(page.getByTestId('cell-1-email')).toHaveText('bob@example.com');
+
+    // Verify charlie@example.com was NOT added (would be row 3 if partial import occurred)
+    // This is the CRITICAL check - even the first valid row should NOT be committed
+    await runSql(page, "SELECT COUNT(*) AS count FROM unique_test WHERE email = 'charlie@example.com'");
+    await expect(page.getByTestId('cell-0-count')).toHaveText('0');
+  });
 });
