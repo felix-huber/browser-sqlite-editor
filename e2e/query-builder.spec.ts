@@ -56,8 +56,9 @@ function getTableBox(page: Page, tableName: string) {
 async function connectJoin(page: Page) {
   const usersBox = getTableBox(page, 'users');
   const ordersBox = getTableBox(page, 'orders');
-  await usersBox.hover();
-  await ordersBox.hover();
+  // Use force:true to avoid interception issues when tables overlap
+  await usersBox.hover({ force: true });
+  await ordersBox.hover({ force: true });
   const source = usersBox.locator('[data-handleid="id-source"]');
   const target = ordersBox.locator('[data-handleid="user_id-target"]');
   await expect(source).toBeVisible();

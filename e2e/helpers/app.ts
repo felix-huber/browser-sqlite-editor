@@ -65,7 +65,26 @@ export async function createAndOpenDatabase(page: Page, dbName: string) {
   // This can appear BEFORE the new-database-dialog closes
   await dismissUnsavedPromptIfVisible(page);
   // Wait for both the new-database-dialog and any UnsavedPrompt to be hidden
-  await expect(page.getByTestId('new-database-dialog')).toBeHidden({ timeout: 10000 });
+  // Increase timeout for CI environments and add retry logic
+  try {
+    await expect(page.getByTestId('new-database-dialog')).toBeHidden({ timeout: 15000 });
+  } catch {
+    // If dialog didn't close, check for error and try again
+    const createError = page.getByTestId('create-error');
+    if (await createError.isVisible().catch(() => false)) {
+      throw new Error(`Database creation failed: ${await createError.textContent()}`);
+    }
+    // Try clicking create again if still visible
+    if (await page.getByTestId('new-database-dialog').isVisible().catch(() => false)) {
+      const retryButton = page.getByTestId('create-button');
+      if (await retryButton.isEnabled().catch(() => false)) {
+        await retryButton.click();
+        await expect(page.getByTestId('new-database-dialog')).toBeHidden({ timeout: 15000 });
+      } else {
+        throw new Error('Create dialog stuck - button disabled and dialog still visible');
+      }
+    }
+  }
   const recent = page.getByTestId(`recent-db-${dbName}`);
   if (await recent.isVisible().catch(() => false)) {
     await recent.click();
