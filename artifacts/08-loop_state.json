@@ -1,20 +1,20 @@
 {
-  "runId": "2026-01-31T23:55:06+01:00",
-  "updatedAt": "2026-01-31T23:55:06+01:00",
+  "runId": "2026-01-31T23:55:09+01:00",
+  "updatedAt": "2026-01-31T23:55:09+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-1rm",
-    "subject": "P8-02e: E2E fill — Query builder deterministic output",
-    "status": "completed",
-    "phase": "done",
+    "id": "bd-xki",
+    "subject": "P8-02f: E2E fill — Grid edits + BLOB/generated columns",
+    "status": "running",
+    "phase": "implement",
     "attempt": 1
   },
   "tools": {
     "implementer": "smart",
     "reviewer": "smart"
   },
-  "note": "all checks passed"
+  "note": "started"
 }
