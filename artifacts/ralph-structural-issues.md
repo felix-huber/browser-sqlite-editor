@@ -265,3 +265,27 @@ Tracking structural issues observed during ralph.sh execution that may need code
   # If so, reset to open status before picking up
   ```
 - **Related**: ralph.sh should mark beads as "blocked" or "failed" instead of leaving them in_progress when verification fails
+
+---
+
+## Issue 26: Full E2E Suite Should Run at End of Ralph
+
+- **Symptom**: Bead-specific E2E tests pass but full suite may have regressions
+- **Root Cause**: Each bead only runs targeted `--grep 'E2E-US-XXX'` tests
+- **Status**: 🟡 RECOMMENDED IMPROVEMENT
+- **Impact**: Regressions may only be caught after push to CI
+- **Recommendation**: Add final full E2E run before ralph completes:
+  ```bash
+  # At end of ralph run (after all beads complete):
+  log_info "Running full E2E regression suite..."
+  npm run test:e2e
+  if [[ $? -ne 0 ]]; then
+    log_error "Full E2E suite failed - investigate before pushing"
+    exit 1
+  fi
+  ```
+- **Trade-offs**:
+  - Per-bead E2E: Fast (~30s), focused on new functionality
+  - Full E2E: Slow (~5-10 min), catches all regressions
+  - Hybrid (recommended): Per-bead during development, full suite at end
+- **Current Behavior**: Full E2E only runs on GitHub CI after push
