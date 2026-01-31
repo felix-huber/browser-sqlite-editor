@@ -1,20 +1,20 @@
 {
-  "runId": "2026-01-31T17:23:02+01:00",
-  "updatedAt": "2026-01-31T17:23:02+01:00",
+  "runId": "2026-01-31T17:36:22+01:00",
+  "updatedAt": "2026-01-31T17:36:22+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-2y1",
-    "subject": "P4-04: FK creation dialog with action configuration",
-    "status": "completed",
-    "phase": "done",
+    "id": "bd-3lz",
+    "subject": "P1-07: Single-writer lock + read-only open enforcement",
+    "status": "running",
+    "phase": "implement",
     "attempt": 1
   },
   "tools": {
     "implementer": "claude",
     "reviewer": "claude"
   },
-  "note": "all checks passed"
+  "note": "started"
 }

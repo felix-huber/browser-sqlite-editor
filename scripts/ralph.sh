@@ -85,9 +85,9 @@ AUTO_PR="true"         # Auto-create PRs when tasks complete (requires gh CLI)
 PR_BASE_BRANCH="main"  # Base branch for PRs
 
 # Build verification (CRITICAL for catching broken code)
-VERIFY_BUILD="true"    # Run npm run build after each task (default: true)
-VERIFY_TYPECHECK="true" # Run npm run typecheck after each task (default: true)
-VERIFY_LINT="true"     # Run npm run lint after each task (default: true)
+VERIFY_BUILD="true"    # Run build command after each task (default: true)
+VERIFY_TYPECHECK="true" # Run typecheck command after each task (default: true)
+VERIFY_LINT="true"     # Run lint command after each task (default: true)
 VERIFY_TESTS="true"    # Run npm test after each task (default: true)
 SCOPED_TESTS_ONLY="false"  # Skip global npm test if task has scoped verification
 BUILD_FAIL_COUNT=0     # Track consecutive build failures
@@ -453,11 +453,12 @@ Fresh Eyes Review (--fresh-eyes):
 
 Build Verification (enabled by default):
   After each task completion (before marking complete):
-  1. Run npm run lint     → Catch code quality issues
-  2. Run npm run typecheck → Catch TypeScript errors
-  3. Run npm run build    → Catch build errors
-  4. Run npm run test     → Verify TDD tests pass
-  5. Detect anti-patterns  → Disabled lint rules, weakened tsconfig
+  1. Run lint command      → Catch code quality issues
+  2. Run typecheck command → Catch type errors
+  3. Run build command     → Catch build errors
+  4. Run test command      → Verify tests pass
+  5. Detect anti-patterns  → Disabled lint rules, suspicious changes
+  Commands are auto-detected: Makefile targets, npm scripts, cargo, pytest, etc.
   If ANY step fails, the task is marked FAILED even if agent said complete.
   Use --no-verify-build, --no-verify-tests, etc to disable specific checks.
 
@@ -1096,6 +1097,17 @@ get_task_llm_verification() {
   '
 }
 
+# Refresh task verification from source (Pattern 8 fix)
+# Re-reads bead/task-graph to pick up mid-iteration fixes
+refresh_task_verification() {
+  local task_id="$1"
+  local task_json
+  task_json=$(get_task_by_id "$task_id")
+  if [[ -n "$task_json" ]]; then
+    get_task_verification "$task_json"
+  fi
+}
+
 ensure_task_verification() {
   local task_json="$1"
   local task_id
@@ -1128,6 +1140,31 @@ ensure_task_verification() {
   printf '%s\n' "$task_json"
 }
 
+# Check if a string looks like an executable command (not descriptive text)
+looks_like_command() {
+  local cmd="$1"
+  # Skip empty lines
+  [[ -z "$cmd" ]] && return 1
+
+  # Skip lines that look like markdown or documentation
+  [[ "$cmd" =~ ^[#*-][[:space:]] ]] && return 1
+  [[ "$cmd" =~ ^[0-9]+\.[[:space:]] ]] && return 1
+
+  # Known command prefixes - definitely commands
+  if [[ "$cmd" =~ ^(npm|npx|node|python|pip|pytest|cargo|go|make|bash|sh|curl|wget|docker|git|ruby|bundle|yarn|pnpm|bun|deno|flask|django|uvicorn|gunicorn|ruff|mypy|black|eslint|prettier|tsc|vitest|jest|playwright|cypress|cat|echo|ls|cd|mv|cp|rm|touch|mkdir|grep|sed|awk|find|test|\[|\./) ]]; then
+    return 0
+  fi
+
+  # Starts with uppercase = likely English sentence, not a command
+  # (Unix commands are lowercase)
+  if [[ "$cmd" =~ ^[A-Z] ]]; then
+    return 1
+  fi
+
+  # Starts with lowercase = probably a command
+  return 0
+}
+
 run_task_verification() {
   local task_id="$1"
   local verification="$2"
@@ -1140,6 +1177,21 @@ run_task_verification() {
   while IFS= read -r cmd; do
     cmd=$(echo "$cmd" | xargs)
     [[ -z "$cmd" ]] && continue
+
+    # Skip lines that don't look like commands
+    if ! looks_like_command "$cmd"; then
+      log_warn "Skipping non-command: $cmd"
+      continue
+    fi
+
+    # Fix common test framework CLI syntax errors (Pattern 7)
+    # Vitest uses -t not --grep for test filtering
+    if [[ "$cmd" == *"npm"*"test"*"--grep"* ]] && [[ -f "package.json" ]] && grep -q '"vitest"' package.json 2>/dev/null; then
+      local fixed_cmd="${cmd//--grep/-t}"
+      log_warn "Auto-fixing Vitest syntax: --grep → -t"
+      cmd="$fixed_cmd"
+    fi
+
     log_info "Verify: $cmd"
     if ! (cd "$PROJECT_ROOT" && bash -lc "$cmd"); then
       log_error "Task verification failed: $cmd"
@@ -1996,9 +2048,9 @@ check_flaky_skip() {
   fi
 
   if [[ "$SAME_FAIL_COUNT" -ge "$FLAKY_FAIL_THRESHOLD" ]]; then
-    log_error "════════════════════════════════════════════════════════════════════"
-    log_error "REPEATED FAILURE DETECTED - Skipping after $SAME_FAIL_COUNT identical failures"
-    log_error "════════════════════════════════════════════════════════════════════"
+    log_error "╔════════════════════════════════════════════════════════════════╗"
+    log_error "║  REPEATED FAILURE DETECTED - Skipping after $SAME_FAIL_COUNT identical failures   ║"
+    log_error "╚════════════════════════════════════════════════════════════════╝"
     mark_task_blocked_flaky "$task_id" "$signature"
     # Reset for next task
     LAST_FAIL_TASK_ID=""
@@ -2333,6 +2385,78 @@ has_npm_script() {
   node -e 'const p=require("./package.json"); const s=process.argv[1]; process.exit(((p.scripts||{})[s])?0:1)' "$script" 2>/dev/null
 }
 
+# Get the command for a given task type (lint, test, build, typecheck)
+# Supports multiple tech stacks with Makefile as universal override
+get_cmd() {
+  local cmd_type="$1"  # lint, test, build, typecheck, dev
+
+  # Makefile is the universal override - check first
+  if [[ -f "Makefile" ]] && grep -q "^${cmd_type}:" Makefile 2>/dev/null; then
+    echo "make $cmd_type"
+    return 0
+  fi
+
+  # Project-type detection
+  if [[ -f "package.json" ]]; then
+    # Node.js - check if script exists
+    if has_npm_script "$cmd_type"; then
+      echo "npm run $cmd_type"
+      return 0
+    fi
+    # Fallback for common script name variations
+    case "$cmd_type" in
+      typecheck)
+        has_npm_script "type-check" && echo "npm run type-check" && return 0
+        has_npm_script "types" && echo "npm run types" && return 0
+        [[ -f "tsconfig.json" ]] && command -v tsc &>/dev/null && echo "tsc --noEmit" && return 0
+        ;;
+    esac
+  elif [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]] || [[ -f "requirements.txt" ]]; then
+    # Python - use single tool per type
+    case "$cmd_type" in
+      lint) echo "ruff check ." && return 0 ;;
+      test) echo "pytest -v" && return 0 ;;
+      typecheck) echo "mypy ." && return 0 ;;
+      build) echo "pip install -e ." && return 0 ;;
+      dev) echo "flask run --debug 2>/dev/null || uvicorn main:app --reload 2>/dev/null || python main.py" && return 0 ;;
+    esac
+  elif [[ -f "Cargo.toml" ]]; then
+    # Rust
+    case "$cmd_type" in
+      lint) echo "cargo clippy -- -D warnings" && return 0 ;;
+      test) echo "cargo test" && return 0 ;;
+      typecheck) echo "cargo check" && return 0 ;;
+      build) echo "cargo build --release" && return 0 ;;
+      dev) echo "cargo run" && return 0 ;;
+    esac
+  elif [[ -f "go.mod" ]]; then
+    # Go
+    case "$cmd_type" in
+      lint) echo "golangci-lint run 2>/dev/null || go vet ./..." && return 0 ;;
+      test) echo "go test -v ./..." && return 0 ;;
+      typecheck) echo "go build ./..." && return 0 ;;  # Go typing is compile-time
+      build) echo "go build -o bin/ ./..." && return 0 ;;
+      dev) echo "go run ." && return 0 ;;
+    esac
+  elif [[ -f "Gemfile" ]]; then
+    # Ruby
+    case "$cmd_type" in
+      lint) echo "bundle exec rubocop" && return 0 ;;
+      test) echo "bundle exec rspec" && return 0 ;;
+      build) echo "bundle install" && return 0 ;;
+    esac
+  fi
+
+  # No command found
+  return 1
+}
+
+# Check if a command exists for given type
+has_cmd() {
+  local cmd_type="$1"
+  get_cmd "$cmd_type" >/dev/null 2>&1
+}
+
 # Verify the project builds successfully
 # Returns 0 on success, 1 on failure
 # Args: task_id [has_scoped_tests]
@@ -2366,9 +2490,10 @@ verify_build() {
   if [[ "${VERIFY_LINT:-true}" == "true" ]]; then
     log_info "Running lint..."
 
-    if has_npm_script "lint"; then
+    local lint_cmd
+    if lint_cmd=$(get_cmd "lint"); then
       set +e
-      lint_output=$(npm run lint 2>&1)
+      lint_output=$(eval "$lint_cmd" 2>&1)
       local lint_exit=$?
       set -e
 
@@ -2412,9 +2537,10 @@ verify_build() {
   if [[ "${VERIFY_TYPECHECK:-true}" == "true" ]]; then
     log_info "Running typecheck..."
 
-    if has_npm_script "typecheck"; then
+    local typecheck_cmd
+    if typecheck_cmd=$(get_cmd "typecheck"); then
       set +e
-      typecheck_output=$(npm run typecheck 2>&1)
+      typecheck_output=$(eval "$typecheck_cmd" 2>&1)
       local typecheck_exit=$?
       set -e
 
@@ -2423,11 +2549,11 @@ verify_build() {
       else
         log_error "❌ TypeCheck FAILED"
         typecheck_passed=false
-        # Extract error count
-        local error_count=$(echo "$typecheck_output" | grep -c "error TS" || echo "unknown")
-        log_error "   TypeScript errors: $error_count"
+        # Extract error count (TypeScript-specific, but harmless for others)
+        local error_count=$(echo "$typecheck_output" | grep -cE "error|Error" || echo "unknown")
+        log_error "   Type errors: $error_count"
         # Show first few errors
-        echo "$typecheck_output" | grep "error TS" | head -5 | while read -r line; do
+        echo "$typecheck_output" | grep -iE "error" | head -5 | while read -r line; do
           log_error "   $line"
         done
       fi
@@ -2438,27 +2564,8 @@ verify_build() {
         echo "$typecheck_output"
         echo ""
       } >> "$log_file"
-
-    elif [[ -f "tsconfig.json" ]] && command -v tsc &>/dev/null; then
-      set +e
-      typecheck_output=$(tsc --noEmit 2>&1)
-      local typecheck_exit=$?
-      set -e
-
-      if [[ $typecheck_exit -eq 0 ]]; then
-        log_success "✅ TypeCheck PASSED (tsc --noEmit)"
-      else
-        log_error "❌ TypeCheck FAILED (tsc --noEmit)"
-        typecheck_passed=false
-      fi
-
-      {
-        echo "=== TypeCheck Output (tsc) ==="
-        echo "$typecheck_output"
-        echo ""
-      } >> "$log_file"
     else
-      log_info "⏭️ TypeCheck skipped (no typecheck script)"
+      log_info "⏭️ TypeCheck skipped (no typecheck command)"
     fi
   fi
 
@@ -2466,9 +2573,10 @@ verify_build() {
   if [[ "${VERIFY_BUILD:-true}" == "true" ]]; then
     log_info "Running build..."
 
-    if has_npm_script "build"; then
+    local build_cmd
+    if build_cmd=$(get_cmd "build"); then
       set +e
-      build_output=$(npm run build 2>&1)
+      build_output=$(eval "$build_cmd" 2>&1)
       local build_exit=$?
       set -e
 
@@ -2490,7 +2598,7 @@ verify_build() {
         echo ""
       } >> "$log_file"
     else
-      log_info "⏭️ Build skipped (no build script)"
+      log_info "⏭️ Build skipped (no build command)"
     fi
   fi
 
@@ -2501,10 +2609,11 @@ verify_build() {
   elif [[ "${VERIFY_TESTS:-true}" == "true" ]]; then
     log_info "Running tests..."
 
-    if has_npm_script "test"; then
+    local test_cmd
+    if test_cmd=$(get_cmd "test"); then
       set +e
       local test_output
-      test_output=$(npm run test 2>&1)
+      test_output=$(eval "$test_cmd" 2>&1)
       local test_exit=$?
       set -e
 
@@ -2544,27 +2653,25 @@ verify_build() {
   local ran_build=false
   local ran_tests=false
 
-  if [[ "${VERIFY_LINT:-true}" == "true" ]] && has_npm_script "lint"; then
+  if [[ "${VERIFY_LINT:-true}" == "true" ]] && has_cmd "lint"; then
     ran_lint=true
   fi
 
-  if [[ "${VERIFY_TYPECHECK:-true}" == "true" ]]; then
-    if has_npm_script "typecheck" || { [[ -f "tsconfig.json" ]] && command -v tsc &>/dev/null; }; then
-      ran_typecheck=true
-    fi
+  if [[ "${VERIFY_TYPECHECK:-true}" == "true" ]] && has_cmd "typecheck"; then
+    ran_typecheck=true
   fi
 
-  if [[ "${VERIFY_BUILD:-true}" == "true" ]] && has_npm_script "build"; then
+  if [[ "${VERIFY_BUILD:-true}" == "true" ]] && has_cmd "build"; then
     ran_build=true
   fi
 
-  if [[ "${VERIFY_TESTS:-true}" == "true" ]] && has_npm_script "test"; then
+  if [[ "${VERIFY_TESTS:-true}" == "true" ]] && has_cmd "test"; then
     ran_tests=true
   fi
 
   if [[ "$ran_lint" == "false" && "$ran_typecheck" == "false" && "$ran_build" == "false" && "$ran_tests" == "false" ]]; then
-    log_warn "⚠️ No verification was performed (no lint, typecheck, build, or test scripts found)"
-    log_warn "   Consider adding these scripts to package.json"
+    log_warn "⚠️ No verification was performed (no lint, typecheck, build, or test commands found)"
+    log_warn "   Consider adding a Makefile with lint/test/build targets"
   fi
 
   # Step 4: Check for suspicious changes (anti-pattern detection)
@@ -2877,30 +2984,21 @@ The orchestrator will detect these patterns and REJECT the task.
 Before outputting TASK_COMPLETE, you MUST run the task verification
 commands listed in this task's Verification section and they MUST pass.
 
-Before outputting TASK_COMPLETE, you MUST run these commands and they MUST pass:
-
-\`\`\`bash
-# 1. Lint - catches code quality issues
-npm run lint 2>&1
-
-# 2. TypeCheck - catches type errors, missing imports, interface mismatches
-npm run typecheck 2>&1 || tsc --noEmit 2>&1
-
-# 3. Build - catches compilation errors that dev mode misses
-npm run build 2>&1
-
-# 4. Tests - verifies functionality (CRITICAL for TDD)
-npm test 2>&1
-\`\`\`
+Before outputting TASK_COMPLETE, you MUST run the project's verification commands.
+Check for a Makefile (make lint, make test, make build) or use the project's native tools:
+- Node.js: npm run lint, npm run typecheck, npm run build, npm test
+- Python: ruff check ., mypy ., pytest -v
+- Rust: cargo clippy, cargo check, cargo build, cargo test
+- Go: go vet ./..., go build ./..., go test ./...
 
 **If ANY command fails, DO NOT output TASK_COMPLETE.**
 Instead, fix the errors and re-run until all pass.
 
 Common issues to watch for:
-- Missing required props on components
-- Type mismatches between files
+- Type mismatches or missing type annotations
 - Imports from non-existent files
-- Interface changes that break callers
+- Interface/signature changes that break callers
+- Failing tests
 
 The orchestrator will verify the build after you report completion.
 If the build fails, your task will be marked as FAILED even if you said TASK_COMPLETE.
@@ -3220,6 +3318,13 @@ main() {
       log_info "Agent reports task complete. Verifying build..."
 
       # CRITICAL: Run task-specific verification BEFORE any reviews
+      # Re-read verification to pick up mid-iteration fixes (Pattern 8)
+      local fresh_verification
+      fresh_verification=$(refresh_task_verification "$task_id")
+      if [[ -n "$fresh_verification" ]]; then
+        task_verification="$fresh_verification"
+      fi
+
       if ! run_task_verification "$task_id" "$task_verification"; then
         log_error "Task-specific verification FAILED"
         handle_task_failure "$task_id" "$subject" "$selected_tool" "$i" "task verification" "verification failed"

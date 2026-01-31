@@ -30,6 +30,56 @@ has_npm_script() {
   node -e 'const p=require("./package.json"); const s=process.argv[1]; process.exit(((p.scripts||{})[s])?0:1)' "$script" 2>/dev/null
 }
 
+# Get the command for a given task type (lint, test, build, typecheck)
+# Multi-stack support: Makefile > npm > Python > Rust > Go
+get_cmd() {
+  local cmd_type="$1"
+  # Makefile is the universal override
+  if [[ -f "Makefile" ]] && grep -q "^${cmd_type}:" Makefile 2>/dev/null; then
+    echo "make $cmd_type"; return 0
+  fi
+  # Node.js
+  if [[ -f "package.json" ]]; then
+    if has_npm_script "$cmd_type"; then
+      echo "npm run $cmd_type"; return 0
+    fi
+    # Fallback for typecheck variations
+    if [[ "$cmd_type" == "typecheck" ]]; then
+      has_npm_script "type-check" && echo "npm run type-check" && return 0
+      has_npm_script "types" && echo "npm run types" && return 0
+      [[ -f "tsconfig.json" ]] && command -v tsc &>/dev/null && echo "tsc --noEmit" && return 0
+    fi
+  fi
+  # Python
+  if [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]] || [[ -f "requirements.txt" ]]; then
+    case "$cmd_type" in
+      lint) echo "ruff check ." && return 0 ;;
+      test) echo "pytest -v" && return 0 ;;
+      typecheck) echo "mypy ." && return 0 ;;
+      build) echo "pip install -e ." && return 0 ;;
+    esac
+  fi
+  # Rust
+  if [[ -f "Cargo.toml" ]]; then
+    case "$cmd_type" in
+      lint) echo "cargo clippy -- -D warnings" && return 0 ;;
+      test) echo "cargo test" && return 0 ;;
+      typecheck) echo "cargo check" && return 0 ;;
+      build) echo "cargo build --release" && return 0 ;;
+    esac
+  fi
+  # Go
+  if [[ -f "go.mod" ]]; then
+    case "$cmd_type" in
+      lint) echo "go vet ./..." && return 0 ;;
+      test) echo "go test -v ./..." && return 0 ;;
+      typecheck) echo "go build ./..." && return 0 ;;
+      build) echo "go build -o bin/ ./..." && return 0 ;;
+    esac
+  fi
+  return 1
+}
+
 echo "╔═══════════════════════════════════════════════════════════════╗"
 echo "║                    RUNNING GATES                              ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
@@ -59,10 +109,11 @@ BUILD_OUTPUT=""
 
 # Gate: Lint
 echo "━━━ Running lint..."
-if has_npm_script "lint"; then
+LINT_CMD=$(get_cmd "lint" 2>/dev/null || true)
+if [[ -n "$LINT_CMD" ]]; then
   RAN_ANY=1
   set +e
-  LINT_OUTPUT=$(npm run lint 2>&1)
+  LINT_OUTPUT=$(eval "$LINT_CMD" 2>&1)
   LINT_EXIT=$?
   set -e
 
@@ -88,54 +139,40 @@ fi
 
 # Gate: TypeCheck
 echo "━━━ Running typecheck..."
-if has_npm_script "typecheck"; then
+TYPECHECK_CMD=$(get_cmd "typecheck" 2>/dev/null || true)
+if [[ -n "$TYPECHECK_CMD" ]]; then
   RAN_ANY=1
   set +e
-  TYPES_OUTPUT=$(npm run typecheck 2>&1)
+  TYPES_OUTPUT=$(eval "$TYPECHECK_CMD" 2>&1)
   TYPES_EXIT=$?
   set -e
-  
+
   if [[ $TYPES_EXIT -eq 0 ]]; then
     echo "| Types | ✅ PASS | No type errors |" >> "$OUT_FILE"
     echo "✅ TypeCheck passed"
   else
-    TYPE_ERRORS=$(echo "$TYPES_OUTPUT" | grep -c "error TS" || true)
-    echo "| Types | ❌ FAIL | $TYPE_ERRORS errors |" >> "$OUT_FILE"
-    OVERALL_STATUS="FAIL"
-    echo "❌ TypeCheck failed"
-  fi
-elif [[ -f "tsconfig.json" ]] && command -v tsc &> /dev/null; then
-  RAN_ANY=1
-  set +e
-  TYPES_OUTPUT=$(tsc --noEmit 2>&1)
-  TYPES_EXIT=$?
-  set -e
-  
-  if [[ $TYPES_EXIT -eq 0 ]]; then
-    echo "| Types | ✅ PASS | No type errors |" >> "$OUT_FILE"
-    echo "✅ TypeCheck passed"
-  else
-    TYPE_ERRORS=$(echo "$TYPES_OUTPUT" | grep -c "error TS" || true)
+    TYPE_ERRORS=$(echo "$TYPES_OUTPUT" | grep -ciE "error" || true)
     echo "| Types | ❌ FAIL | $TYPE_ERRORS errors |" >> "$OUT_FILE"
     OVERALL_STATUS="FAIL"
     echo "❌ TypeCheck failed"
   fi
 else
   echo "| Types | ⏭️ SKIP | No typecheck available |" >> "$OUT_FILE"
-  echo "⏭️ TypeCheck skipped (no typecheck script or tsc)"
+  echo "⏭️ TypeCheck skipped"
 fi
 
 # Gate: Unit Tests
 echo "━━━ Running unit tests..."
-if has_npm_script "test"; then
+TEST_CMD=$(get_cmd "test" 2>/dev/null || true)
+if [[ -n "$TEST_CMD" ]]; then
   RAN_ANY=1
   set +e
-  TEST_OUTPUT=$(npm run test 2>&1)
+  TEST_OUTPUT=$(eval "$TEST_CMD" 2>&1)
   TEST_EXIT=$?
   set -e
-  
+
   if [[ $TEST_EXIT -eq 0 ]]; then
-    # Try to extract test count
+    # Try to extract test count (works for most frameworks)
     TESTS_PASSED=$(echo "$TEST_OUTPUT" | grep -oE "[0-9]+ passed" | head -1 || echo "tests")
     echo "| Unit Tests | ✅ PASS | $TESTS_PASSED |" >> "$OUT_FILE"
     echo "✅ Unit tests passed"
@@ -146,8 +183,8 @@ if has_npm_script "test"; then
     echo "❌ Unit tests failed"
   fi
 else
-  echo "| Unit Tests | ⏭️ SKIP | No test script |" >> "$OUT_FILE"
-  echo "⏭️ Unit tests skipped (no test script)"
+  echo "| Unit Tests | ⏭️ SKIP | No test command |" >> "$OUT_FILE"
+  echo "⏭️ Unit tests skipped (no test command)"
 fi
 
 # Gate: E2E Tests (optional)
@@ -174,20 +211,23 @@ fi
 
 # Gate: Build
 echo "━━━ Running build..."
-if has_npm_script "build"; then
+BUILD_CMD=$(get_cmd "build" 2>/dev/null || true)
+if [[ -n "$BUILD_CMD" ]]; then
   RAN_ANY=1
   set +e
-  BUILD_OUTPUT=$(npm run build 2>&1)
+  BUILD_OUTPUT=$(eval "$BUILD_CMD" 2>&1)
   BUILD_EXIT=$?
   set -e
-  
+
   if [[ $BUILD_EXIT -eq 0 ]]; then
-    # Try to get bundle size
-    if [[ -d "dist" ]]; then
-      BUNDLE_SIZE=$(du -sh dist 2>/dev/null | cut -f1 || echo "?")
-    else
-      BUNDLE_SIZE="N/A"
-    fi
+    # Try to get bundle size (check common output dirs)
+    BUNDLE_SIZE="N/A"
+    for dir in dist build target/release out; do
+      if [[ -d "$dir" ]]; then
+        BUNDLE_SIZE=$(du -sh "$dir" 2>/dev/null | cut -f1 || echo "?")
+        break
+      fi
+    done
     echo "| Build | ✅ PASS | Size: $BUNDLE_SIZE |" >> "$OUT_FILE"
     echo "✅ Build passed ($BUNDLE_SIZE)"
   else
@@ -196,7 +236,7 @@ if has_npm_script "build"; then
     echo "❌ Build failed"
   fi
 else
-  echo "| Build | ⏭️ SKIP | No build script |" >> "$OUT_FILE"
+  echo "| Build | ⏭️ SKIP | No build command |" >> "$OUT_FILE"
   echo "⏭️ Build skipped"
 fi
 
@@ -206,7 +246,7 @@ if [[ "$OVERALL_STATUS" == "PASS" ]]; then
   if [[ $RAN_ANY -eq 0 ]]; then
     echo "**Overall: ⚠️ NO AUTOMATED GATES RAN**" >> "$OUT_FILE"
     echo "" >> "$OUT_FILE"
-    echo "_Configure package.json scripts (lint/typecheck/test/build) so Gate Pack can do real verification._" >> "$OUT_FILE"
+    echo "_Configure build scripts (Makefile, package.json, pyproject.toml, Cargo.toml, or go.mod) so Gate Pack can do real verification._" >> "$OUT_FILE"
     OVERALL_STATUS="WARN"
   else
     echo "**Overall: ✅ READY FOR REVIEW**" >> "$OUT_FILE"
@@ -293,7 +333,7 @@ if [[ "$OVERALL_STATUS" == "PASS" ]]; then
 elif [[ "$OVERALL_STATUS" == "WARN" ]]; then
   echo "╔═══════════════════════════════════════════════════════════════╗"
   echo "║           ⚠️  NO AUTOMATED GATES RAN                          ║"
-  echo "║   Configure package.json scripts for real verification       ║"
+  echo "║   Configure build system (Makefile, package.json, etc.)      ║"
   echo "╚═══════════════════════════════════════════════════════════════╝"
   exit 1
 else

@@ -48,7 +48,7 @@ Determine if this is a testable task by checking tags:
 - Tags containing: setup, config, docs, integration, verify → TDD optional
 
 **If TDD is required:**
-1. Create test file FIRST (e.g., `feature.test.ts` next to `feature.ts`)
+1. Create test file FIRST (use project conventions: `test_*.py`, `*.test.ts`, `*_test.go`, etc.)
 2. Write tests based on acceptance criteria or provided test specs
 3. Run tests - they should FAIL (red phase)
 4. Implement code to make tests pass (green phase)
@@ -101,18 +101,19 @@ If you encounter an error:
 ## Build Verification Requirements
 
 Ralph will run these checks after you complete. Your task is NOT complete until ALL pass:
-- `npm run lint` (0 errors)
-- `npm run typecheck` (0 errors)
-- `npm run build` (succeeds)
-- `npm run test` (all pass)
+- Lint command (0 errors)
+- Type check command (0 errors)
+- Build command (succeeds)
+- Test command (all pass)
 
-**IMPORTANT:** If lint/typecheck fails on files you did NOT modify, you MUST still fix them. Pre-existing issues block your task. Common quick fixes:
+Check the project for verification commands:
+- **Makefile**: `make lint`, `make test`, `make build`
+- **Node.js**: `npm run lint`, `npm run typecheck`, `npm run build`, `npm test`
+- **Python**: `ruff check .`, `mypy .`, `pytest -v`
+- **Rust**: `cargo clippy`, `cargo check`, `cargo build`, `cargo test`
+- **Go**: `go vet ./...`, `go build ./...`, `go test ./...`
 
-| Error | Fix |
-|-------|-----|
-| `'X' is defined but never used` | Remove import or prefix with `_` |
-| `'window/document/navigator' is not defined` | Add `/* global window, document, navigator */` at top |
-| `Unnecessary escape character` | Remove the backslash |
+**IMPORTANT:** If lint/typecheck fails on files you did NOT modify, you MUST still fix them. Pre-existing issues block your task.
 
 Do NOT output `TASK_COMPLETE` if any verification step fails.
 

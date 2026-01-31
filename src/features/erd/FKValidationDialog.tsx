@@ -167,6 +167,15 @@ export function FKValidationDialog({
   const hasIntegrityError = integrityResult !== undefined && integrityResult !== null && !integrityResult.isValid
   const canCreate = !isValidating && !isCreating && !isCreatingIndex && !hasBlockingErrors && !hasUniquenessError && !hasIntegrityError
 
+  const handleOverlayClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.target === e.currentTarget && !isCreating && !isCreatingIndex) {
+        onClose()
+      }
+    },
+    [isCreating, isCreatingIndex, onClose]
+  )
+
   if (!isOpen || !pendingFK) {
     return null
   }
@@ -175,7 +184,7 @@ export function FKValidationDialog({
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       data-testid="fk-validation-dialog-overlay"
-      onClick={onClose}
+      onClick={handleOverlayClick}
     >
       <div
         className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4"
