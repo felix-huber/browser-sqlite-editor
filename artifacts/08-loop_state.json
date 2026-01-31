@@ -1,16 +1,16 @@
 {
   "runId": "2026-01-31T00:28:10+01:00",
-  "updatedAt": "2026-01-31T00:40:27+01:00",
+  "updatedAt": "2026-01-31T02:15:52+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-1xr",
-    "subject": "P5-02: Stable ordering with tie-breakers",
+    "id": "bd-1x1",
+    "subject": "P5-04: Row identity strategy for UPDATE/DELETE",
     "status": "completed",
     "phase": "review",
-    "attempt": 2
+    "attempt": 1
   },
   "tools": {
     "implementer": "claude",

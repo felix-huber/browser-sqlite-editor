@@ -266,3 +266,57 @@ export function getPrimaryKeyColumns(tableInfo: TableInfo): ColumnInfo[] {
     .filter((c) => c.pk > 0)
     .sort((a, b) => a.pk - b.pk)
 }
+
+/**
+ * Checks if a table has a usable identifier for UPDATE/DELETE operations.
+ *
+ * - Regular tables always have rowid (even without explicit PK)
+ * - WITHOUT ROWID tables require explicit PK columns
+ * - Views and virtual tables cannot be reliably edited by row
+ *
+ * @param tableInfo - Table information
+ * @returns true if rows can be uniquely identified for edits
+ */
+export function hasUsableIdentifier(tableInfo: TableInfo): boolean {
+  // Views cannot be edited via rowid/PK
+  if (tableInfo.isView) return false
+
+  // Virtual tables don't support standard row identity
+  if (tableInfo.isVirtual) return false
+
+  // Regular tables always have rowid
+  if (!tableInfo.withoutRowid) return true
+
+  // WITHOUT ROWID tables need explicit PK columns
+  const pkColumns = tableInfo.columns.filter((c) => c.pk > 0)
+  return pkColumns.length > 0
+}
+
+/**
+ * Builds a DELETE statement for a specific row.
+ *
+ * @param tableName - Table name
+ * @param primaryKey - Primary key value for targeting the row
+ * @returns DELETE statement with SQL and params
+ */
+export function buildDeleteStatement(
+  tableName: string,
+  primaryKey: PrimaryKeyValue
+): { sql: string; params: unknown[] } {
+  const quotedTable = quoteIdentifier(tableName)
+
+  if (primaryKey.type === 'rowid') {
+    return {
+      sql: `DELETE FROM ${quotedTable} WHERE rowid = ?`,
+      params: [primaryKey.rowid],
+    }
+  }
+
+  // WITHOUT ROWID table with PK columns
+  const { whereClause, params } = buildWhereClause(primaryKey)
+
+  return {
+    sql: `DELETE FROM ${quotedTable} WHERE ${whereClause}`,
+    params,
+  }
+}

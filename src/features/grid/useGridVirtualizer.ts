@@ -5,7 +5,7 @@
  * Uses fixed row height (32px) for consistent virtualization.
  */
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import { useVirtualizer, type VirtualItem, type Virtualizer } from '@tanstack/react-virtual';
 import { ROW_HEIGHT } from './useDataGrid';
 
@@ -21,6 +21,12 @@ export interface UseGridVirtualizerOptions {
   viewportHeight?: number;
   /** Overscan count (rows to render outside visible area) */
   overscan?: number;
+  /** Total rows available (for infinite scroll - may be more than rowCount) */
+  totalRowsAvailable?: number;
+  /** Called when user scrolls near the end and more data should be loaded */
+  onLoadMore?: () => void;
+  /** Whether more data is currently being loaded */
+  isLoadingMore?: boolean;
 }
 
 /** Return type for useGridVirtualizer */
@@ -37,11 +43,16 @@ export interface UseGridVirtualizerResult {
   getVisibleRange: () => { startIndex: number; endIndex: number };
   /** Scroll to a specific row index */
   scrollToIndex: (index: number, options?: { align?: 'start' | 'center' | 'end' }) => void;
+  /** Scroll to top (resets scroll position) */
+  scrollToTop: () => void;
 }
 
 // =============================================================================
 // Hook Implementation
 // =============================================================================
+
+/** Threshold (in rows) before the end to trigger loading more data */
+const LOAD_MORE_THRESHOLD = 50;
 
 /**
  * React hook for virtualizing grid rows
@@ -55,7 +66,14 @@ export interface UseGridVirtualizerResult {
 export function useGridVirtualizer(options: UseGridVirtualizerOptions): UseGridVirtualizerResult {
   // Note: viewportHeight is passed for documentation/type-safety but TanStack Virtual
   // measures the scroll container automatically. We destructure it to satisfy the interface.
-  const { rowCount, viewportHeight: _viewportHeight, overscan = 5 } = options;
+  const {
+    rowCount,
+    viewportHeight: _viewportHeight,
+    overscan = 5,
+    totalRowsAvailable,
+    onLoadMore,
+    isLoadingMore = false,
+  } = options;
 
   // Ref for the scrollable container
   const containerRef = useRef<HTMLDivElement>(null);
@@ -73,6 +91,22 @@ export function useGridVirtualizer(options: UseGridVirtualizerOptions): UseGridV
 
   // Calculate total height for the spacer element
   const totalHeight = virtualizer.getTotalSize();
+
+  // Infinite scroll: check if we need to load more data
+  useEffect(() => {
+    if (!onLoadMore || isLoadingMore) return;
+    if (totalRowsAvailable !== undefined && rowCount >= totalRowsAvailable) return;
+
+    const items = virtualizer.getVirtualItems();
+    if (items.length === 0) return;
+
+    const lastVisibleIndex = items[items.length - 1].index;
+    const distanceFromEnd = rowCount - 1 - lastVisibleIndex;
+
+    if (distanceFromEnd < LOAD_MORE_THRESHOLD) {
+      onLoadMore();
+    }
+  }, [virtualItems, rowCount, totalRowsAvailable, onLoadMore, isLoadingMore, virtualizer]);
 
   // Get visible range helper
   const getVisibleRange = useCallback((): { startIndex: number; endIndex: number } => {
@@ -94,6 +128,14 @@ export function useGridVirtualizer(options: UseGridVirtualizerOptions): UseGridV
     [virtualizer],
   );
 
+  // Scroll to top helper
+  const scrollToTop = useCallback(() => {
+    if (containerRef.current) {
+      containerRef.current.scrollTop = 0;
+    }
+    virtualizer.scrollToIndex(0, { align: 'start' });
+  }, [virtualizer]);
+
   return {
     containerRef,
     virtualizer,
@@ -101,6 +143,7 @@ export function useGridVirtualizer(options: UseGridVirtualizerOptions): UseGridV
     totalHeight,
     getVisibleRange,
     scrollToIndex,
+    scrollToTop,
   };
 }
 

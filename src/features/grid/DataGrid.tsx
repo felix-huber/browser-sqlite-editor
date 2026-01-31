@@ -130,6 +130,14 @@ export interface DataGridProps {
   onRowsDeleted?: (count: number) => void;
   /** Whether the table has foreign key relationships (for cascade warning) */
   hasForeignKeys?: boolean;
+  /** Total number of rows available in the database (for infinite scroll) */
+  totalRowsAvailable?: number;
+  /** Called when more data should be loaded (infinite scroll) */
+  onLoadMore?: () => void;
+  /** Whether more data is currently being loaded */
+  isLoadingMore?: boolean;
+  /** Ref to expose scroll control to parent */
+  scrollRef?: React.RefObject<{ scrollToTop: () => void } | null>;
 }
 
 // =============================================================================
@@ -177,6 +185,10 @@ export const DataGrid = memo(function DataGrid({
   onDeleteRows,
   onRowsDeleted,
   hasForeignKeys = false,
+  totalRowsAvailable,
+  onLoadMore,
+  isLoadingMore = false,
+  scrollRef,
 }: DataGridProps) {
   // Column widths state
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
@@ -270,12 +282,29 @@ export const DataGrid = memo(function DataGrid({
     onEditActionsChange(null);
   }, [onEditActionsChange, editState, commitEdit, cancelEdit]);
 
-  // Set up virtualizer
-  const { containerRef, virtualItems, totalHeight } = useGridVirtualizer({
+  // Set up virtualizer with infinite scroll support
+  const { containerRef, virtualItems, totalHeight, scrollToTop } = useGridVirtualizer({
     rowCount: data.length,
     viewportHeight: height - ROW_HEIGHT, // Subtract header height
     overscan: DEFAULT_OVERSCAN,
+    totalRowsAvailable,
+    onLoadMore,
+    isLoadingMore,
   });
+
+  // Expose scroll control to parent via ref
+  useEffect(() => {
+    if (scrollRef) {
+      (scrollRef as React.MutableRefObject<{ scrollToTop: () => void } | null>).current = {
+        scrollToTop,
+      };
+    }
+    return () => {
+      if (scrollRef) {
+        (scrollRef as React.MutableRefObject<{ scrollToTop: () => void } | null>).current = null;
+      }
+    };
+  }, [scrollRef, scrollToTop]);
 
   // Initialize column widths when columns change
   useEffect(() => {

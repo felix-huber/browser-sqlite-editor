@@ -56,6 +56,7 @@ export const GridRow = memo(function GridRow({
       } hover:bg-blue-100`}
       style={style}
       data-row-index={row.index}
+      data-testid="grid-row"
       role="row"
       aria-rowindex={row.index + 2}
       aria-selected={isSelected}

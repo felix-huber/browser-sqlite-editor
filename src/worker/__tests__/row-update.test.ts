@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildUpdateStatement,
+  buildDeleteStatement,
   validateColumnForUpdate,
   extractPrimaryKeyFromRow,
   getPrimaryKeyColumns,
+  hasUsableIdentifier,
   GeneratedColumnError,
   ColumnNotFoundError,
   type UpdateOptions,
@@ -431,5 +433,136 @@ describe('concurrent update (last write wins)', () => {
     expect(result1.sql).toBe(result2.sql)
     expect(result1.params).toEqual(result2.params)
     // Last write wins is a DB behavior, not statement generation
+  })
+})
+
+describe('buildDeleteStatement', () => {
+  it('generates DELETE with rowid targeting', () => {
+    const result = buildDeleteStatement(
+      'users',
+      { type: 'rowid', rowid: 42 }
+    )
+
+    expect(result.sql).toBe('DELETE FROM users WHERE rowid = ?')
+    expect(result.params).toEqual([42])
+  })
+
+  it('generates DELETE with single PK column', () => {
+    const result = buildDeleteStatement('kv', {
+      type: 'pk',
+      columns: new Map([['key', 'mykey']]),
+    })
+
+    expect(result.sql).toBe('DELETE FROM kv WHERE "key" = ?')
+    expect(result.params).toEqual(['mykey'])
+  })
+
+  it('generates DELETE with composite PK', () => {
+    const result = buildDeleteStatement('junction', {
+      type: 'pk',
+      columns: new Map([
+        ['left_id', 10],
+        ['right_id', 20],
+      ]),
+    })
+
+    expect(result.sql).toBe(
+      'DELETE FROM junction WHERE left_id = ? AND right_id = ?'
+    )
+    expect(result.params).toEqual([10, 20])
+  })
+
+  it('handles NULL PK column with IS NULL', () => {
+    const result = buildDeleteStatement('data', {
+      type: 'pk',
+      columns: new Map([['id', null]]),
+    })
+
+    expect(result.sql).toBe('DELETE FROM data WHERE id IS NULL')
+    expect(result.params).toEqual([])
+  })
+
+  it('quotes reserved word table and column names', () => {
+    const result = buildDeleteStatement('order', {
+      type: 'pk',
+      columns: new Map([['select', 'test']]),
+    })
+
+    expect(result.sql).toBe('DELETE FROM "order" WHERE "select" = ?')
+    expect(result.params).toEqual(['test'])
+  })
+})
+
+describe('hasUsableIdentifier', () => {
+  it('returns true for regular rowid table', () => {
+    const tableInfo = makeTableInfo('users', [
+      makeColumn('id', { pk: 1, cid: 0 }),
+      makeColumn('name', { cid: 1 }),
+    ])
+
+    expect(hasUsableIdentifier(tableInfo)).toBe(true)
+  })
+
+  it('returns true for rowid table without explicit PK', () => {
+    // Regular tables always have rowid even without explicit PK
+    const tableInfo = makeTableInfo('data', [
+      makeColumn('a', { cid: 0 }),
+      makeColumn('b', { cid: 1 }),
+    ])
+
+    expect(hasUsableIdentifier(tableInfo)).toBe(true)
+  })
+
+  it('returns true for WITHOUT ROWID table with PK', () => {
+    const tableInfo = makeTableInfo(
+      'kv',
+      [
+        makeColumn('key', { pk: 1, cid: 0 }),
+        makeColumn('value', { cid: 1 }),
+      ],
+      true // withoutRowid
+    )
+
+    expect(hasUsableIdentifier(tableInfo)).toBe(true)
+  })
+
+  it('returns false for WITHOUT ROWID table without PK columns', () => {
+    // This is technically invalid in SQLite (WITHOUT ROWID requires PK),
+    // but we handle it defensively
+    const tableInfo = makeTableInfo(
+      'broken',
+      [makeColumn('a', { cid: 0 }), makeColumn('b', { cid: 1 })],
+      true // withoutRowid
+    )
+
+    expect(hasUsableIdentifier(tableInfo)).toBe(false)
+  })
+
+  it('returns false for views', () => {
+    const tableInfo: TableInfo = {
+      name: 'user_view',
+      isView: true,
+      isVirtual: false,
+      withoutRowid: false,
+      columns: [makeColumn('id'), makeColumn('name')],
+      indexes: [],
+      createSql: 'CREATE VIEW user_view AS SELECT * FROM users',
+    }
+
+    expect(hasUsableIdentifier(tableInfo)).toBe(false)
+  })
+
+  it('returns false for virtual tables', () => {
+    const tableInfo: TableInfo = {
+      name: 'fts_table',
+      isView: false,
+      isVirtual: true,
+      withoutRowid: false,
+      columns: [makeColumn('content')],
+      indexes: [],
+      createSql: 'CREATE VIRTUAL TABLE fts_table USING fts5(content)',
+    }
+
+    expect(hasUsableIdentifier(tableInfo)).toBe(false)
   })
 })

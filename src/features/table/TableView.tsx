@@ -2,7 +2,8 @@
  * TableView Component
  *
  * Displays table or view data using the DataGrid, with real CRUD operations
- * backed by the worker.
+ * backed by the worker. Uses virtual scrolling with windowed SQL fetching
+ * for efficient rendering of large datasets.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -22,12 +23,16 @@ import { getWorkerClient } from '../../core/worker/client';
 import { quoteIdentifier } from '../../core/db/ddl';
 import {
   buildUpdateStatement,
+  buildDeleteStatement,
   extractPrimaryKeyFromRow,
+  hasUsableIdentifier,
   type PrimaryKeyValue,
 } from '../../worker/row-update';
+import { generateTieBreakerColumns } from '../../core/sql/query-builder';
 import type { TableInfo } from '../../types';
 
-const DEFAULT_PAGE_SIZE = 200;
+/** Number of rows to fetch per batch */
+const BATCH_SIZE = 500;
 
 export interface TableViewProps {
   /** Table name to display */
@@ -49,43 +54,80 @@ interface TableDataState {
   rowKeys: PrimaryKeyValue[];
 }
 
-function buildDeleteStatement(
-  tableName: string,
-  primaryKey: PrimaryKeyValue
-): { sql: string; params: unknown[] } {
-  const escapedTable = quoteIdentifier(tableName);
-
-  if (primaryKey.type === 'rowid') {
-    return {
-      sql: `DELETE FROM ${escapedTable} WHERE rowid = ?`,
-      params: [primaryKey.rowid],
-    };
-  }
-
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-
-  primaryKey.columns.forEach((value, colName) => {
-    const escapedCol = quoteIdentifier(colName);
-    if (value === null) {
-      conditions.push(`${escapedCol} IS NULL`);
-    } else {
-      conditions.push(`${escapedCol} = ?`);
-      params.push(value);
-    }
-  });
-
-  return {
-    sql: `DELETE FROM ${escapedTable} WHERE ${conditions.join(' AND ')}`,
-    params,
-  };
-}
-
 function getDisplayColumns(tableInfo: TableInfo | null): string[] {
   if (!tableInfo) return [];
   return tableInfo.columns
     .filter((col) => !col.hidden)
     .map((col) => col.name);
+}
+
+/**
+ * Determine if ORDER BY is exactly on rowid (for keyset pagination).
+ * This is true only when sorting by a single column that is effectively rowid:
+ * - Column named "rowid" (case-insensitive)
+ * - INTEGER PRIMARY KEY column (which aliases rowid)
+ */
+function isOrderByRowid(sortState: SortState, tableInfo: TableInfo): boolean {
+  if (sortState.length !== 1) return false;
+
+  const sortCol = sortState[0].column.toLowerCase();
+
+  // Direct rowid sort
+  if (sortCol === 'rowid') return true;
+
+  // INTEGER PRIMARY KEY alias rowid (only for non-WITHOUT ROWID tables)
+  if (tableInfo.withoutRowid) return false;
+
+  const col = tableInfo.columns.find((c) => c.name.toLowerCase() === sortCol);
+  if (!col) return false;
+
+  // INTEGER PRIMARY KEY is an alias for rowid
+  return col.pk === 1 && col.type.toUpperCase() === 'INTEGER';
+}
+
+/**
+ * Generate ORDER BY clause with tie-breaker columns for stable ordering.
+ */
+function generateOrderByWithTieBreaker(
+  sortState: SortState,
+  tableInfo: TableInfo
+): string {
+  const tieBreakerCols = generateTieBreakerColumns(tableInfo);
+
+  if (sortState.length === 0) {
+    // Default order: use tie-breaker columns (rowid for regular tables, PK for WITHOUT ROWID)
+    if (tieBreakerCols.length === 0) return '';
+    return tieBreakerCols.map((col) => `${col} ASC`).join(', ');
+  }
+
+  // User's sort columns
+  const sortParts = sortState.map(({ column, direction }) => {
+    const escapedColumn = quoteIdentifier(column);
+    return `${escapedColumn} ${direction.toUpperCase()}`;
+  });
+
+  // Add tie-breaker columns that aren't already in the sort
+  const sortColNames = new Set(sortState.map((s) => s.column.toLowerCase()));
+
+  for (const col of tieBreakerCols) {
+    // Extract column name from quoted identifier (e.g., '"key"' -> 'key')
+    const unquotedCol = col.startsWith('"') && col.endsWith('"')
+      ? col.slice(1, -1).replace(/""/g, '"')
+      : col;
+
+    // Skip if already in sort, unless it's the bare 'rowid' keyword
+    if (col !== 'rowid' && sortColNames.has(unquotedCol.toLowerCase())) {
+      continue;
+    }
+    if (col === 'rowid' && sortColNames.has('rowid')) {
+      continue;
+    }
+
+    // Add tie-breaker with ASC direction
+    sortParts.push(`${col} ASC`);
+  }
+
+  return sortParts.join(', ');
 }
 
 export function TableView({
@@ -100,13 +142,11 @@ export function TableView({
   const [tableInfo, setTableInfo] = useState<TableInfo | null>(null);
   const [dataState, setDataState] = useState<TableDataState>({ rows: [], rowKeys: [] });
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sortState, setSortState] = useState<SortState>([]);
   const [filterState, setFilterState] = useState<FilterState>([]);
   const [hasForeignKeys, setHasForeignKeys] = useState(false);
-  const [pageSize] = useState(DEFAULT_PAGE_SIZE);
-  const [offset, setOffset] = useState(0);
-  const [dataOffset, setDataOffset] = useState(0);
   const [totalRows, setTotalRows] = useState<number | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportColumns, setExportColumns] = useState<string[]>([]);
@@ -116,8 +156,11 @@ export function TableView({
   const [exportLoading, setExportLoading] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<{ scrollToTop: () => void } | null>(null);
   const [gridHeight, setGridHeight] = useState(400);
   const loadTokenRef = useRef(0);
+  const dataStateRef = useRef(dataState);
+  dataStateRef.current = dataState;
 
   const objectName = viewName ?? tableName;
 
@@ -204,10 +247,20 @@ export function TableView({
     }
   }, [client, tableInfo, filterState]);
 
-  const fetchData = useCallback(async () => {
+  /**
+   * Fetch data using windowed SQL fetching.
+   * Uses LIMIT/OFFSET by default with tie-breaker columns for stable ordering.
+   * Uses keyset pagination only when ORDER BY is exactly rowid.
+   */
+  const fetchData = useCallback(async (append = false) => {
     if (!tableInfo) return;
     const token = ++loadTokenRef.current;
-    setLoading(true);
+
+    if (append) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
     setError(null);
 
     try {
@@ -218,18 +271,54 @@ export function TableView({
         : [`rowid AS "__rowid__"`, ...escapedColumns];
 
       const where = generateWhereClause(filterState);
-      const orderBy = generateOrderByClause(sortState);
+      const orderBy = generateOrderByWithTieBreaker(sortState, tableInfo);
 
-      const baseSql = `SELECT ${selectColumns.join(', ')} FROM ${quoteIdentifier(tableInfo.name)}`;
-      const orderClause = orderBy ? `ORDER BY ${orderBy}` : '';
-      const sql = `${baseSql} ${where.sql} ${orderClause} LIMIT ? OFFSET ?`;
-      const params = [...where.params, pageSize, offset];
+      const currentData = dataStateRef.current;
+      const currentOffset = append ? currentData.rows.length : 0;
+
+      // Decide between keyset and LIMIT/OFFSET pagination
+      let sql: string;
+      let params: unknown[];
+
+      if (!append && isOrderByRowid(sortState, tableInfo) && !tableInfo.withoutRowid) {
+        // Keyset pagination for rowid-only sort (initial load only)
+        const baseSql = `SELECT ${selectColumns.join(', ')} FROM ${quoteIdentifier(tableInfo.name)}`;
+        const orderClause = orderBy ? `ORDER BY ${orderBy}` : '';
+        sql = `${baseSql} ${where.sql} ${orderClause} LIMIT ?`;
+        params = [...where.params, BATCH_SIZE];
+      } else if (append && isOrderByRowid(sortState, tableInfo) && !tableInfo.withoutRowid && currentData.rows.length > 0) {
+        // Keyset pagination for appending - use last rowid
+        const lastRowid = currentData.rowKeys[currentData.rowKeys.length - 1];
+        if (lastRowid?.type === 'rowid') {
+          const baseSql = `SELECT ${selectColumns.join(', ')} FROM ${quoteIdentifier(tableInfo.name)}`;
+          const direction = sortState[0]?.direction ?? 'asc';
+          const comparator = direction === 'asc' ? '>' : '<';
+          const whereClause = where.sql
+            ? `${where.sql} AND rowid ${comparator} ?`
+            : `WHERE rowid ${comparator} ?`;
+          const orderClause = orderBy ? `ORDER BY ${orderBy}` : '';
+          sql = `${baseSql} ${whereClause} ${orderClause} LIMIT ?`;
+          params = [...where.params, lastRowid.rowid, BATCH_SIZE];
+        } else {
+          // Fallback to LIMIT/OFFSET
+          const baseSql = `SELECT ${selectColumns.join(', ')} FROM ${quoteIdentifier(tableInfo.name)}`;
+          const orderClause = orderBy ? `ORDER BY ${orderBy}` : '';
+          sql = `${baseSql} ${where.sql} ${orderClause} LIMIT ? OFFSET ?`;
+          params = [...where.params, BATCH_SIZE, currentOffset];
+        }
+      } else {
+        // Default: LIMIT/OFFSET with tie-breaker
+        const baseSql = `SELECT ${selectColumns.join(', ')} FROM ${quoteIdentifier(tableInfo.name)}`;
+        const orderClause = orderBy ? `ORDER BY ${orderBy}` : '';
+        sql = `${baseSql} ${where.sql} ${orderClause} LIMIT ? OFFSET ?`;
+        params = [...where.params, BATCH_SIZE, currentOffset];
+      }
 
       const result = await client.query(sql, params);
       if (token !== loadTokenRef.current) return;
 
-      const rows: DataRow[] = [];
-      const rowKeys: PrimaryKeyValue[] = [];
+      const newRows: DataRow[] = [];
+      const newRowKeys: PrimaryKeyValue[] = [];
 
       result.rows.forEach((row) => {
         const rowObj: DataRow = {};
@@ -238,44 +327,74 @@ export function TableView({
         });
 
         const rowidValue = (rowObj['__rowid__'] as number | bigint | undefined);
-        rowKeys.push(extractPrimaryKeyFromRow(tableInfo, rowObj, rowidValue));
-        rows.push(rowObj);
+        newRowKeys.push(extractPrimaryKeyFromRow(tableInfo, rowObj, rowidValue));
+        newRows.push(rowObj);
       });
 
-      setDataState({ rows, rowKeys });
-      setDataOffset(offset);
+      if (append) {
+        setDataState((prev) => ({
+          rows: [...prev.rows, ...newRows],
+          rowKeys: [...prev.rowKeys, ...newRowKeys],
+        }));
+      } else {
+        setDataState({ rows: newRows, rowKeys: newRowKeys });
+      }
     } catch (err) {
       if (token !== loadTokenRef.current) return;
       const message = err instanceof Error ? err.message : 'Failed to load data';
       setError(message);
-      setDataState({ rows: [], rowKeys: [] });
+      if (!append) {
+        setDataState({ rows: [], rowKeys: [] });
+      }
     } finally {
       if (token === loadTokenRef.current) {
         setLoading(false);
+        setLoadingMore(false);
       }
     }
-  }, [client, tableInfo, filterState, sortState, pageSize, offset]);
+  }, [client, tableInfo, filterState, sortState]);
+
+  // Load more data for infinite scroll
+  const handleLoadMore = useCallback(() => {
+    if (loadingMore || loading) return;
+    if (totalRows !== null && dataStateRef.current.rows.length >= totalRows) return;
+    void fetchData(true);
+  }, [fetchData, loadingMore, loading, totalRows]);
 
   useEffect(() => {
     void fetchTableInfo();
   }, [fetchTableInfo]);
 
+  // Reset data when table changes
   useEffect(() => {
-    setOffset(0);
-    setDataOffset(0);
+    setDataState({ rows: [], rowKeys: [] });
   }, [objectName]);
 
   useEffect(() => {
     if (!tableInfo) return;
     void fetchRowCount();
-    void fetchData();
+    void fetchData(false);
   }, [tableInfo, fetchRowCount, fetchData]);
 
+  // Reset scroll position and reload data when sort/filter changes
+  const handleSortChange = useCallback((newSortState: SortState) => {
+    setSortState(newSortState);
+    setDataState({ rows: [], rowKeys: [] });
+    scrollRef.current?.scrollToTop();
+  }, []);
+
+  const handleFilterChange = useCallback((newFilterState: FilterState) => {
+    setFilterState(newFilterState);
+    setDataState({ rows: [], rowKeys: [] });
+    scrollRef.current?.scrollToTop();
+  }, []);
+
   const handleRefresh = useCallback(async () => {
+    setDataState({ rows: [], rowKeys: [] });
     await fetchTableInfo();
     if (tableInfo) {
       await fetchRowCount();
-      await fetchData();
+      await fetchData(false);
     }
   }, [fetchTableInfo, fetchRowCount, fetchData, tableInfo]);
 
@@ -330,7 +449,9 @@ export function TableView({
           tableInfo,
         });
         await client.exec(stmt.sql, stmt.params);
-        await fetchData();
+        // Refresh current view - reload all current data to maintain consistency
+        setDataState({ rows: [], rowKeys: [] });
+        await fetchData(false);
         return true;
       } catch (err) {
         console.error('Failed to update cell:', err);
@@ -353,7 +474,8 @@ export function TableView({
 
           try {
             await client.exec(`INSERT INTO ${quoteIdentifier(tableInfo.name)} DEFAULT VALUES`);
-            await fetchData();
+            setDataState({ rows: [], rowKeys: [] });
+            await fetchData(false);
             return { success: true };
           } catch (err) {
             const requiredColumns = tableInfo.columns.filter(
@@ -372,7 +494,8 @@ export function TableView({
         const columns = Object.keys(values);
         if (columns.length === 0) {
           await client.exec(`INSERT INTO ${quoteIdentifier(tableInfo.name)} DEFAULT VALUES`);
-          await fetchData();
+          setDataState({ rows: [], rowKeys: [] });
+          await fetchData(false);
           return { success: true };
         }
 
@@ -382,7 +505,8 @@ export function TableView({
           .join(', ')}) VALUES (${placeholders})`;
         const params = columns.map((col) => values[col] ?? null);
         await client.exec(sql, params);
-        await fetchData();
+        setDataState({ rows: [], rowKeys: [] });
+        await fetchData(false);
         return { success: true };
       } catch (err) {
         return {
@@ -410,7 +534,8 @@ export function TableView({
           deleted += 1;
         }
         await client.exec('COMMIT');
-        await fetchData();
+        setDataState({ rows: [], rowKeys: [] });
+        await fetchData(false);
         return { success: true, deletedCount: deleted };
       } catch (err) {
         try {
@@ -427,15 +552,27 @@ export function TableView({
     [client, tableInfo, dataState, fetchData]
   );
 
-  const effectiveReadOnly = isReadOnly || tableInfo?.isView || tableInfo?.isVirtual;
+  // Check if table has a usable identifier for row edits
+  const canIdentifyRows = tableInfo ? hasUsableIdentifier(tableInfo) : true;
+  const effectiveReadOnly = isReadOnly || tableInfo?.isView || tableInfo?.isVirtual || !canIdentifyRows;
 
   const visibleColumns = useMemo(() => getDisplayColumns(tableInfo), [tableInfo]);
 
   const rowCountLabel = totalRows !== null ? `${totalRows} rows` : `${dataState.rows.length} rows`;
-  const canGoPrev = dataOffset > 0;
-  const canGoNext = totalRows !== null ? dataOffset + pageSize < totalRows : dataState.rows.length === pageSize;
-  const pageStart = totalRows !== null ? Math.min(dataOffset + 1, totalRows) : dataOffset + 1;
-  const pageEnd = totalRows !== null ? Math.min(dataOffset + dataState.rows.length, totalRows) : dataOffset + dataState.rows.length;
+  const loadedInfo = totalRows !== null && dataState.rows.length < totalRows
+    ? `Loaded ${dataState.rows.length} of ${totalRows}`
+    : null;
+
+  // Determine read-only reason for banner
+  const readOnlyReason = !canIdentifyRows
+    ? 'No usable row identifier'
+    : tableInfo?.isView
+      ? 'View'
+      : tableInfo?.isVirtual
+        ? 'Virtual table'
+        : isReadOnly
+          ? 'Read-only database'
+          : null;
 
   return (
     <div className="flex flex-col h-full" data-testid="table-view">
@@ -447,34 +584,22 @@ export function TableView({
           <span className="text-xs text-navy-500" data-testid="table-row-count">
             {rowCountLabel}
           </span>
-          {totalRows !== null && (
-            <span className="text-xs text-navy-400" data-testid="table-page-info">
-              {pageStart}-{pageEnd} of {totalRows}
+          {loadedInfo && (
+            <span className="text-xs text-navy-400" data-testid="table-loaded-info">
+              {loadedInfo}
             </span>
           )}
-          {effectiveReadOnly && (
-            <span className="text-xs text-amber-600" data-testid="table-readonly">
-              Read-only
+          {effectiveReadOnly && readOnlyReason && (
+            <span
+              className="text-xs text-amber-600"
+              data-testid="table-readonly"
+              title={readOnlyReason}
+            >
+              Read-only{readOnlyReason ? ` (${readOnlyReason})` : ''}
             </span>
           )}
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setOffset((prev) => Math.max(0, prev - pageSize))}
-            className="px-2 py-1 text-xs font-medium text-navy-600 hover:bg-navy-100 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            data-testid="table-prev-page"
-            disabled={!canGoPrev}
-          >
-            Prev
-          </button>
-          <button
-            onClick={() => setOffset((prev) => prev + pageSize)}
-            className="px-2 py-1 text-xs font-medium text-navy-600 hover:bg-navy-100 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            data-testid="table-next-page"
-            disabled={!canGoNext}
-          >
-            Next
-          </button>
           <button
             onClick={handleRefresh}
             className="px-2 py-1 text-xs font-medium text-navy-600 hover:bg-navy-100 rounded transition-colors"
@@ -528,22 +653,23 @@ export function TableView({
               height={gridHeight}
               isReadOnly={effectiveReadOnly}
               sortState={sortState}
-              onSortChange={setSortState}
+              onSortChange={handleSortChange}
               filterState={filterState}
-              onFilterChange={(next) => {
-                setFilterState(next);
-                setOffset(0);
-              }}
+              onFilterChange={handleFilterChange}
               onCellEdit={handleCellEdit}
               onEditStateChange={onEditStateChange}
               onEditActionsChange={onEditActionsChange}
               onAddRow={tableInfo ? handleAddRow : undefined}
               onDeleteRows={tableInfo ? handleDeleteRows : undefined}
               hasForeignKeys={hasForeignKeys}
+              totalRowsAvailable={totalRows ?? undefined}
+              onLoadMore={handleLoadMore}
+              isLoadingMore={loadingMore}
+              scrollRef={scrollRef}
             />
-            {loading && (
-              <div className="absolute inset-0 bg-white/60 flex items-center justify-center text-sm text-gray-600">
-                Loading…
+            {(loading || loadingMore) && dataState.rows.length > 0 && (
+              <div className="absolute bottom-0 left-0 right-0 h-8 bg-white/80 flex items-center justify-center text-sm text-gray-600">
+                Loading more…
               </div>
             )}
           </div>
