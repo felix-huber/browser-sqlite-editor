@@ -107,8 +107,9 @@ test.describe('Import/Export (real UI)', () => {
     await page.getByTestId('import-button').click();
 
     await expect(page.getByTestId('error-state')).toBeVisible({ timeout: 10000 });
-    // Error message should mention either the constraint type or the constraint violation
-    await expect(page.getByText(/CONSTRAINT|unique|violated/i)).toBeVisible();
+    // Error message within error-state should mention the constraint violation
+    const errorState = page.getByTestId('error-state');
+    await expect(errorState.getByText(/CONSTRAINT|unique|violated/i)).toBeVisible();
     await page.getByTestId('close-button').click();
 
     await runSql(page, 'SELECT COUNT(*) AS count FROM unique_table');
