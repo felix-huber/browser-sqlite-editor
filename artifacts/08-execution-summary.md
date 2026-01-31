@@ -44,3 +44,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-hws | P7-01: CSP implementation | DONE | db6c9325e7a6edd0d3c29fbc68f9bf561a8d0be8 | clean review |
 | bd-po6 | P3-00: Shared DDL diff preview component | DONE | e4c2502aa970406a4ecd90ffdd80d51f0814e46a | clean review |
 | bd-3ge | P5-00: Shared SQL generation helpers | DONE | c9d26c43aaa717af93d642f0d0c5c0e3a7845258 | clean review |
+| bd-3v0 | P5-03: Filter semantics per PRD | DONE | cf1297d36b63bd2e89a3179e9d8a9621fd50150d | clean review |
