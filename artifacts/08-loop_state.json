@@ -1,20 +1,20 @@
 {
-  "runId": "2026-01-31T22:18:28+01:00",
-  "updatedAt": "2026-01-31T22:18:28+01:00",
+  "runId": "2026-01-31T22:18:31+01:00",
+  "updatedAt": "2026-01-31T22:18:31+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-2zh",
-    "subject": "P8-02b: E2E fill — Table designer dependency + schema features",
-    "status": "completed",
-    "phase": "done",
+    "id": "bd-2v4",
+    "subject": "P8-02c: E2E fill — ERD FK create/edit/delete",
+    "status": "running",
+    "phase": "implement",
     "attempt": 1
   },
   "tools": {
     "implementer": "smart",
     "reviewer": "smart"
   },
-  "note": "all checks passed"
+  "note": "started"
 }

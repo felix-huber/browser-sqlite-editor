@@ -66,12 +66,9 @@ async function clearAllStorage(page: Page): Promise<void> {
 
 const DB_PREFIX = 'table-designer-db';
 
-// Counter for unique names per test run
-let dbCounter = 0;
-
-function createUniqueDbName() {
-  dbCounter++;
-  return `${DB_PREFIX}-${dbCounter}`;
+// Use a single database name per test suite, since we clear storage before each test
+function createDbName() {
+  return DB_PREFIX;
 }
 
 const BASE_SQL = `
@@ -94,17 +91,20 @@ CREATE TABLE generated_table (
 `;
 
 async function setupEmptyDb(page: Page) {
-  const dbName = createUniqueDbName();
+  const dbName = createDbName();
   await createAndOpenDatabase(page, dbName);
   await waitForReady(page);
   return dbName;
 }
 
 async function setupDbWithTables(page: Page) {
-  const dbName = createUniqueDbName();
+  const dbName = createDbName();
   await createAndOpenDatabase(page, dbName);
   await runSql(page, BASE_SQL);
   await waitForReady(page);
+  // Wait for the sidebar to show the created tables
+  await expandDatabaseInSidebar(page, dbName);
+  await expect(page.getByTestId('item-table-people')).toBeVisible({ timeout: 10000 });
   return dbName;
 }
 
@@ -137,6 +137,10 @@ function columnRows(page: Page) {
 test.describe('Table Designer - Create Mode', () => {
   let dbName = '';
   test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await clearAllStorage(page);
+    await page.reload();
+    await expect(page.locator('[data-testid="welcome-screen"]')).toBeVisible({ timeout: 15000 });
     dbName = await setupEmptyDb(page);
     await openDesigner(page);
   });
@@ -227,6 +231,7 @@ test.describe('Table Designer - Edit Mode', () => {
     await page.goto('/');
     await clearAllStorage(page);
     await page.reload();
+    await expect(page.locator('[data-testid="welcome-screen"]')).toBeVisible({ timeout: 15000 });
     dbName = await setupDbWithTables(page);
   });
 
@@ -313,6 +318,7 @@ test.describe('Table Designer - Read Only Mode', () => {
     await page.goto('/');
     await clearAllStorage(page);
     await page.reload();
+    await expect(page.locator('[data-testid="welcome-screen"]')).toBeVisible({ timeout: 15000 });
     const dbName = await setupDbWithTables(page);
     const reader = await page.context().newPage();
     await reader.goto('/');
@@ -333,6 +339,7 @@ test.describe('Table Designer Integration Checks', () => {
     await page.goto('/');
     await clearAllStorage(page);
     await page.reload();
+    await expect(page.locator('[data-testid="welcome-screen"]')).toBeVisible({ timeout: 15000 });
   });
 
   test('welcome screen visible on load', async ({ page }) => {
