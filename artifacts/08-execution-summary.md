@@ -40,3 +40,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-22t | P6-03: sqlite3_stmt_readonly check | FAILED | - | review/verification failure |
 | bd-1fx | P7-02: Offline guarantee verification | FAILED | - | review/verification failure |
 | bd-3l1 | P8-01: E2E coverage audit | FAILED | - | review/verification failure |
+| bd-orj | US-012: Sidebar filter behavior | DONE | 0e09b347dd40fed4085b38f227d4dd0f4773659b | clean review |
