@@ -1,16 +1,16 @@
 {
   "runId": "2026-01-31T14:44:10+01:00",
-  "updatedAt": "2026-01-31T14:55:24+01:00",
+  "updatedAt": "2026-01-31T14:59:45+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-3ge",
-    "subject": "P5-00: Shared SQL generation helpers",
+    "id": "bd-3v0",
+    "subject": "P5-03: Filter semantics per PRD",
     "status": "completed",
     "phase": "review",
-    "attempt": 3
+    "attempt": 1
   },
   "tools": {
     "implementer": "claude",

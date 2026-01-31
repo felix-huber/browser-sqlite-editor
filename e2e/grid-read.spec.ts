@@ -195,3 +195,69 @@ test.describe('Grid reading (real UI)', () => {
     await expect(page.getByTestId('status-bar')).toContainText('Ready');
   });
 });
+
+test.describe('E2E-US-007-05: Filter with special chars (literal match)', () => {
+  test.beforeEach(async ({ page }) => {
+    await createAndOpenDatabase(page, 'special-chars-db');
+    await runSqlStatements(page, [
+      `CREATE TABLE t (id INTEGER PRIMARY KEY, x TEXT)`,
+      // Insert rows with special LIKE characters
+      `INSERT INTO t (x) VALUES ('A%b'), ('A_b'), ('A\\q'), ('normal'), ('abc')`,
+    ]);
+    await waitForReady(page);
+    await openTable(page, 'special-chars-db', 't');
+  });
+
+  test('filter with % matches literal percent sign, not wildcard', async ({ page }) => {
+    await page.getByTestId('filter-icon-x').click();
+    await page.getByTestId('filter-operator-x').selectOption('contains');
+    await page.getByTestId('filter-value-x').fill('%');
+    await page.getByTestId('filter-apply-x').click();
+
+    const rows = page.locator('[data-row-index]');
+    await expect(rows).toHaveCount(1);
+    await expect(page.getByTestId('cell-0-x')).toHaveText('A%b');
+  });
+
+  test('filter with _ matches literal underscore, not single-char wildcard', async ({ page }) => {
+    await page.getByTestId('filter-icon-x').click();
+    await page.getByTestId('filter-operator-x').selectOption('contains');
+    await page.getByTestId('filter-value-x').fill('_');
+    await page.getByTestId('filter-apply-x').click();
+
+    const rows = page.locator('[data-row-index]');
+    await expect(rows).toHaveCount(1);
+    await expect(page.getByTestId('cell-0-x')).toHaveText('A_b');
+  });
+
+  test('filter with \\ matches literal backslash', async ({ page }) => {
+    await page.getByTestId('filter-icon-x').click();
+    await page.getByTestId('filter-operator-x').selectOption('contains');
+    await page.getByTestId('filter-value-x').fill('\\');
+    await page.getByTestId('filter-apply-x').click();
+
+    const rows = page.locator('[data-row-index]');
+    await expect(rows).toHaveCount(1);
+    await expect(page.getByTestId('cell-0-x')).toHaveText('A\\q');
+  });
+
+  test('filter is case-insensitive (john matches John, JOHN)', async ({ page }) => {
+    // Add mixed-case data for this test
+    await runSqlStatements(page, [
+      `INSERT INTO t (x) VALUES ('John'), ('JOHN'), ('john'), ('Johnny')`,
+    ]);
+    await waitForReady(page);
+
+    // Refresh the table view
+    await openTable(page, 'special-chars-db', 't');
+
+    await page.getByTestId('filter-icon-x').click();
+    await page.getByTestId('filter-operator-x').selectOption('contains');
+    await page.getByTestId('filter-value-x').fill('john');
+    await page.getByTestId('filter-apply-x').click();
+
+    // Should match John, JOHN, john, Johnny (4 rows)
+    const rows = page.locator('[data-row-index]');
+    await expect(rows).toHaveCount(4);
+  });
+});

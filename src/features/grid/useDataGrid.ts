@@ -329,25 +329,25 @@ export function generateFilterClause(filter: ColumnFilter): { sql: string; param
   const escapeClause = getEscapeClause();
 
   switch (filter.operator) {
-    // Text operators
+    // Text operators - all use lower() for case-insensitive matching
     case 'contains':
       return {
-        sql: `${escapedColumn} LIKE ? ${escapeClause}`,
+        sql: `lower(${escapedColumn}) LIKE lower(?) ${escapeClause}`,
         params: [`%${escapeLikePattern(String(filter.value ?? ''))}%`],
       };
     case 'equals':
       return {
-        sql: `${escapedColumn} = ?`,
+        sql: `lower(${escapedColumn}) = lower(?)`,
         params: [filter.value ?? ''],
       };
     case 'starts_with':
       return {
-        sql: `${escapedColumn} LIKE ? ${escapeClause}`,
+        sql: `lower(${escapedColumn}) LIKE lower(?) ${escapeClause}`,
         params: [`${escapeLikePattern(String(filter.value ?? ''))}%`],
       };
     case 'ends_with':
       return {
-        sql: `${escapedColumn} LIKE ? ${escapeClause}`,
+        sql: `lower(${escapedColumn}) LIKE lower(?) ${escapeClause}`,
         params: [`%${escapeLikePattern(String(filter.value ?? ''))}`],
       };
     case 'is_empty':

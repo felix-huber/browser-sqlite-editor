@@ -613,36 +613,46 @@ describe('escapeLike', () => {
 
 describe('generateFilterClause', () => {
   describe('text operators', () => {
-    it('generates contains LIKE pattern', () => {
+    it('generates case-insensitive contains LIKE pattern', () => {
       const filter: ColumnFilter = { column: 'name', operator: 'contains', value: 'Rock' };
       const result = generateFilterClause(filter);
 
-      expect(result.sql).toBe('"name" LIKE ? ESCAPE \'\\\'');
+      expect(result.sql).toBe('lower("name") LIKE lower(?) ESCAPE \'\\\'');
       expect(result.params).toEqual(['%Rock%']);
     });
 
-    it('generates equals condition', () => {
-      const filter: ColumnFilter = { column: 'status', operator: 'equals', value: 'active' };
+    it('generates case-insensitive equals condition', () => {
+      const filter: ColumnFilter = { column: 'status', operator: 'equals', value: 'Active' };
       const result = generateFilterClause(filter);
 
-      expect(result.sql).toBe('"status" = ?');
-      expect(result.params).toEqual(['active']);
+      expect(result.sql).toBe('lower("status") = lower(?)');
+      expect(result.params).toEqual(['Active']);
     });
 
-    it('generates starts_with LIKE pattern', () => {
+    it('generates case-insensitive starts_with LIKE pattern', () => {
       const filter: ColumnFilter = { column: 'name', operator: 'starts_with', value: 'John' };
       const result = generateFilterClause(filter);
 
-      expect(result.sql).toBe('"name" LIKE ? ESCAPE \'\\\'');
+      expect(result.sql).toBe('lower("name") LIKE lower(?) ESCAPE \'\\\'');
       expect(result.params).toEqual(['John%']);
     });
 
-    it('generates ends_with LIKE pattern', () => {
-      const filter: ColumnFilter = { column: 'email', operator: 'ends_with', value: '.com' };
+    it('generates case-insensitive ends_with LIKE pattern', () => {
+      const filter: ColumnFilter = { column: 'email', operator: 'ends_with', value: '.COM' };
       const result = generateFilterClause(filter);
 
-      expect(result.sql).toBe('"email" LIKE ? ESCAPE \'\\\'');
-      expect(result.params).toEqual(['%.com']);
+      expect(result.sql).toBe('lower("email") LIKE lower(?) ESCAPE \'\\\'');
+      expect(result.params).toEqual(['%.COM']);
+    });
+
+    it('case-insensitive filter matches john, John, JOHN', () => {
+      // Acceptance criteria: Filter 'john' matches 'John', 'JOHN' (case-insensitive)
+      const filter: ColumnFilter = { column: 'name', operator: 'contains', value: 'john' };
+      const result = generateFilterClause(filter);
+
+      // The SQL uses lower() on both sides, so 'john' will match 'John', 'JOHN', etc.
+      expect(result.sql).toBe('lower("name") LIKE lower(?) ESCAPE \'\\\'');
+      expect(result.params).toEqual(['%john%']);
     });
 
     it('generates is_empty condition', () => {
@@ -665,7 +675,17 @@ describe('generateFilterClause', () => {
       const filter: ColumnFilter = { column: 'name', operator: 'contains', value: '50% off_sale' };
       const result = generateFilterClause(filter);
 
+      expect(result.sql).toBe('lower("name") LIKE lower(?) ESCAPE \'\\\'');
       expect(result.params).toEqual(['%50\\% off\\_sale%']);
+    });
+
+    it('escapes backslash in LIKE patterns', () => {
+      // Acceptance criteria: Special chars %, _, \ are escaped using backslash
+      const filter: ColumnFilter = { column: 'path', operator: 'contains', value: 'C:\\Users' };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('lower("path") LIKE lower(?) ESCAPE \'\\\'');
+      expect(result.params).toEqual(['%C:\\\\Users%']);
     });
   });
 
@@ -725,6 +745,16 @@ describe('generateFilterClause', () => {
       expect(result.sql).toBe('"price" BETWEEN ? AND ?');
       expect(result.params).toEqual([10, 50]);
     });
+
+    it('numeric range [10, 20] filters with inclusive bounds', () => {
+      // Acceptance criteria: Numeric range [10, 20] filters rows where 10 <= col <= 20
+      // SQL BETWEEN is inclusive on both ends
+      const filter: ColumnFilter = { column: 'age', operator: 'between', value: 10, value2: 20 };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"age" BETWEEN ? AND ?');
+      expect(result.params).toEqual([10, 20]);
+    });
   });
 
   describe('null operators', () => {
@@ -741,6 +771,24 @@ describe('generateFilterClause', () => {
       const result = generateFilterClause(filter);
 
       expect(result.sql).toBe('"email" IS NOT NULL');
+      expect(result.params).toEqual([]);
+    });
+
+    it('NULL toggle includes NULL rows with is_null', () => {
+      // Acceptance criteria: NULL toggle includes/excludes NULL rows correctly
+      const filter: ColumnFilter = { column: 'optional_field', operator: 'is_null' };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"optional_field" IS NULL');
+      expect(result.params).toEqual([]);
+    });
+
+    it('NULL toggle excludes NULL rows with is_not_null', () => {
+      // Acceptance criteria: NULL toggle includes/excludes NULL rows correctly
+      const filter: ColumnFilter = { column: 'optional_field', operator: 'is_not_null' };
+      const result = generateFilterClause(filter);
+
+      expect(result.sql).toBe('"optional_field" IS NOT NULL');
       expect(result.params).toEqual([]);
     });
   });
@@ -761,13 +809,13 @@ describe('generateWhereClause', () => {
     expect(result.params).toEqual([]);
   });
 
-  it('generates single filter WHERE clause', () => {
+  it('generates single filter WHERE clause with case-insensitive text', () => {
     const filterState: FilterState = [
       { column: 'name', operator: 'contains', value: 'Rock' }
     ];
     const result = generateWhereClause(filterState);
 
-    expect(result.sql).toBe('WHERE "name" LIKE ? ESCAPE \'\\\'');
+    expect(result.sql).toBe('WHERE lower("name") LIKE lower(?) ESCAPE \'\\\'');
     expect(result.params).toEqual(['%Rock%']);
   });
 
@@ -778,7 +826,7 @@ describe('generateWhereClause', () => {
     ];
     const result = generateWhereClause(filterState);
 
-    expect(result.sql).toBe('WHERE "name" LIKE ? ESCAPE \'\\\' AND "price" > ?');
+    expect(result.sql).toBe('WHERE lower("name") LIKE lower(?) ESCAPE \'\\\' AND "price" > ?');
     expect(result.params).toEqual(['%Rock%', 10]);
   });
 
@@ -790,7 +838,7 @@ describe('generateWhereClause', () => {
     ];
     const result = generateWhereClause(filterState);
 
-    expect(result.sql).toBe('WHERE "status" = ? AND "age" >= ? AND "email" IS NOT NULL');
+    expect(result.sql).toBe('WHERE lower("status") = lower(?) AND "age" >= ? AND "email" IS NOT NULL');
     expect(result.params).toEqual(['active', 18]);
   });
 });
