@@ -391,7 +391,7 @@ describe('ExportDialog', () => {
       await user.click(screen.getByTestId('format-json'))
 
       expect(screen.getByTestId('blob-warning')).toBeInTheDocument()
-      expect(screen.getByText(/\{\"__blob_base64__\": \.\.\.\}/)).toBeInTheDocument()
+      expect(screen.getByText(/{"__blob_base64__": \.\.\.}/)).toBeInTheDocument()
     })
 
     it('hides BLOB warning when switching to SQL format', async () => {

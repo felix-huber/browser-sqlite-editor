@@ -81,8 +81,8 @@ function createMockStorageAdapter(options: {
     databaseData = createMockSQLiteData(1024),
     exportFileData = createMockSQLiteData(1024),
     readFails = false,
-    writeFails = false,
-    writeError = new DOMException('Quota exceeded', 'QuotaExceededError'),
+    _writeFails = false,
+    _writeError = new DOMException('Quota exceeded', 'QuotaExceededError'),
   } = options;
 
   return {

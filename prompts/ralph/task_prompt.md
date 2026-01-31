@@ -74,9 +74,9 @@ Determine if this is a testable task by checking tags:
 7. For each file: read first, edit carefully, preserve formatting
 8. Run verification commands
 9. **MANDATORY: Self-review with fresh eyes** (see below)
-10. If all verifications pass, output `<promise>TASK_COMPLETE</promise>`
+10. If all verifications pass, output `<promise>TASK_COMPLETE</promise>` followed by details
     (Do NOT commit or push - Ralph handles branching/commits/PRs)
-11. Append learnings to `progress.txt`
+    See "When Complete" section below for the exact output format.
 
 ## Critical Rules
 
@@ -97,20 +97,19 @@ If you encounter an error:
 ## 👀 Self-Review With Fresh Eyes (MANDATORY - 4 PASSES)
 
 Before outputting TASK_COMPLETE, you MUST review your own code with "fresh eyes".
-**This is a 4-pass loop: look → fix → look → fix → look → fix → look**
+**This is an iterative loop - do 4 passes minimum: look → fix → look → fix → look → fix → look → verify clean.**
 
-For each of the 4 passes:
+Each pass:
 1. **Re-read all code you wrote or modified** - look at it as if seeing it for the first time
 2. **Check for obvious bugs** - off-by-one errors, null checks, edge cases
 3. **Check for logic errors** - does the code actually do what it's supposed to?
 4. **Check for missing error handling** - what happens when things fail?
 5. **Check for inconsistencies** - naming, patterns, style matching existing code
 6. **Fix anything you find** - don't just note it, actually fix it
-7. **Go back to step 1** until you've done 4 complete passes
+7. **Go back to step 1** - repeat until pass 4 finds nothing to fix
 
-Why 4 passes? Each pass catches issues the previous missed. Planning tokens are 100x
-cheaper than fixing bugs in production. This self-review is cheap (same context) and
-catches many issues before the expensive external review.
+Only output TASK_COMPLETE after completing 4 passes. This self-review is cheap (same context)
+and catches many issues before the expensive external review.
 
 ## When Complete
 
@@ -123,8 +122,7 @@ If ALL acceptance criteria are met and verification passes, output exactly:
 Then include details:
 ```
 Files modified: [list]
-Commit: [hash]
-Learnings: [any gotchas discovered]
+LEARNING: [any gotchas discovered]
 ```
 
 If you cannot complete the task (unrecoverable error), output exactly:

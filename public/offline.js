@@ -1,3 +1,4 @@
+/* global window, document, navigator */
 (function() {
   'use strict';
 

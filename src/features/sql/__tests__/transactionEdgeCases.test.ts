@@ -12,7 +12,6 @@ import {
   createTransactionTracker,
   executeWithTransactionTracking,
   type TransactionTracker,
-  type TransactionWarning,
 } from '../transactionTracker';
 
 describe('Transaction Edge Cases', () => {

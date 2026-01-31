@@ -21,7 +21,6 @@ import {
   type RegistryEntry,
   type RegistryData,
   type StorageAdapter,
-  type WalVerificationResult,
 } from '../db-registry';
 
 // =============================================================================

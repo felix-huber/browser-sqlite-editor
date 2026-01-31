@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import type { Page, ConsoleMessage } from '@playwright/test';
+import type { ConsoleMessage } from '@playwright/test';
 import {
   createAndOpenDatabase,
   expandDatabaseInSidebar,

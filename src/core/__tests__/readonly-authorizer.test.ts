@@ -5,7 +5,7 @@
  * string-based SQL parsing with native SQLite checks per PRD requirements.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 // Define write action codes from SQLite (from sqlite-constants.js)
 const SQLITE_OK = 0;
