@@ -83,3 +83,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-325 | P8-02d: E2E fill — SQL editor transactions | DONE | 05edd5f26b8b89514b0d25cc5907669aaf8d7e98 | clean |
 | bd-1rm | P8-02e: E2E fill — Query builder deterministic output | FAILED | - | tool failed (rc=124) |
 | bd-1rm | P8-02e: E2E fill — Query builder deterministic output | DONE | 4078d6a1e72ab743ec50903198ecb9bd0494c509 | clean |
+| bd-xki | P8-02f: E2E fill — Grid edits + BLOB/generated columns | DONE | 4edd2d5442861e09ad8686e37b411462b8f39283 | clean |
