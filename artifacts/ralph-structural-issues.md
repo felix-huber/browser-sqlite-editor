@@ -289,3 +289,19 @@ Tracking structural issues observed during ralph.sh execution that may need code
   - Full E2E: Slow (~5-10 min), catches all regressions
   - Hybrid (recommended): Per-bead during development, full suite at end
 - **Current Behavior**: Full E2E only runs on GitHub CI after push
+
+---
+
+## Issue 27: Complex E2E Beads Timeout Before Claude Produces Output
+
+- **Symptom**: bd-8se and similar complex stress-test beads timeout with exit code 143 before producing any output
+- **Root Cause**: Claude CLI may be hanging during context loading or the bead task is too complex to implement in one shot
+- **Status**: 🔴 STRUCTURAL - Affects complex E2E test beads
+- **Impact**: Beads loop indefinitely without progress
+- **Affected Beads**:
+  - bd-8se: "Sidebar multi-DB switching stress" (switch DBs 20x with memory trend check)
+- **Workaround**: Break complex beads into simpler sub-tasks or implement manually
+- **Proposed Fix**:
+  1. Add heartbeat detection - if no output for X minutes, timeout
+  2. Break complex stress tests into smaller focused tests
+  3. Add progress indicators in bead prompts

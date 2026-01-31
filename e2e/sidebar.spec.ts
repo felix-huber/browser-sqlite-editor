@@ -1,5 +1,10 @@
-import { test, expect, type Page } from '@playwright/test';
-import { createAndOpenDatabase, runSqlStatements, waitForReady } from './helpers/app';
+import { test, expect, type Page, type CDPSession } from '@playwright/test';
+import {
+  createAndOpenDatabase,
+  runSqlStatements,
+  waitForReady,
+  dismissUnsavedPromptIfVisible,
+} from './helpers/app';
 
 /**
  * E2E Tests for Sidebar Navigator (US-012)
@@ -264,6 +269,199 @@ test.describe('Sidebar Navigator (US-012)', () => {
 
       // Should not show schema items for non-active db
       await expect(page.getByTestId('db-contents-active-db')).toBeHidden();
+    });
+  });
+
+  test.describe('E2E-US-012-02: Multi-DB switching stress test', () => {
+    /**
+     * E2E-US-012-02: Switch DBs 20x; non-active collapsed; no memory trend upward
+     *
+     * This test verifies:
+     * 1. Switching between databases 20 times works without errors
+     * 2. Non-active databases remain collapsed in the sidebar
+     * 3. No upward memory trend during repeated switches (Chromium-only)
+     */
+    test('switch DBs 20x; non-active collapsed; no memory trend upward', async ({
+      page,
+      browserName,
+    }) => {
+      // Stress test requires extended timeout
+      test.setTimeout(120000);
+      // Create 3 databases for switching between
+      const dbNames = ['stress-db-alpha', 'stress-db-beta', 'stress-db-gamma'];
+      const switchCount = 20;
+
+      // Create first database with a table
+      await createAndOpenDatabase(page, dbNames[0]);
+      await runSqlStatements(page, [
+        'CREATE TABLE alpha_data (id INTEGER PRIMARY KEY, val TEXT)',
+        "INSERT INTO alpha_data (val) VALUES ('alpha-value')",
+      ]);
+      await waitForReady(page);
+
+      // Create second database via header button
+      await page.getByTestId('header-new-database-button').click();
+      await expect(page.getByTestId('new-database-dialog')).toBeVisible();
+      await page.getByTestId('database-name-input').fill(dbNames[1]);
+      const createButton1 = page.getByTestId('create-button');
+      await expect(createButton1).toBeEnabled({ timeout: 5000 });
+      await createButton1.click();
+      await expect(page.getByTestId('new-database-dialog')).toBeHidden({ timeout: 5000 });
+      await waitForReady(page);
+      await runSqlStatements(page, [
+        'CREATE TABLE beta_data (id INTEGER PRIMARY KEY, val TEXT)',
+        "INSERT INTO beta_data (val) VALUES ('beta-value')",
+      ]);
+      await waitForReady(page);
+
+      // Create third database via header button
+      await page.getByTestId('header-new-database-button').click();
+      await expect(page.getByTestId('new-database-dialog')).toBeVisible();
+      await page.getByTestId('database-name-input').fill(dbNames[2]);
+      const createButton2 = page.getByTestId('create-button');
+      await expect(createButton2).toBeEnabled({ timeout: 5000 });
+      await createButton2.click();
+      await expect(page.getByTestId('new-database-dialog')).toBeHidden({ timeout: 5000 });
+      await waitForReady(page);
+      await runSqlStatements(page, [
+        'CREATE TABLE gamma_data (id INTEGER PRIMARY KEY, val TEXT)',
+        "INSERT INTO gamma_data (val) VALUES ('gamma-value')",
+      ]);
+      await waitForReady(page);
+
+      // Memory sampling setup (Chromium-only)
+      const heapSamples: number[] = [];
+      let cdpClient: CDPSession | null = null;
+
+      if (browserName === 'chromium') {
+        cdpClient = await page.context().newCDPSession(page);
+        await cdpClient.send('Performance.enable');
+        await cdpClient.send('HeapProfiler.enable');
+
+        // Force GC and get baseline
+        await cdpClient.send('HeapProfiler.collectGarbage');
+        const baselineMetrics = await cdpClient.send('Performance.getMetrics');
+        const baselineHeap =
+          baselineMetrics.metrics.find((m) => m.name === 'JSHeapUsedSize')?.value || 0;
+        heapSamples.push(baselineHeap / (1024 * 1024)); // Convert to MB
+      }
+
+      // Helper to sample heap
+      const sampleHeap = async () => {
+        if (cdpClient && browserName === 'chromium') {
+          const metrics = await cdpClient.send('Performance.getMetrics');
+          const heapUsed = metrics.metrics.find((m) => m.name === 'JSHeapUsedSize')?.value || 0;
+          heapSamples.push(heapUsed / (1024 * 1024));
+        }
+      };
+
+      // Helper to switch to a database
+      const switchToDatabase = async (dbName: string) => {
+        const dbRow = page.getByTestId(`db-row-${dbName}`);
+        await expect(dbRow).toBeVisible({ timeout: 5000 });
+        await dbRow.dblclick(); // Double-click to open/switch
+        await dismissUnsavedPromptIfVisible(page);
+        await waitForReady(page);
+      };
+
+      // Helper to verify non-active DBs are collapsed
+      const verifyNonActiveCollapsed = async (activeDbName: string) => {
+        for (const dbName of dbNames) {
+          if (dbName !== activeDbName) {
+            // Non-active DBs should be collapsed (name only, no schema tree visible)
+            const dbTree = page.getByTestId(`db-tree-${dbName}`);
+            const expanded = await dbTree.getAttribute('aria-expanded');
+            expect(
+              expanded,
+              `Non-active DB "${dbName}" should be collapsed but was expanded`
+            ).toBe('false');
+          }
+        }
+      };
+
+      // Perform 20 switches cycling through databases
+      for (let i = 0; i < switchCount; i++) {
+        const targetDb = dbNames[i % dbNames.length];
+        await switchToDatabase(targetDb);
+
+        // Sample heap every 4 switches
+        if (i % 4 === 0) {
+          await sampleHeap();
+        }
+
+        // Verify non-active DBs are collapsed (check every 5 switches to save time)
+        if (i % 5 === 0 || i === switchCount - 1) {
+          await verifyNonActiveCollapsed(targetDb);
+        }
+      }
+
+      // Final verification: all non-active databases should be collapsed
+      const finalActiveDb = dbNames[(switchCount - 1) % dbNames.length];
+      await verifyNonActiveCollapsed(finalActiveDb);
+
+      // Sample final heap after GC (Chromium-only)
+      if (cdpClient && browserName === 'chromium') {
+        await cdpClient.send('HeapProfiler.collectGarbage');
+        await sampleHeap();
+
+        // Analyze memory trend
+        // We consider it a pass if the final heap is not significantly higher than initial
+        // (allowing some variance for natural heap growth)
+        const initialHeap = heapSamples[0];
+        const finalHeap = heapSamples[heapSamples.length - 1];
+        const maxHeap = Math.max(...heapSamples);
+
+        console.log(
+          `Memory samples (MB): initial=${initialHeap.toFixed(2)}, ` +
+            `final=${finalHeap.toFixed(2)}, max=${maxHeap.toFixed(2)}`
+        );
+
+        // Calculate linear regression slope to detect upward trend
+        // Positive slope indicates memory leak
+        const n = heapSamples.length;
+        let sumX = 0,
+          sumY = 0,
+          sumXY = 0,
+          sumX2 = 0;
+        for (let i = 0; i < n; i++) {
+          sumX += i;
+          sumY += heapSamples[i];
+          sumXY += i * heapSamples[i];
+          sumX2 += i * i;
+        }
+        const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+
+        console.log(`Memory trend slope: ${slope.toFixed(4)} MB/sample`);
+
+        // Allow small positive slope (natural variance) but fail on significant upward trend
+        // Threshold: 0.5 MB per sample point would indicate a leak
+        const maxAllowedSlope = 0.5;
+        expect(
+          slope,
+          `Memory trend slope (${slope.toFixed(4)}) exceeds threshold (${maxAllowedSlope})`
+        ).toBeLessThan(maxAllowedSlope);
+
+        // Also verify final heap is not more than 2x initial (reasonable bound)
+        expect(
+          finalHeap,
+          `Final heap (${finalHeap.toFixed(2)}MB) is more than 2x initial (${initialHeap.toFixed(2)}MB)`
+        ).toBeLessThan(initialHeap * 2);
+
+        // Cleanup
+        await cdpClient.send('HeapProfiler.disable');
+        await cdpClient.send('Performance.disable');
+        await cdpClient.detach();
+      }
+
+      // Final functional assertion: the app is still responsive
+      // Switch one more time and verify we can still run SQL
+      await switchToDatabase(dbNames[0]);
+      await page.getByTestId('tab-sql').click();
+      await waitForReady(page);
+
+      // Verify the database is functional
+      const dbTree = page.getByTestId(`db-tree-${dbNames[0]}`);
+      await expect(dbTree).toBeVisible();
     });
   });
 });

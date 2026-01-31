@@ -89,3 +89,6 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-3sd | P8-02i: E2E fill — Export quota exceeded snapshot | DONE | bb52d1853989dc680203aa29be97f8f972d28ece | clean |
 | bd-3fq | Fix Lighthouse CI assertions to pass | DONE | f1c2ea647d59cbe12e53f91ef2dd6770ffb7685a | clean |
 | bd-2lw | P8-02j: E2E fill — OPFS multi-tab lock | DONE | 277f917d55cd649e65afdde9c20bbfd1b1a70ca3 | clean |
+| bd-8se | P8-02k: E2E fill — Sidebar multi-DB switching stress | FAILED | - | tool failed (rc=143) |
+| bd-8se | P8-02k: E2E fill — Sidebar multi-DB switching stress | FAILED | - | tool failed (rc=143) |
+| bd-8se | P8-02k: E2E fill — Sidebar multi-DB switching stress | FAILED | - | tool failed (rc=143) |
