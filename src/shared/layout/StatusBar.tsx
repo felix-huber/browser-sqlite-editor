@@ -168,7 +168,7 @@ export function StatusBar({
   // If no database is loaded, show minimal status
   if (!activeDbId) {
     return (
-      <footer
+      <div
         className="h-7 bg-white border-t border-navy-200 flex items-center px-4 text-xs shrink-0"
         data-testid="status-bar"
         role="status"
@@ -185,7 +185,7 @@ export function StatusBar({
         <div className="flex items-center gap-3 text-navy-500">
           <span className="font-mono">SQLite WASM</span>
         </div>
-      </footer>
+      </div>
     );
   }
 
@@ -253,7 +253,7 @@ export function StatusBar({
   };
 
   return (
-    <footer
+    <div
       className="h-7 bg-white border-t border-navy-200 flex items-center px-4 text-xs shrink-0"
       data-testid="status-bar"
       role="status"
@@ -381,7 +381,7 @@ export function StatusBar({
         {/* SQLite WASM label */}
         <span className="font-mono">SQLite WASM</span>
       </div>
-    </footer>
+    </div>
   );
 }
 
