@@ -28,3 +28,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-b05 | P2-00: Perf/memory regression harness | FAILED | - | review/verification failure |
 | bd-3lz | P1-07: Single-writer lock + read-only open enforcement | FAILED | - | review/verification failure |
 | bd-3t7 | P2-08: Size warnings on open + DB growth | FAILED | - | review/verification failure |
+| bd-1ig | P3-01a: DDL parser for CREATE TABLE (AST) | DONE | 7b429334e441f9d013cb3f02c4a8cd114a243bad | clean review |
