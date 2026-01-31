@@ -1,6 +1,6 @@
 {
-  "runId": "2026-01-31T22:18:31+01:00",
-  "updatedAt": "2026-01-31T22:18:31+01:00",
+  "runId": "2026-01-31T22:25:42+01:00",
+  "updatedAt": "2026-01-31T22:25:42+01:00",
   "mode": {
     "loop": true,
     "beads": true
@@ -8,13 +8,13 @@
   "task": {
     "id": "bd-2v4",
     "subject": "P8-02c: E2E fill — ERD FK create/edit/delete",
-    "status": "running",
-    "phase": "implement",
+    "status": "completed",
+    "phase": "done",
     "attempt": 1
   },
   "tools": {
     "implementer": "smart",
     "reviewer": "smart"
   },
-  "note": "started"
+  "note": "all checks passed"
 }
