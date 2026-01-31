@@ -53,40 +53,56 @@ function getTableBox(page: Page, tableName: string) {
   return page.locator('[data-testid="table-box"]', { hasText: tableName });
 }
 
-async function connectJoin(page: Page) {
+async function connectJoin(page: Page, maxRetries = 3) {
   const usersBox = getTableBox(page, 'users');
   const ordersBox = getTableBox(page, 'orders');
-  // Use force:true to avoid interception issues when tables overlap
-  await usersBox.hover({ force: true });
-  await ordersBox.hover({ force: true });
   const source = usersBox.locator('[data-handleid="id-source"]');
   const target = ordersBox.locator('[data-handleid="user_id-target"]');
-  await expect(source).toBeVisible();
-  await expect(target).toBeVisible();
-  await source.click({ force: true });
-  await target.click({ force: true });
-  await page.waitForTimeout(200);
-  if (await page.getByTestId('join-count').isVisible()) {
-    return;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    // Use force:true to avoid interception issues when tables overlap
+    await usersBox.hover({ force: true });
+    await ordersBox.hover({ force: true });
+    await expect(source).toBeVisible();
+    await expect(target).toBeVisible();
+
+    // Try click method first
+    await source.click({ force: true });
+    await target.click({ force: true });
+    await page.waitForTimeout(300);
+
+    if (await page.getByTestId('join-count').isVisible()) {
+      return;
+    }
+
+    // Fallback to drag method
+    const sourceBox = await source.boundingBox();
+    const targetBox = await target.boundingBox();
+    if (!sourceBox || !targetBox) {
+      if (attempt === maxRetries - 1) {
+        throw new Error('Join handles not visible for drag');
+      }
+      continue;
+    }
+
+    await page.mouse.move(
+      sourceBox.x + sourceBox.width / 2,
+      sourceBox.y + sourceBox.height / 2
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      targetBox.x + targetBox.width / 2,
+      targetBox.y + targetBox.height / 2,
+      { steps: 24 }
+    );
+    await page.waitForTimeout(100);
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+
+    if (await page.getByTestId('join-count').isVisible()) {
+      return;
+    }
   }
-  const sourceBox = await source.boundingBox();
-  const targetBox = await target.boundingBox();
-  if (!sourceBox || !targetBox) {
-    throw new Error('Join handles not visible for drag');
-  }
-  await page.mouse.move(
-    sourceBox.x + sourceBox.width / 2,
-    sourceBox.y + sourceBox.height / 2
-  );
-  await page.mouse.down();
-  await page.mouse.move(
-    targetBox.x + targetBox.width / 2,
-    targetBox.y + targetBox.height / 2,
-    { steps: 24 }
-  );
-  await page.waitForTimeout(100);
-  await page.mouse.up();
-  await page.waitForTimeout(200);
 }
 
 // =============================================================================
