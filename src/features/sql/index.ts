@@ -5,6 +5,16 @@ export {
   createEmptySchema,
   type AutocompleteSchema,
 } from './sqlAutocomplete'
+export {
+  byteOffsetToPosition,
+  computeErrorPosition,
+  splitStatementsWithSpans,
+  extractNearToken,
+  findTokenByteOffset,
+  mapSqlErrorPosition,
+  type Position,
+  type StatementSpan,
+} from './errorPosition'
 export { SqlEditorPanel } from './SqlEditorPanel'
 export type { SqlEditorPanelProps } from './SqlEditorPanel'
 export { QueryHistoryDropdown } from './QueryHistoryDropdown'

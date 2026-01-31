@@ -20,6 +20,7 @@ import {
   type StatementResult,
   type ResultType,
 } from './SqlResultsDisplay'
+import { mapSqlErrorPosition } from './errorPosition'
 import { QueryHistoryDropdown } from './QueryHistoryDropdown'
 import type { QueryResult, SqlError, QueryHistoryItem } from '../../types'
 
@@ -363,14 +364,17 @@ export function SqlEditorPanel({
       setExecutionTime(endTime - startTime)
 
       if (err instanceof Error) {
-        // Parse error for line number if available
-        const lineMatch = err.message.match(/line (\d+)/i)
-        const columnMatch = err.message.match(/column (\d+)/i)
+        // Get statement index from MultiExecError if available
+        const statementIndex = (err as { statementIndex?: number }).statementIndex
+
+        // Use byte-offset based position mapping for accurate line:column
+        const position = mapSqlErrorPosition(queryText, err.message, statementIndex)
 
         const error: SqlError = {
           message: err.message,
-          line: lineMatch ? parseInt(lineMatch[1], 10) : undefined,
-          column: columnMatch ? parseInt(columnMatch[1], 10) : undefined,
+          line: position.line,
+          column: position.column,
+          statementIndex,
         }
         setErrors([error])
       } else {

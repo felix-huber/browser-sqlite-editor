@@ -1,16 +1,16 @@
 {
   "runId": "2026-01-31T00:28:10+01:00",
-  "updatedAt": "2026-01-31T04:37:54+01:00",
+  "updatedAt": "2026-01-31T05:05:25+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-2kg",
-    "subject": "P2-06: JSON export BLOB placeholder format",
+    "id": "bd-zsh",
+    "subject": "P6-01: Error line/column mapping",
     "status": "completed",
     "phase": "review",
-    "attempt": 3
+    "attempt": 2
   },
   "tools": {
     "implementer": "claude",

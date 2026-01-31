@@ -35,3 +35,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-ts6 | P2-03: CSV type inference with leading zeros | DONE | 9d6bc9f0521328c92affda1cab00d3d76d2c9a30 | clean review |
 | bd-6sr | P2-04: JSON import flat-only enforcement | FAILED | - | review/verification failure |
 | bd-2kg | P2-06: JSON export BLOB placeholder format | DONE | 6e8110daeddaadbbb5d47a141e2318dc2d1dbd2f | clean review |
+| bd-4z7 | P2-07: Database export quota-exceeded handling | FAILED | - | review/verification failure |
