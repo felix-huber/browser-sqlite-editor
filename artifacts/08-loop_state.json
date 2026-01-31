@@ -1,20 +1,20 @@
 {
-  "runId": "2026-01-31T13:40:51+01:00",
-  "updatedAt": "2026-01-31T13:40:52+01:00",
+  "runId": "2026-01-31T13:42:28+01:00",
+  "updatedAt": "2026-01-31T13:50:58+01:00",
   "mode": {
-    "loop": false,
+    "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-2c2",
-    "subject": "P6-02: Transaction edge case handling",
-    "status": "running",
-    "phase": "implement",
-    "attempt": 1
+    "id": "bd-hws",
+    "subject": "P7-01: CSP implementation",
+    "status": "completed",
+    "phase": "review",
+    "attempt": 2
   },
   "tools": {
     "implementer": "claude",
     "reviewer": "claude"
   },
-  "note": "iteration 1"
+  "note": "clean review"
 }

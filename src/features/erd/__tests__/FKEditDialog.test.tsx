@@ -166,4 +166,44 @@ describe('FKEditDialog', () => {
     expect(optionValues).toContain('SET NULL')
     expect(optionValues).toContain('SET DEFAULT')
   })
+
+  describe('onDirtyChange callback', () => {
+    it('calls onDirtyChange with true when changes are made', () => {
+      const onDirtyChange = vi.fn()
+      render(<FKEditDialog {...defaultProps} onDirtyChange={onDirtyChange} />)
+
+      fireEvent.change(screen.getByTestId('fk-edit-on-delete-select'), {
+        target: { value: 'CASCADE' },
+      })
+
+      expect(onDirtyChange).toHaveBeenCalledWith(true)
+    })
+
+    it('calls onDirtyChange with false when changes are reverted', () => {
+      const onDirtyChange = vi.fn()
+      render(<FKEditDialog {...defaultProps} onDirtyChange={onDirtyChange} />)
+
+      // Make a change
+      fireEvent.change(screen.getByTestId('fk-edit-on-delete-select'), {
+        target: { value: 'CASCADE' },
+      })
+
+      onDirtyChange.mockClear()
+
+      // Revert the change
+      fireEvent.change(screen.getByTestId('fk-edit-on-delete-select'), {
+        target: { value: 'NO ACTION' },
+      })
+
+      expect(onDirtyChange).toHaveBeenCalledWith(false)
+    })
+
+    it('calls onDirtyChange with false when dialog opens', () => {
+      const onDirtyChange = vi.fn()
+      render(<FKEditDialog {...defaultProps} onDirtyChange={onDirtyChange} />)
+
+      // Should have been called with false on initial render
+      expect(onDirtyChange).toHaveBeenCalledWith(false)
+    })
+  })
 })

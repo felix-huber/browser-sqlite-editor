@@ -8,7 +8,7 @@
  * - Save/Cancel buttons
  */
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import type { ForeignKeyAction } from '../../types/index'
 
 export interface FKEditDialogProps {
@@ -29,6 +29,8 @@ export interface FKEditDialogProps {
   onSave: (onDelete: ForeignKeyAction, onUpdate: ForeignKeyAction) => void
   /** Called when cancel is clicked or dialog is closed */
   onClose: () => void
+  /** Called when dirty state changes */
+  onDirtyChange?: (dirty: boolean) => void
 }
 
 const FK_ACTIONS: ForeignKeyAction[] = [
@@ -45,17 +47,32 @@ export function FKEditDialog({
   isSaving,
   onSave,
   onClose,
+  onDirtyChange,
 }: FKEditDialogProps) {
   const [onDelete, setOnDelete] = useState<ForeignKeyAction>(fkInfo.onDelete)
   const [onUpdate, setOnUpdate] = useState<ForeignKeyAction>(fkInfo.onUpdate)
+  const prevDirtyRef = useRef(false)
 
   // Reset state when dialog opens with new FK
   useEffect(() => {
     if (isOpen) {
       setOnDelete(fkInfo.onDelete)
       setOnUpdate(fkInfo.onUpdate)
+      prevDirtyRef.current = false
+      onDirtyChange?.(false)
     }
-  }, [isOpen, fkInfo.onDelete, fkInfo.onUpdate])
+  }, [isOpen, fkInfo.onDelete, fkInfo.onUpdate, onDirtyChange])
+
+  const hasChanges =
+    onDelete !== fkInfo.onDelete || onUpdate !== fkInfo.onUpdate
+
+  // Report dirty state changes
+  useEffect(() => {
+    if (isOpen && hasChanges !== prevDirtyRef.current) {
+      prevDirtyRef.current = hasChanges
+      onDirtyChange?.(hasChanges)
+    }
+  }, [isOpen, hasChanges, onDirtyChange])
 
   const handleSave = useCallback(() => {
     onSave(onDelete, onUpdate)
@@ -69,9 +86,6 @@ export function FKEditDialog({
     },
     [isSaving, onClose]
   )
-
-  const hasChanges =
-    onDelete !== fkInfo.onDelete || onUpdate !== fkInfo.onUpdate
 
   if (!isOpen) {
     return null

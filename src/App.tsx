@@ -752,6 +752,13 @@ function App() {
     [setDirty]
   );
 
+  const handleERDDirtyChange = useCallback(
+    (dirty: boolean) => {
+      setDirty('erd', dirty);
+    },
+    [setDirty]
+  );
+
   // Render main content based on active view
   const renderMainContent = () => {
     if (!activeDbId) {
@@ -824,7 +831,10 @@ function App() {
       case 'erd':
         return (
           <Suspense fallback={lazyFallback}>
-            <ERDView onOpenDesigner={handleOpenDesignerFromErd} />
+            <ERDView
+              onOpenDesigner={handleOpenDesignerFromErd}
+              onDirtyChange={handleERDDirtyChange}
+            />
           </Suspense>
         );
       case 'query-builder':

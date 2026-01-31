@@ -26,10 +26,13 @@ import {
 import type { ForeignKeyEdgeData } from './ForeignKeyEdge';
 import { applyGeneratedExpressions } from '../../core/db/generated-columns';
 import type { ForeignKeyInfo, TableInfo } from '../../types';
+import { useERDDraftState } from './hooks/useERDDraftState';
 
 export interface ERDViewProps {
   /** Callback to open table designer */
   onOpenDesigner?: (tableName: string) => void;
+  /** Callback when dirty state changes */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 interface ToastMessage {
@@ -70,7 +73,7 @@ function buildTableDefinition(
   };
 }
 
-export function ERDView({ onOpenDesigner }: ERDViewProps) {
+export function ERDView({ onOpenDesigner, onDirtyChange }: ERDViewProps) {
   const client = useMemo(() => getWorkerClient(), []);
   const activeDbId = useDatabaseStore((state) => state.activeDbId);
   const isReadOnly = useIsReadOnly();
@@ -82,6 +85,14 @@ export function ERDView({ onOpenDesigner }: ERDViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [canvasKey, setCanvasKey] = useState(0);
+
+  // Draft state tracking for unsaved changes prompt
+  const {
+    isDirty,
+    setFKDialogDirty,
+    setPositionsDirty,
+    setPendingFKCreation,
+  } = useERDDraftState({ onDirtyChange });
 
   useEffect(() => {
     if (!toast) return;
@@ -311,10 +322,12 @@ export function ERDView({ onOpenDesigner }: ERDViewProps) {
       }
 
       if (changed) {
-        void saveLayout(activeDbId, layout);
+        await saveLayout(activeDbId, layout);
+        // Clear positions dirty after successful save
+        setPositionsDirty(false);
       }
     },
-    [activeDbId]
+    [activeDbId, setPositionsDirty]
   );
 
   const rebuildTableWithForeignKeys = useCallback(
@@ -499,6 +512,10 @@ export function ERDView({ onOpenDesigner }: ERDViewProps) {
           onDeleteFK={handleDeleteFK}
           onShowInDesigner={onOpenDesigner}
           onShowToast={(message, type) => setToast({ type, text: message })}
+          onFKDialogDirtyChange={setFKDialogDirty}
+          onPositionsDirtyChange={setPositionsDirty}
+          onPendingFKCreationChange={setPendingFKCreation}
+          isDirty={isDirty}
         />
       )}
     </div>

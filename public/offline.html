@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;">
   <title>Offline - SQLite Editor</title>
   <style>
     * {
@@ -98,23 +99,13 @@
     <h1>You're offline</h1>
     <p class="message">You appear to be offline. Connect to the internet to load the app.</p>
 
-    <button class="retry-button" onclick="handleRetry()">
+    <button class="retry-button" id="retry-btn">
       Retry Connection
     </button>
 
     <p class="hint">The page will automatically reload when you're back online.</p>
   </div>
 
-  <script>
-    function handleRetry() {
-      if (navigator.onLine) {
-        window.location.reload();
-      }
-    }
-
-    window.addEventListener('online', function() {
-      window.location.reload();
-    });
-  </script>
+  <script src="/offline.js"></script>
 </body>
 </html>

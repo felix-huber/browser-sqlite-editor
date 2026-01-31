@@ -87,6 +87,14 @@ interface ERDCanvasProps {
   onShowInDesigner?: (tableName: string) => void
   /** Called to show a toast message */
   onShowToast?: (message: string, type: 'error' | 'success' | 'warning') => void
+  /** Called when FK dialog dirty state changes */
+  onFKDialogDirtyChange?: (dirty: boolean) => void
+  /** Called when position dirty state changes */
+  onPositionsDirtyChange?: (dirty: boolean) => void
+  /** Called when pending FK creation state changes */
+  onPendingFKCreationChange?: (pending: boolean) => void
+  /** Whether ERD has draft changes (for showing indicator) */
+  isDirty?: boolean
 }
 
 /** Context menu state */
@@ -132,6 +140,10 @@ export function ERDCanvas({
   onDeleteFK,
   onShowInDesigner,
   onShowToast,
+  onFKDialogDirtyChange,
+  onPositionsDirtyChange,
+  onPendingFKCreationChange,
+  isDirty = false,
 }: ERDCanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
@@ -209,6 +221,7 @@ export function ERDCanvas({
       // Set pending FK and show dialog - hook will handle async validation
       setPendingFK(fkInfo)
       setShowFKDialog(true)
+      onPendingFKCreationChange?.(true)
 
       // Build table info for synchronous (legacy) validation
       const childTableInfo: TableInfo = {
@@ -243,7 +256,7 @@ export function ERDCanvas({
 
       setValidationErrors(errors)
     },
-    [isReadOnly, nodes, existingFKs, onShowToast]
+    [isReadOnly, nodes, existingFKs, onShowToast, onPendingFKCreationChange]
   )
 
   /**
@@ -302,9 +315,10 @@ export function ERDCanvas({
         setShowFKDialog(false)
         setPendingFK(null)
         setValidationErrors([])
+        onPendingFKCreationChange?.(false)
       }
     },
-    [pendingFK, onCreateFK, setEdges, onShowToast]
+    [pendingFK, onCreateFK, setEdges, onShowToast, onPendingFKCreationChange]
   )
 
   /**
@@ -315,8 +329,9 @@ export function ERDCanvas({
       setShowFKDialog(false)
       setPendingFK(null)
       setValidationErrors([])
+      onPendingFKCreationChange?.(false)
     }
-  }, [isCreating, isCreatingIndex])
+  }, [isCreating, isCreatingIndex, onPendingFKCreationChange])
 
   /**
    * Handle creating unique index from validation dialog
@@ -610,6 +625,15 @@ export function ERDCanvas({
   const handleNodesChange = useCallback(
     (changes: Parameters<typeof onNodesChange>[0]) => {
       onNodesChange(changes)
+
+      // Check if any position changes occurred
+      const hasPositionChange = changes.some(
+        (change) => change.type === 'position' && change.dragging === false
+      )
+      if (hasPositionChange) {
+        onPositionsDirtyChange?.(true)
+      }
+
       if (onNodesChangeCallback) {
         // Get updated nodes after changes are applied
         setNodes((currentNodes) => {
@@ -618,7 +642,7 @@ export function ERDCanvas({
         })
       }
     },
-    [onNodesChange, onNodesChangeCallback, setNodes]
+    [onNodesChange, onNodesChangeCallback, setNodes, onPositionsDirtyChange]
   )
 
   // Notify parent of edge changes
@@ -666,6 +690,16 @@ export function ERDCanvas({
           showInteractive
           position="bottom-right"
         />
+        {/* Draft indicator */}
+        {isDirty && (
+          <div
+            className="absolute top-4 left-4 z-10 flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700"
+            data-testid="erd-draft-indicator"
+          >
+            <span className="w-2 h-2 rounded-full bg-amber-500" />
+            <span>Unsaved changes</span>
+          </div>
+        )}
         <MiniMap
           nodeColor="#486581"
           maskColor="rgba(16, 42, 67, 0.7)"
@@ -718,6 +752,7 @@ export function ERDCanvas({
           isSaving={isSaving}
           onSave={handleSaveFK}
           onClose={handleCloseEditDialog}
+          onDirtyChange={onFKDialogDirtyChange}
         />
       )}
 
