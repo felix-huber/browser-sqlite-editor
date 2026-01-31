@@ -31,3 +31,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-1ig | P3-01a: DDL parser for CREATE TABLE (AST) | DONE | 7b429334e441f9d013cb3f02c4a8cd114a243bad | clean review |
 | bd-2gl | P3-01b: Apply column add/rename via AST patch | DONE | 09f2a8e821c32745291870e3573609a7f8a81d0e | clean review |
 | bd-1ok | P3-01c: Apply column drop via AST patch + copy plan | DONE | 207f0dc447c4b0afd1a3635b7be6f0aacafa9e47 | clean review |
+| bd-39f | P3-01d: Post-rebuild verification + guardrails | FAILED | - | review/verification failure |

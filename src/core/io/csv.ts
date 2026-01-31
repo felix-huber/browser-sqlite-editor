@@ -2,6 +2,9 @@ import Papa from 'papaparse'
 
 export type ColumnType = 'INTEGER' | 'REAL' | 'TEXT'
 
+// Sentinel value to mark quoted empty strings - chosen to be unlikely in real data
+const QUOTED_EMPTY_SENTINEL = '\x00__QUOTED_EMPTY__\x00'
+
 export interface ColumnDef {
   name: string
   type: ColumnType
@@ -24,6 +27,21 @@ function stripBOM(str: string): string {
     return str.slice(1)
   }
   return str
+}
+
+/**
+ * Pre-process CSV to mark quoted empty strings with a sentinel value.
+ * This allows us to distinguish "" (quoted empty → empty string) from
+ * bare empty (unquoted empty → NULL) after Papa Parse normalizes them.
+ */
+function markQuotedEmptyStrings(csv: string): string {
+  // Replace "" (quoted empty) with a sentinel value
+  // Pattern: match "" that is either at start, after delimiter, or after newline
+  // and followed by delimiter, newline, or end
+  return csv.replace(
+    /(?<=^|,|;|\t|\r?\n)""(?=,|;|\t|\r?\n|$)/g,
+    `"${QUOTED_EMPTY_SENTINEL}"`
+  )
 }
 
 /**
@@ -94,7 +112,21 @@ function isValidUtf8(bytes: Uint8Array): boolean {
 }
 
 /**
+ * Check if a numeric string has leading zeros that would be lost if parsed as a number.
+ * e.g., '007' has leading zeros, '7' does not, '0' does not, '0.5' does not
+ */
+function hasLeadingZeros(str: string): boolean {
+  // Must start with '0' and have more characters after
+  if (!str.startsWith('0') || str.length <= 1) return false
+  // '0.xxx' is a decimal, not leading zeros
+  if (str[1] === '.') return false
+  // '0' followed by another digit means leading zero
+  return true
+}
+
+/**
  * Infer column type from sample values
+ * - Values with leading zeros (e.g., '007') → TEXT (preserve formatting)
  * - If all non-empty values are integers → INTEGER
  * - If all non-empty values are numbers → REAL
  * - Otherwise → TEXT
@@ -113,6 +145,11 @@ function inferColumnType(values: unknown[]): ColumnType {
     const str = String(value).trim()
 
     if (str === '') continue
+
+    // Check for leading zeros - must be treated as TEXT to preserve formatting
+    if (hasLeadingZeros(str)) {
+      return 'TEXT'
+    }
 
     const num = Number(str)
     if (isNaN(num)) {
@@ -182,10 +219,13 @@ export function parseCSVString(csvString: string): ParseResult {
     return { columns: [], rows: [], hasHeader: true }
   }
 
+  // Pre-process to mark quoted empty strings
+  const markedString = markQuotedEmptyStrings(cleanString)
+
   // Parse with auto-detected delimiter
-  const result = Papa.parse<string[]>(cleanString, {
+  const result = Papa.parse<string[]>(markedString, {
     header: false,
-    skipEmptyLines: 'greedy',
+    skipEmptyLines: false, // Don't skip - we need to preserve rows with empty fields
     dynamicTyping: false, // Keep as strings for now, we'll do our own type inference
   })
 
@@ -193,7 +233,10 @@ export function parseCSVString(csvString: string): ParseResult {
     throw new Error(`CSV parse error: ${result.errors[0]?.message || 'Unknown error'}`)
   }
 
-  const rows = result.data as string[][]
+  const rawRows = result.data as string[][]
+
+  // Filter out completely empty rows (rows where all cells are empty strings)
+  const rows = rawRows.filter(row => row.some(cell => cell !== ''))
 
   if (rows.length === 0) {
     return { columns: [], rows: [], hasHeader: true }
@@ -218,7 +261,11 @@ export function parseCSVString(csvString: string): ParseResult {
   // Build raw headers
   const rawHeaders: { name: string; originalName: string }[] = []
   for (let i = 0; i < maxWidth; i++) {
-    const rawHeader = hasHeader ? (headerRow[i] ?? '') : ''
+    let rawHeader = hasHeader ? (headerRow[i] ?? '') : ''
+    // Strip sentinel from headers - quoted empty header should become column_N
+    if (rawHeader === QUOTED_EMPTY_SENTINEL) {
+      rawHeader = ''
+    }
     rawHeaders.push(normalizeHeader(rawHeader, i))
   }
 
@@ -243,6 +290,12 @@ export function parseCSVString(csvString: string): ParseResult {
   // Convert data rows to appropriate types
   const typedRows = dataRows.map(row =>
     row.map((cell, colIndex) => {
+      // Handle quoted empty string sentinel → empty string
+      if (cell === QUOTED_EMPTY_SENTINEL) {
+        return ''
+      }
+
+      // Unquoted empty → NULL
       if (cell === '' || cell === null || cell === undefined) {
         return null
       }
@@ -285,7 +338,7 @@ function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
 }
 
 /**
- * Parse CSV from File using streaming for large files.
+ * Parse CSV from File using streaming.
  * Validates UTF-8 encoding before parsing.
  */
 export async function parseCSVFile(file: File): Promise<ParseResult> {
@@ -296,34 +349,39 @@ export async function parseCSVFile(file: File): Promise<ParseResult> {
     throw new Error('CSV file contains non-UTF-8 characters. Please convert to UTF-8 encoding before importing.')
   }
 
+  // Decode and preprocess for quoted empty strings
+  const decoder = new TextDecoder('utf-8')
+  const csvString = stripBOM(decoder.decode(bytes))
+
+  if (!csvString.trim()) {
+    return { columns: [], rows: [], hasHeader: true }
+  }
+
+  // Pre-process to mark quoted empty strings
+  const markedString = markQuotedEmptyStrings(csvString)
+
   return new Promise((resolve, reject) => {
     const rows: string[][] = []
-    let isFirstChunk = true
 
-    Papa.parse<string[]>(file, {
+    Papa.parse<string[]>(markedString, {
       header: false,
-      skipEmptyLines: 'greedy',
+      skipEmptyLines: false,
       dynamicTyping: false,
-      chunk(results) {
-        // Strip BOM from first cell of first chunk
-        if (isFirstChunk && results.data.length > 0) {
-          const firstRow = results.data[0]
-          if (firstRow && firstRow.length > 0 && typeof firstRow[0] === 'string') {
-            firstRow[0] = stripBOM(firstRow[0])
-          }
-          isFirstChunk = false
-        }
+      chunk(results: Papa.ParseResult<string[]>) {
         rows.push(...(results.data as string[][]))
       },
       complete() {
-        if (rows.length === 0) {
+        // Filter out completely empty rows
+        const filteredRows = rows.filter(row => row.some(cell => cell !== ''))
+
+        if (filteredRows.length === 0) {
           resolve({ columns: [], rows: [], hasHeader: true })
           return
         }
 
         // Normalize row lengths to max width
-        const maxWidth = Math.max(...rows.map(r => r.length))
-        const normalizedRows = rows.map(row => {
+        const maxWidth = Math.max(...filteredRows.map(r => r.length))
+        const normalizedRows = filteredRows.map(row => {
           const normalized = [...row]
           while (normalized.length < maxWidth) {
             normalized.push('')
@@ -340,7 +398,11 @@ export async function parseCSVFile(file: File): Promise<ParseResult> {
         // Build raw headers
         const rawHeaders: { name: string; originalName: string }[] = []
         for (let i = 0; i < maxWidth; i++) {
-          const rawHeader = hasHeader ? (headerRow[i] ?? '') : ''
+          let rawHeader = hasHeader ? (headerRow[i] ?? '') : ''
+          // Strip sentinel from headers - quoted empty header should become column_N
+          if (rawHeader === QUOTED_EMPTY_SENTINEL) {
+            rawHeader = ''
+          }
           rawHeaders.push(normalizeHeader(rawHeader, i))
         }
 
@@ -365,6 +427,12 @@ export async function parseCSVFile(file: File): Promise<ParseResult> {
         // Convert data rows to appropriate types
         const typedRows = dataRows.map(row =>
           row.map((cell, colIndex) => {
+            // Handle quoted empty string sentinel → empty string
+            if (cell === QUOTED_EMPTY_SENTINEL) {
+              return ''
+            }
+
+            // Unquoted empty → NULL
             if (cell === '' || cell === null || cell === undefined) {
               return null
             }
@@ -388,7 +456,7 @@ export async function parseCSVFile(file: File): Promise<ParseResult> {
 
         resolve({ columns, rows: typedRows, hasHeader })
       },
-      error(error) {
+      error(error: Error) {
         reject(new Error(`CSV parse error: ${error.message}`))
       },
     })

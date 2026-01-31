@@ -59,6 +59,33 @@ Bob\t25\tLA`
       expect(result.rows[0][1]).toBe(100)
     })
 
+    it('should infer TEXT type for values with leading zeros', () => {
+      const csv = `code,id
+007,1
+001,2
+123,3`
+
+      const result = parseCSVString(csv)
+
+      expect(result.columns[0].type).toBe('TEXT')
+      expect(result.columns[1].type).toBe('INTEGER')
+      expect(result.rows[0][0]).toBe('007')
+      expect(result.rows[0][1]).toBe(1)
+      expect(result.rows[1][0]).toBe('001')
+    })
+
+    it('should distinguish empty quoted field from empty unquoted field', () => {
+      // CSV: unquoted empty field, quoted empty field
+      // Per PRD: unquoted empty => NULL, quoted empty "" => empty string
+      const csv = `a,b
+,""`
+
+      const result = parseCSVString(csv)
+
+      expect(result.rows[0][0]).toBe(null)  // unquoted empty => NULL
+      expect(result.rows[0][1]).toBe('')     // quoted empty "" => empty string
+    })
+
     it('should infer REAL type for decimal columns', () => {
       const csv = `item,price
 Apple,1.99
