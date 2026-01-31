@@ -1112,3 +1112,251 @@ test.describe('UI Import Tests', () => {
     });
   });
 });
+
+// =============================================================================
+// CSV/JSON Import Rules E2E Tests
+// =============================================================================
+// These tests verify the CSV/JSON import functionality per E2E coverage matrix
+
+import { createAndOpenDatabase, runSql, openTable, waitForReady } from './helpers/app';
+
+function writeTempFile(filename: string, content: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-editor-'));
+  const filePath = path.join(dir, filename);
+  fs.writeFileSync(filePath, content, 'utf8');
+  return filePath;
+}
+
+async function openImportDialogWithFile(page: import('@playwright/test').Page, filePath: string) {
+  await page.getByTestId('import-data-input').setInputFiles(filePath);
+  await expect(page.getByTestId('import-dialog')).toBeVisible({ timeout: 10000 });
+  await expect(page.getByTestId('import-preview')).toBeVisible({ timeout: 10000 });
+}
+
+async function saveDownloadText(download: import('@playwright/test').Download, ext: string): Promise<string> {
+  const filePath = path.join(os.tmpdir(), `sqlite-export-${Date.now()}.${ext}`);
+  await download.saveAs(filePath);
+  return fs.readFileSync(filePath, 'utf8');
+}
+
+test.describe('CSV/JSON Import Rules', () => {
+  const DB_NAME = 'import-rules-db';
+
+  test.beforeEach(async ({ page }) => {
+    await createAndOpenDatabase(page, DB_NAME);
+    await waitForReady(page);
+  });
+
+  /**
+   * E2E-US-008-01: Import 100-row CSV; verify count and headers
+   *
+   * Acceptance criteria:
+   * - Import a CSV with 100 data rows
+   * - Verify all 100 rows are imported
+   * - Verify column names match the CSV headers
+   */
+  test('E2E-US-008-01: import 100-row CSV; column names match', async ({ page }) => {
+    // Generate a 100-row CSV with specific column headers
+    const headers = ['id', 'product_name', 'category', 'price', 'in_stock'];
+    const rows: string[] = [headers.join(',')];
+
+    for (let i = 1; i <= 100; i++) {
+      const row = [
+        i.toString(),
+        `Product ${i}`,
+        i % 3 === 0 ? 'Electronics' : i % 3 === 1 ? 'Clothing' : 'Food',
+        (i * 10.99).toFixed(2),
+        i % 2 === 0 ? '1' : '0',
+      ];
+      rows.push(row.join(','));
+    }
+
+    const csvContent = rows.join('\n');
+    const csvPath = writeTempFile('products_100.csv', csvContent);
+
+    // Open import dialog and import the file
+    await openImportDialogWithFile(page, csvPath);
+    await page.getByTestId('table-name-input').fill('products');
+    await page.getByTestId('import-button').click();
+    await expect(page.getByTestId('import-dialog')).toBeHidden({ timeout: 30000 });
+
+    // Verify row count via SQL
+    await runSql(page, 'SELECT COUNT(*) AS count FROM products');
+    await expect(page.getByTestId('cell-0-count')).toHaveText('100');
+
+    // Verify column names match by selecting all columns explicitly
+    // This will fail if any column doesn't exist with the expected name
+    await runSql(page, 'SELECT id, product_name, category, price, in_stock FROM products LIMIT 1');
+    // If the query succeeds, all columns exist with the expected names
+    // Verify the first row data is present
+    await expect(page.getByTestId('cell-0-id')).toHaveText('1');
+    await expect(page.getByTestId('cell-0-product_name')).toHaveText('Product 1');
+
+    // Verify sample data integrity - row 50
+    await runSql(page, 'SELECT * FROM products WHERE id = 50');
+    await expect(page.getByTestId('cell-0-product_name')).toHaveText('Product 50');
+    await expect(page.getByTestId('cell-0-category')).toHaveText('Food');
+
+    // Verify last row
+    await runSql(page, 'SELECT * FROM products ORDER BY id DESC LIMIT 1');
+    await expect(page.getByTestId('cell-0-id')).toHaveText('100');
+    await expect(page.getByTestId('cell-0-product_name')).toHaveText('Product 100');
+
+    // Open table in grid view to verify column headers are visible
+    await openTable(page, DB_NAME, 'products');
+    // Verify first row data in grid
+    await expect(page.getByTestId('cell-0-id')).toHaveText('1');
+    await expect(page.getByTestId('cell-0-product_name')).toHaveText('Product 1');
+    await expect(page.getByTestId('cell-0-category')).toHaveText('Clothing');
+  });
+
+  /**
+   * E2E-US-008-02: NULL vs empty-string round-trip via export+re-import
+   *
+   * Acceptance criteria:
+   * - Create a table with NULL and empty string values
+   * - Export to CSV
+   * - Re-import the CSV
+   * - Verify NULL remains NULL and empty string remains empty string
+   *
+   * Implementation note:
+   * - Unquoted empty cells in CSV → NULL
+   * - Quoted empty cells ("") in CSV → empty string
+   */
+  test('E2E-US-008-02: NULL vs empty-string round-trip via export+re-import', async ({ page }) => {
+    // Create a table with explicit NULL and empty string values
+    await runSql(page, `
+      CREATE TABLE null_test (
+        id INTEGER PRIMARY KEY,
+        name TEXT,
+        notes TEXT
+      )
+    `);
+
+    // Insert rows with different NULL/empty patterns
+    // Row 1: has value, has value
+    // Row 2: NULL, has value
+    // Row 3: has value, empty string
+    // Row 4: NULL, empty string
+    // Row 5: empty string, NULL
+    await runSql(page, `
+      INSERT INTO null_test (id, name, notes) VALUES
+        (1, 'Alice', 'Has notes'),
+        (2, NULL, 'No name'),
+        (3, 'Bob', ''),
+        (4, NULL, ''),
+        (5, '', NULL)
+    `);
+
+    // Open the table and export to CSV
+    await openTable(page, DB_NAME, 'null_test');
+    await page.getByTestId('table-export-button').click();
+    await expect(page.getByTestId('export-dialog')).toBeVisible();
+
+    // Download CSV
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByTestId('download-button').click();
+    const download = await downloadPromise;
+    const csvContent = await saveDownloadText(download, 'csv');
+
+    // Close the export dialog
+    await page.getByTestId('close-button').click();
+
+    // Verify the CSV contains the expected NULL vs empty distinctions:
+    // - NULL should be unquoted empty
+    // - Empty string should be quoted ""
+    // Remove BOM for comparison
+    const cleanCsv = csvContent.replace(/^\uFEFF/, '');
+
+    // Check that we have both unquoted empty (NULL) and quoted empty ("") patterns
+    // Row with NULL name should have: ,No name (unquoted empty before comma)
+    // Row with empty string notes should have: ,"" (quoted empty)
+    expect(cleanCsv).toContain('""'); // Should have quoted empty strings
+
+    // Save the CSV to a temp file and re-import
+    const reImportPath = writeTempFile('null_test_reimport.csv', csvContent);
+
+    // Import into a new table
+    await openImportDialogWithFile(page, reImportPath);
+    await page.getByTestId('table-name-input').fill('null_test_reimported');
+    await page.getByTestId('import-button').click();
+    await expect(page.getByTestId('import-dialog')).toBeHidden({ timeout: 20000 });
+
+    // Verify the data round-tripped correctly
+    // Check that NULL values are preserved as NULL
+    await runSql(page, 'SELECT id, name FROM null_test_reimported WHERE name IS NULL ORDER BY id');
+    // Should get rows 2 and 4 (NULL names)
+    await expect(page.getByTestId('cell-0-id')).toHaveText('2');
+    await expect(page.getByTestId('cell-1-id')).toHaveText('4');
+
+    // Check that empty strings are preserved as empty strings (not NULL)
+    await runSql(page, "SELECT id, name FROM null_test_reimported WHERE name = '' ORDER BY id");
+    // Should get row 5 (empty string name)
+    await expect(page.getByTestId('cell-0-id')).toHaveText('5');
+
+    // Check notes column similarly
+    await runSql(page, 'SELECT id, notes FROM null_test_reimported WHERE notes IS NULL ORDER BY id');
+    // Should get row 5 (NULL notes)
+    await expect(page.getByTestId('cell-0-id')).toHaveText('5');
+
+    await runSql(page, "SELECT id, notes FROM null_test_reimported WHERE notes = '' ORDER BY id");
+    // Should get rows 3 and 4 (empty string notes)
+    await expect(page.getByTestId('cell-0-id')).toHaveText('3');
+    await expect(page.getByTestId('cell-1-id')).toHaveText('4');
+
+    // Final verification: count total rows
+    await runSql(page, 'SELECT COUNT(*) AS count FROM null_test_reimported');
+    await expect(page.getByTestId('cell-0-count')).toHaveText('5');
+  });
+
+  /**
+   * E2E-US-008-06: Header normalization; verify column naming
+   *
+   * Acceptance criteria:
+   * - Import CSV with problematic headers:
+   *   - Empty header ("") → generates column_N
+   *   - "Name" and "name" (case collision) → "Name", "name_1"
+   *   - Reserved word "select" → kept as "select" (quoted in SQL)
+   * - Verify the normalized column names in the imported table
+   */
+  test('E2E-US-008-06: header normalization ("", Name, name, select)', async ({ page }) => {
+    // Create CSV with problematic headers:
+    // - Empty header (should become column_1)
+    // - "Name" (first occurrence, kept)
+    // - "name" (case-insensitive collision, becomes "name_1")
+    // - "select" (SQL reserved word, should be kept but quoted in SQL)
+    const csvContent = `,Name,name,select
+value1,Alice,alice_duplicate,red
+value2,Bob,bob_duplicate,blue
+value3,Charlie,charlie_duplicate,green`;
+
+    const csvPath = writeTempFile('header_edge_cases.csv', csvContent);
+
+    // Open import dialog and import
+    await openImportDialogWithFile(page, csvPath);
+    await page.getByTestId('table-name-input').fill('header_test');
+    await page.getByTestId('import-button').click();
+    await expect(page.getByTestId('import-dialog')).toBeHidden({ timeout: 20000 });
+
+    // Verify column names by selecting with explicit names
+    // This query will fail if the columns don't exist with the expected normalized names
+    // The "select" column requires quoting due to being a reserved word
+    await runSql(page, 'SELECT column_1, "Name", name_1, "select" FROM header_test ORDER BY column_1');
+
+    // Check first row values - verifying columns exist and have correct data
+    await expect(page.getByTestId('cell-0-column_1')).toHaveText('value1');
+    await expect(page.getByTestId('cell-0-Name')).toHaveText('Alice');
+    await expect(page.getByTestId('cell-0-name_1')).toHaveText('alice_duplicate');
+    await expect(page.getByTestId('cell-0-select')).toHaveText('red');
+
+    // Check second row to further verify
+    await expect(page.getByTestId('cell-1-column_1')).toHaveText('value2');
+    await expect(page.getByTestId('cell-1-Name')).toHaveText('Bob');
+    await expect(page.getByTestId('cell-1-name_1')).toHaveText('bob_duplicate');
+    await expect(page.getByTestId('cell-1-select')).toHaveText('blue');
+
+    // Verify row count
+    await runSql(page, 'SELECT COUNT(*) AS count FROM header_test');
+    await expect(page.getByTestId('cell-0-count')).toHaveText('3');
+  });
+});
