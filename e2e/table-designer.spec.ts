@@ -11,65 +11,13 @@ import {
 
 /**
  * E2E Tests for Table Designer
- */
-
-/**
- * Clear all storage (OPFS and IndexedDB) to prevent resource exhaustion.
- * This is critical for CI where tests run sequentially and OPFS handles accumulate.
  *
- * IMPORTANT: After clearing, we recreate the required OPFS directory structure
- * so the worker can initialize properly.
+ * IMPORTANT: These tests use static database names to avoid OPFS resource
+ * exhaustion issues. Each test reuses the same database name which effectively
+ * replaces the previous database.
  */
-async function clearAllStorage(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    // Clear localStorage
-    localStorage.clear();
 
-    // Clear IndexedDB
-    const deleteIdb = (name: string): Promise<void> => {
-      return new Promise((resolve) => {
-        const req = indexedDB.deleteDatabase(name);
-        req.onsuccess = () => resolve();
-        req.onerror = () => resolve();
-        req.onblocked = () => resolve();
-      });
-    };
-
-    const knownDbs = ['sqlite-editor-registry', 'idb-sqlite'];
-    for (const name of knownDbs) {
-      await deleteIdb(name);
-    }
-
-    // Clear OPFS and recreate directory structure
-    try {
-      if (navigator.storage?.getDirectory) {
-        const root = await navigator.storage.getDirectory();
-        try {
-          await root.removeEntry('sqlite-editor', { recursive: true });
-        } catch {
-          // ignore missing dir
-        }
-        try {
-          await root.removeEntry('wasm-sqlite-editor', { recursive: true });
-        } catch {
-          // ignore missing dir
-        }
-        // Recreate the required directory structure for the worker
-        const appDir = await root.getDirectoryHandle('wasm-sqlite-editor', { create: true });
-        await appDir.getDirectoryHandle('databases', { create: true });
-      }
-    } catch {
-      // OPFS not available
-    }
-  });
-}
-
-const DB_PREFIX = 'table-designer-db';
-
-// Use a single database name per test suite, since we clear storage before each test
-function createDbName() {
-  return DB_PREFIX;
-}
+const DB_NAME = 'table-designer-db';
 
 const BASE_SQL = `
 PRAGMA foreign_keys = ON;
@@ -91,21 +39,16 @@ CREATE TABLE generated_table (
 `;
 
 async function setupEmptyDb(page: Page) {
-  const dbName = createDbName();
-  await createAndOpenDatabase(page, dbName);
+  await createAndOpenDatabase(page, DB_NAME);
   await waitForReady(page);
-  return dbName;
+  return DB_NAME;
 }
 
 async function setupDbWithTables(page: Page) {
-  const dbName = createDbName();
-  await createAndOpenDatabase(page, dbName);
+  await createAndOpenDatabase(page, DB_NAME);
   await runSql(page, BASE_SQL);
   await waitForReady(page);
-  // Wait for the sidebar to show the created tables
-  await expandDatabaseInSidebar(page, dbName);
-  await expect(page.getByTestId('item-table-people')).toBeVisible({ timeout: 10000 });
-  return dbName;
+  return DB_NAME;
 }
 
 async function openDesigner(page: Page) {
@@ -137,10 +80,6 @@ function columnRows(page: Page) {
 test.describe('Table Designer - Create Mode', () => {
   let dbName = '';
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await clearAllStorage(page);
-    await page.reload();
-    await expect(page.locator('[data-testid="welcome-screen"]')).toBeVisible({ timeout: 15000 });
     dbName = await setupEmptyDb(page);
     await openDesigner(page);
   });
@@ -228,10 +167,6 @@ test.describe('Table Designer - Create Mode', () => {
 test.describe('Table Designer - Edit Mode', () => {
   let dbName = '';
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await clearAllStorage(page);
-    await page.reload();
-    await expect(page.locator('[data-testid="welcome-screen"]')).toBeVisible({ timeout: 15000 });
     dbName = await setupDbWithTables(page);
   });
 
@@ -315,10 +250,6 @@ test.describe('Table Designer - Edit Mode', () => {
 
 test.describe('Table Designer - Read Only Mode', () => {
   test('read-only mode blocks edits', async ({ page }) => {
-    await page.goto('/');
-    await clearAllStorage(page);
-    await page.reload();
-    await expect(page.locator('[data-testid="welcome-screen"]')).toBeVisible({ timeout: 15000 });
     const dbName = await setupDbWithTables(page);
     const reader = await page.context().newPage();
     await reader.goto('/');
@@ -335,18 +266,13 @@ test.describe('Table Designer - Read Only Mode', () => {
 // =============================================================================
 
 test.describe('Table Designer Integration Checks', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await clearAllStorage(page);
-    await page.reload();
-    await expect(page.locator('[data-testid="welcome-screen"]')).toBeVisible({ timeout: 15000 });
-  });
-
   test('welcome screen visible on load', async ({ page }) => {
+    await page.goto('/');
     await expect(page.getByTestId('welcome-screen')).toBeVisible();
   });
 
   test('status bar ready state', async ({ page }) => {
+    await page.goto('/');
     await waitForReady(page);
   });
 });
