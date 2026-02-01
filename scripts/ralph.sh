@@ -1416,9 +1416,9 @@ _exec_with_timeout() {
   # Execute with direct file redirection (avoids PTY buffering issues)
   # Output goes to tmp_output, which is later copied to log_file
   if [[ -n "$timeout_cmd" ]]; then
-    "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" > "$tmp_output" 2>&1
+    "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" < /dev/null > "$tmp_output" 2>&1
   else
-    "${cmd[@]}" > "$tmp_output" 2>&1
+    "${cmd[@]}" < /dev/null > "$tmp_output" 2>&1
   fi
   _EXEC_RC=$?
 

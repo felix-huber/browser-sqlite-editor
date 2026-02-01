@@ -359,8 +359,9 @@ Tracking structural issues observed during ralph.sh execution that may need code
   - Claude CLI **backgrounds requests** when stdout/stderr are redirected to files
   - When stdin/stdout are not TTY, claude spawns async task and returns immediately with task ID
   - Ralph's timeout kills the process (exit 143) before any actual output
-  - **FIX**: Add `--no-session-persistence` flag to claude command (line 1478)
-  - This forces synchronous execution and ensures output goes directly to stdout/stderr
+  - **FIX 1**: Add `--no-session-persistence` flag to claude command (line 1478)
+  - **FIX 2**: Add `< /dev/null` to stdin redirect (lines 1419, 1421) to prevent CLI waiting for input
+  - Combined fixes ensure synchronous execution and proper stdin/stdout handling
 
 ---
 
