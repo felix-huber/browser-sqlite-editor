@@ -68,16 +68,20 @@ test.describe('Grid reading (real UI)', () => {
   test('sorting toggles and updates visible order', async ({ page }) => {
     await openTable(page, DB_NAME, 'items');
 
-    const priceHeader = page.getByRole('columnheader', { name: /price/i });
+    // Click on the column name text (span.truncate), not the filter icon
+    const priceHeader = page.getByRole('columnheader', { name: /price/i }).locator('span.truncate');
     await priceHeader.click();
+    // Wait for sort indicator to appear (conditionally rendered when sortDirection is set)
+    await page.waitForSelector('[data-testid="sort-indicator-price"]');
     await expect(page.getByTestId('sort-indicator-price')).toBeVisible();
 
     const firstPrice = page.getByTestId('cell-0-price');
     await expect(firstPrice).toHaveText('3');
 
     await priceHeader.click();
-    const sortIndicator = page.getByTestId('sort-indicator-price');
-    await expect(sortIndicator).toBeVisible();
+    // Wait again for sort toggle
+    await page.waitForSelector('[data-testid="sort-indicator-price"]');
+    await expect(page.getByTestId('sort-indicator-price')).toBeVisible();
 
     const firstPriceDesc = page.getByTestId('cell-0-price');
     await expect(firstPriceDesc).toHaveText('12.5');
