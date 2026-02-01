@@ -16,28 +16,20 @@ let openCalls: Array<{ path: string; vfs: string | undefined; opts: unknown }> =
 let engineReady = true;
 let journalModeResponse = 'delete';
 
-const mockEngine = {
-  exec: vi.fn(async (sql: string) => {
-    execCalls.push(sql);
-    return { rowsAffected: 0, lastInsertId: 0 };
-  }),
-  query: vi.fn(async (sql: string) => {
-    queryCalls.push(sql);
-    return {
-      columns: ['journal_mode'],
-      columnTypes: ['TEXT'],
-      rows: [[journalModeResponse]],
-      rowsAffected: 0,
-    };
-  }),
-  open: vi.fn(async (path: string, vfs: string | undefined, opts: unknown) => {
-    openCalls.push({ path, vfs, opts });
-  }),
-  close: vi.fn().mockResolvedValue(undefined),
-  initialize: vi.fn().mockResolvedValue(undefined),
-  isReady: vi.fn(() => engineReady),
-  getDbName: vi.fn().mockReturnValue(null),
-};
+// Use vi.hoisted to ensure mock values are available during module hoisting
+const { mockEngine, mockEnsureAppDirectories } = vi.hoisted(() => {
+  const mockEnsureAppDirectories = vi.fn().mockResolvedValue(undefined);
+  const mockEngine = {
+    exec: vi.fn(),
+    query: vi.fn(),
+    open: vi.fn(),
+    close: vi.fn().mockResolvedValue(undefined),
+    initialize: vi.fn().mockResolvedValue(undefined),
+    isReady: vi.fn(() => true),
+    getDbName: vi.fn().mockReturnValue(null),
+  };
+  return { mockEngine, mockEnsureAppDirectories };
+});
 
 vi.mock('../../core/engine/db-engine', () => ({
   getEngine: vi.fn(() => mockEngine),
@@ -47,6 +39,7 @@ vi.mock('../../core/engine/db-engine', () => ({
 vi.mock('../../core/engine/opfs-vfs', () => ({
   OPFS_VFS_NAME: 'opfs-coop-sync',
   IDB_VFS_NAME: 'idb-batch-atomic',
+  ensureAppDirectories: mockEnsureAppDirectories,
 }));
 
 // Import after mocks are set up
@@ -61,6 +54,25 @@ describe('sqlite-engine - openDatabase', () => {
     openCalls = [];
     engineReady = true;
     journalModeResponse = 'delete';
+
+    // Set up mock implementations
+    mockEngine.exec.mockImplementation(async (sql: string) => {
+      execCalls.push(sql);
+      return { rowsAffected: 0, lastInsertId: 0 };
+    });
+    mockEngine.query.mockImplementation(async (sql: string) => {
+      queryCalls.push(sql);
+      return {
+        columns: ['journal_mode'],
+        columnTypes: ['TEXT'],
+        rows: [[journalModeResponse]],
+        rowsAffected: 0,
+      };
+    });
+    mockEngine.open.mockImplementation(async (path: string, vfs: string | undefined, opts: unknown) => {
+      openCalls.push({ path, vfs, opts });
+    });
+    mockEngine.isReady.mockImplementation(() => engineReady);
   });
 
   afterEach(() => {
@@ -168,6 +180,18 @@ describe('sqlite-engine - verifyJournalMode', () => {
     queryCalls = [];
     engineReady = true;
     journalModeResponse = 'delete';
+
+    // Set up mock implementations
+    mockEngine.query.mockImplementation(async (sql: string) => {
+      queryCalls.push(sql);
+      return {
+        columns: ['journal_mode'],
+        columnTypes: ['TEXT'],
+        rows: [[journalModeResponse]],
+        rowsAffected: 0,
+      };
+    });
+    mockEngine.isReady.mockImplementation(() => engineReady);
   });
 
   it('returns true when current journal_mode is delete', async () => {
