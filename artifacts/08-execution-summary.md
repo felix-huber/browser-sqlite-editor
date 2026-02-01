@@ -98,3 +98,4 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-758 | P8-02m: E2E fill — IndexedDB fallback switch/rename | FAILED | - | tool failed (rc=143) |
 | bd-758 | P8-02m: E2E fill — IndexedDB fallback switch/rename | FAILED | - | tool failed (rc=137) |
 | bd-29u | Split CI into separate workflows for per-job badges | DONE | 7181cf9fb345f8131e8f87685f1b6160592db3cd | clean |
+| bd-2ko | Fix flaky E2E test: grid-read sorting indicator | DONE | e365a29d7d04e474276fa8677ce9c8c6500a4e5e | clean |

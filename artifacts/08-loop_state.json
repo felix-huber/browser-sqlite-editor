@@ -1,6 +1,6 @@
 {
-  "runId": "2026-02-01T02:06:53+01:00",
-  "updatedAt": "2026-02-01T02:06:53+01:00",
+  "runId": "2026-02-01T02:12:07+01:00",
+  "updatedAt": "2026-02-01T02:12:07+01:00",
   "mode": {
     "loop": true,
     "beads": true
@@ -8,13 +8,13 @@
   "task": {
     "id": "bd-2ko",
     "subject": "Fix flaky E2E test: grid-read sorting indicator",
-    "status": "running",
-    "phase": "implement",
+    "status": "completed",
+    "phase": "done",
     "attempt": 1
   },
   "tools": {
     "implementer": "smart",
     "reviewer": "smart"
   },
-  "note": "started"
+  "note": "all checks passed"
 }
