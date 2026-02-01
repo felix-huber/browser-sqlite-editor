@@ -13,6 +13,7 @@
 import type { StorageMode, WorkerErrorCode } from '../types';
 import { IDB_VFS_NAME } from '../core/engine/opfs-vfs';
 import { checkStorageAvailable } from './quota-errors';
+import { toFilename } from './db-registry';
 
 // =============================================================================
 // Constants
@@ -908,40 +909,36 @@ export async function importDatabase(
         ? await listOpfsFiles()
         : await listIdbDatabases();
 
-    // Helper to sanitize name for OPFS (must match db-registry.ts toFilename logic)
-    const sanitizeName = (name: string): string =>
-      name
-        .replace(/\.sqlite$/i, '') // Strip .sqlite extension first
-        .replace(/[<>:"/\\|?*]/g, '_')
-        .replace(/\s+/g, '_')
-        .toLowerCase();
-
-    // For OPFS: Work with sanitized names since that's how files are stored
+    // For OPFS: Work with sanitized filenames since that's how files are stored
     // For IDB: Work with display names directly
     let uniqueName: string;
     let filename: string;
 
     if (storageMode === 'opfs') {
-      // For OPFS, resolve uniqueness using sanitized names to match the actual filenames
-      // Step 1: Sanitize the hint
-      const sanitizedHint = sanitizeName(nameHint);
+      // For OPFS, we need to:
+      // 1. Generate a display name (e.g., "sakila (1)")
+      // 2. Use toFilename() to convert to the actual filename
+      // This ensures consistency between import and open operations
 
-      // Step 2: Resolve uniqueness - generate candidates with underscores to match filenames
-      const existingSet = new Set(existingNames);
-      let uniqueSanitized = sanitizedHint;
+      // Strip extension from hint for display name
+      const baseHint = nameHint.replace(/\.sqlite$/i, '').trim() || 'Untitled';
+
+      // Build a set of existing filenames (not display names) for collision detection
+      const existingFilenames = new Set(existingNames);
+
+      // Try the base name first, then add (1), (2), etc.
+      let candidate = baseHint;
       let counter = 0;
-      while (existingSet.has(uniqueSanitized)) {
+      while (existingFilenames.has(toFilename(candidate).replace(/\.sqlite$/, ''))) {
         counter++;
-        // Use underscore before parenthesis to match sanitization pattern
-        uniqueSanitized = `${sanitizedHint}_(${counter})`;
+        candidate = `${baseHint} (${counter})`;
         if (counter > 1000) {
           throw new Error('Unable to generate unique name after 1000 attempts');
         }
       }
 
-      filename = `${uniqueSanitized}.sqlite`;
-      // Convert back to display name (replace underscores with spaces)
-      uniqueName = uniqueSanitized.replace(/_/g, ' ');
+      uniqueName = candidate;
+      filename = toFilename(uniqueName);
     } else {
       // IDB: use display names directly
       uniqueName = resolveUniqueName(nameHint, new Set(existingNames));

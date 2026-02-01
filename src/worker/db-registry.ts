@@ -379,8 +379,9 @@ function now(): string {
  */
 export function toFilename(name: string): string {
   // Sanitize name for filesystem
+  // Include () to handle collision resolution suffixes like "(2)"
   const sanitized = name
-    .replace(/[<>:"/\\|?*]/g, '_')
+    .replace(/[<>:"/\\|?*()]/g, '_')
     .replace(/\s+/g, '_')
     .toLowerCase();
   return `${sanitized}.sqlite`;

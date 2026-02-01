@@ -453,8 +453,9 @@ describe('importDatabase', () => {
     });
 
     it('should resolve name collision with (1) suffix', async () => {
-      // For OPFS mode, existing names are sanitized filenames (with underscores)
-      mockState.existingNames = ['mydb', 'mydb_(1)'];
+      // For OPFS mode, existing names are sanitized filenames
+      // toFilename("mydb (1)") produces "mydb__1_" (underscores for space and parens)
+      mockState.existingNames = ['mydb', 'mydb__1_'];
       const data = createSqliteHeader();
       const file = createMockFile(data, 'mydb.sqlite');
 
@@ -466,7 +467,7 @@ describe('importDatabase', () => {
 
       expect(result.success).toBe(true);
       if (result.success) {
-        // Display name has spaces (converted from underscores)
+        // Display name uses spaces and parentheses for readability
         expect(result.dbName).toBe('mydb (2)');
       }
     });
