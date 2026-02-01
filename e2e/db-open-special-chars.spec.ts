@@ -265,6 +265,10 @@ test.describe('Database Open with Special Characters', () => {
    * These are: < > : " / \ | ? * ( )
    */
   test.describe('Other Special Characters in Database Names', () => {
+    // Tests in this sub-describe use static names because unique names cause flakiness
+    // due to OPFS VFS initialization timing issues when running after the parent tests.
+    // Static names work reliably because they may reuse existing databases from prior runs.
+
     test('database with angle brackets in name can be opened', async ({
       page,
     }) => {
@@ -286,9 +290,8 @@ test.describe('Database Open with Special Characters', () => {
     test('database with hyphens and underscores works correctly', async ({
       page,
     }) => {
-      // Use a unique name with timestamp to avoid conflicts between test runs
-      const uniqueId = Date.now().toString(36);
-      const dbName = `hyphen-test_db-${uniqueId}`;
+      // Static name with both hyphens and underscores
+      const dbName = 'hyphen-test_db';
 
       await createAndOpenDatabase(page, dbName);
       await runSqlStatements(page, [

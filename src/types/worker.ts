@@ -59,7 +59,9 @@ export type WorkerRequest =
       columnRenames?: ColumnRenameInput[];
       isReadOnly: boolean;
     }
-  | { type: 'getDbSize'; dbName: string };
+  | { type: 'getDbSize'; dbName: string }
+  | { type: 'resetApp' }
+  | { type: 'forceReinitRegistry' };
 
 /**
  * Table definition input for createTable worker request

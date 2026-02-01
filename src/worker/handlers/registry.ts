@@ -5,7 +5,7 @@
 import type { WorkerRequest, WorkerResponse, WorkerErrorCode, StorageMode } from '../../types';
 import { getEngine } from '../../core/engine/db-engine';
 import { OPFS_VFS_NAME, getOPFSDatabaseSize } from '../../core/engine/opfs-vfs';
-import { getRegistry, toFilename } from '../db-registry';
+import { getRegistry, toFilename, forceReinitializeRegistry, resetRegistry } from '../db-registry';
 import { resolveDbPath } from '../storage';
 import { getIdbDbSize } from '../idb-storage';
 import { openDatabase } from '../sqlite-engine';
@@ -29,10 +29,31 @@ export async function handleOpenRequest(
     postResponse({ type: 'lockStatus', isWriter: !readOnly }, id);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    const isNotFound = message.includes('NotFoundError') ||
+      message.includes('not found') ||
+      message.includes('SQLITE_CANTOPEN') ||
+      (err instanceof Error && err.name === 'NotFoundError');
+
+    // If file not found, try to clean up stale registry entry
+    if (isNotFound) {
+      try {
+        const registry = getRegistry();
+        const entry = registry.getDatabaseByName(request.dbName);
+        if (entry) {
+          console.warn(
+            `[handleOpenRequest] Database file not found for "${request.dbName}", removing stale registry entry`
+          );
+          await registry.removeDatabase(entry.id);
+        }
+      } catch (cleanupErr) {
+        console.error('[handleOpenRequest] Failed to clean up stale entry:', cleanupErr);
+      }
+    }
+
     postResponse({
       type: 'error',
       message: `Failed to open database: ${message}`,
-      code: 'UNKNOWN',
+      code: isNotFound ? 'NOT_FOUND' : 'UNKNOWN',
     }, id);
   }
 }
@@ -246,6 +267,97 @@ export async function handleGetDbSizeRequest(
     postResponse({
       type: 'error',
       message: `Failed to get database size: ${message}`,
+      code: 'UNKNOWN',
+    }, id);
+  }
+}
+
+/**
+ * Handle resetApp request - clear all storage and reset registry.
+ * This is a destructive operation that wipes all databases.
+ */
+export async function handleResetAppRequest(
+  _request: Extract<WorkerRequest, { type: 'resetApp' }>,
+  id: number,
+  postResponse: PostResponse
+): Promise<void> {
+  try {
+    // Close any open database
+    const engine = getEngine();
+    await engine.close();
+    resetSessionTracker();
+
+    // Clear OPFS
+    try {
+      const root = await navigator.storage.getDirectory();
+      try {
+        await root.removeEntry('wasm-sqlite-editor', { recursive: true });
+      } catch {
+        // Directory might not exist
+      }
+      // Also clear legacy directory
+      try {
+        await root.removeEntry('sqlite-editor', { recursive: true });
+      } catch {
+        // Directory might not exist
+      }
+    } catch (err) {
+      console.warn('[resetApp] Failed to clear OPFS:', err);
+    }
+
+    // Clear IndexedDB databases
+    const idbNames = [
+      'sqlite-editor-registry',
+      'idb-batch-atomic',
+      'idb-sqlite',
+    ];
+    for (const name of idbNames) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const req = indexedDB.deleteDatabase(name);
+          req.onsuccess = () => resolve();
+          req.onerror = () => reject(req.error);
+          req.onblocked = () => {
+            console.warn(`[resetApp] IDB delete blocked for "${name}"`);
+            resolve();
+          };
+        });
+      } catch (err) {
+        console.warn(`[resetApp] Failed to delete IDB "${name}":`, err);
+      }
+    }
+
+    // Reset registry singleton
+    resetRegistry();
+
+    postResponse({ type: 'success' }, id);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    postResponse({
+      type: 'error',
+      message: `Failed to reset app: ${message}`,
+      code: 'UNKNOWN',
+    }, id);
+  }
+}
+
+/**
+ * Handle forceReinitRegistry request - reload registry from storage.
+ * Use this after storage has been modified externally.
+ */
+export async function handleForceReinitRegistryRequest(
+  _request: Extract<WorkerRequest, { type: 'forceReinitRegistry' }>,
+  id: number,
+  postResponse: PostResponse
+): Promise<void> {
+  try {
+    await forceReinitializeRegistry();
+    postResponse({ type: 'success' }, id);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    postResponse({
+      type: 'error',
+      message: `Failed to reinitialize registry: ${message}`,
       code: 'UNKNOWN',
     }, id);
   }

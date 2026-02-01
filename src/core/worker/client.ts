@@ -584,6 +584,23 @@ export class WorkerClient {
   }
 
   /**
+   * Reset the app - clear all storage and reset registry.
+   * This is a destructive operation that wipes all databases.
+   * After calling this, you should reload the page.
+   */
+  async resetApp(): Promise<void> {
+    await this.request<{ type: 'success' }>({ type: 'resetApp' });
+  }
+
+  /**
+   * Force reinitialize the registry from storage.
+   * Use this after storage has been modified externally.
+   */
+  async forceReinitRegistry(): Promise<void> {
+    await this.request<{ type: 'success' }>({ type: 'forceReinitRegistry' });
+  }
+
+  /**
    * Terminate the worker and reject all pending requests
    */
   terminate(): void {

@@ -38,6 +38,8 @@ export interface WelcomeProps {
   onSelectDatabase?: (dbName: string) => void;
   /** Whether to show recent databases list */
   showRecentDatabases?: boolean;
+  /** Callback when "Reset App" is clicked (after confirmation) */
+  onResetApp?: () => Promise<void>;
 }
 
 /**
@@ -57,10 +59,13 @@ export function Welcome({
   onOpenSample,
   onSelectDatabase,
   showRecentDatabases = true,
+  onResetApp,
 }: WelcomeProps) {
   const databases = useDatabases();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [toastMessage, setToastMessage] = useState<{ type: 'error' | 'warning'; text: string } | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
 
   // Auto-dismiss toast after 4 seconds
   useEffect(() => {
@@ -132,6 +137,24 @@ export function Welcome({
   const handleDropWarning = useCallback((message: string) => {
     setToastMessage({ type: 'warning', text: message });
   }, []);
+
+  // Handle reset app confirmation
+  const handleResetConfirm = useCallback(async () => {
+    if (!onResetApp) return;
+    setIsResetting(true);
+    try {
+      await onResetApp();
+      // Reload the page after reset
+      window.location.reload();
+    } catch (err) {
+      setToastMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Failed to reset app',
+      });
+      setIsResetting(false);
+      setShowResetConfirm(false);
+    }
+  }, [onResetApp]);
 
   // Handle file input change (file picker)
   const handleFileInputChange = useCallback(
@@ -271,7 +294,86 @@ export function Welcome({
             </ul>
           </div>
         )}
+
+        {/* Reset App Link */}
+        {onResetApp && (
+          <div className="w-full border-t border-navy-200 pt-4 mt-4">
+            <button
+              type="button"
+              onClick={() => setShowResetConfirm(true)}
+              className="text-xs text-navy-400 hover:text-navy-600 transition-colors"
+              data-testid="reset-app-button"
+            >
+              Having issues? Reset app data
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Reset Confirmation Dialog */}
+      {showResetConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reset-dialog-title"
+          data-testid="reset-confirm-dialog"
+        >
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                <svg
+                  className="w-5 h-5 text-red-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
+                </svg>
+              </div>
+              <h2 id="reset-dialog-title" className="text-lg font-semibold text-navy-900">
+                Reset App Data?
+              </h2>
+            </div>
+            <p className="text-navy-600 mb-6">
+              This will permanently delete all your databases, settings, and query history.
+              This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowResetConfirm(false)}
+                disabled={isResetting}
+                className="px-4 py-2 text-sm font-medium text-navy-700 hover:bg-navy-100 rounded-lg transition-colors disabled:opacity-50"
+                data-testid="reset-cancel-button"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleResetConfirm}
+                disabled={isResetting}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
+                data-testid="reset-confirm-button"
+              >
+                {isResetting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Resetting...
+                  </>
+                ) : (
+                  'Reset Everything'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Toast Notification */}
       {toastMessage && (

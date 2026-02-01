@@ -424,6 +424,43 @@ function App() {
     }
   }, [handleSqliteImport]);
 
+  // Handle reset app - clear all storage and reload
+  const handleResetApp = useCallback(async () => {
+    const client = workerClientRef.current;
+    if (!client) throw new Error('Worker not initialized');
+
+    // Clear localStorage entries
+    try {
+      // Clear query history keys (qh:*)
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('qh:') || key.startsWith('erd-layout:') || key === 'sqlite-editor-settings' || key.startsWith('sqlite-lock:'))) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach((key) => localStorage.removeItem(key));
+    } catch (err) {
+      console.warn('Failed to clear localStorage:', err);
+    }
+
+    // Clear service worker caches
+    try {
+      if ('caches' in window) {
+        const cacheNames = await caches.keys();
+        await Promise.all(cacheNames.map((name) => caches.delete(name)));
+      }
+    } catch (err) {
+      console.warn('Failed to clear caches:', err);
+    }
+
+    // Reset worker storage (OPFS, IndexedDB registry)
+    await client.resetApp();
+
+    // Reset store state
+    useDatabaseStore.getState().reset();
+  }, []);
+
   // Handle table selection from sidebar
   const handleSelectTable = useCallback(async (dbName: string, tableName: string) => {
     // Open the database if not already active
@@ -784,6 +821,7 @@ function App() {
             onOpenSample={handleOpenSample}
             onSelectDatabase={handleSelectDatabase}
             showRecentDatabases={databases.length > 0}
+            onResetApp={handleResetApp}
           />
         </div>
       );

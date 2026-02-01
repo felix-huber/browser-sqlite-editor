@@ -27,6 +27,8 @@ import {
   handleRenameDbRequest,
   handleGetRegistryRequest,
   handleGetDbSizeRequest,
+  handleResetAppRequest,
+  handleForceReinitRegistryRequest,
 } from './handlers/registry';
 import {
   handleFlushSnapshotRequest,
@@ -288,6 +290,14 @@ async function handleMessage(event: WorkerMessageEvent): Promise<void> {
 
     case 'rebuildTable':
       await handleRebuildTableRequest(request, id, postResponse);
+      break;
+
+    case 'resetApp':
+      await handleResetAppRequest(request, id, postResponse);
+      break;
+
+    case 'forceReinitRegistry':
+      await handleForceReinitRegistryRequest(request, id, postResponse);
       break;
 
     // Future handlers will be added here as the worker is extended

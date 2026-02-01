@@ -2118,10 +2118,20 @@ export function getRegistry(): DatabaseRegistry {
 }
 
 /**
- * Reset the singleton instance (for testing)
+ * Reset the singleton instance (for testing or storage reset)
  */
 export function resetRegistry(): void {
   _registryInstance = null;
+}
+
+/**
+ * Force reinitialize the registry by resetting singleton and re-initializing.
+ * Use this after storage has been cleared externally.
+ */
+export async function forceReinitializeRegistry(): Promise<HealingResult> {
+  _registryInstance = null;
+  const registry = getRegistry();
+  return registry.init();
 }
 
 // =============================================================================
