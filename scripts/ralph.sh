@@ -47,7 +47,7 @@ LOGS_DIR="$PROJECT_ROOT/.beads/logs"
 CURRENT_TASK_ID=""  # Set during execution for logging
 SESSION_START_TS=0
 
-# Lockfile to prevent multiple ralph instances (Pattern 10)
+# Lockfile to prevent multiple ralph instances from running concurrently
 RALPH_LOCK="$PROJECT_ROOT/.ralph.lock"
 OVERRIDE_LOCK_PID=""
 
@@ -137,6 +137,9 @@ LAST_FAIL_SIGNATURE=""  # Hash of last failure for flaky detection
 LAST_FAIL_TASK_ID=""    # Task ID of last failure
 SAME_FAIL_COUNT=0       # Count of identical consecutive failures
 FLAKY_FAIL_THRESHOLD=3  # Skip task after this many identical failures
+
+# Final E2E regression suite (runs once at end after all tasks complete)
+FINAL_E2E="true"       # Run full E2E suite before declaring success (catches regressions)
 
 # Council of Subagents review (multi-agent verification pattern)
 # Uses specialized subagents: Analyst (quality), Sentinel (anti-patterns), Designer (UI), Healer (fixes)
@@ -297,6 +300,14 @@ parse_args() {
         SCOPED_TESTS_ONLY="true"
         shift
         ;;
+      --no-final-e2e)
+        FINAL_E2E="false"
+        shift
+        ;;
+      --final-e2e)
+        FINAL_E2E="true"
+        shift
+        ;;
       --council-review)
         COUNCIL_REVIEW="true"
         shift
@@ -387,7 +398,7 @@ parse_args() {
       *)
         if [[ "$1" =~ ^[0-9]+$ ]]; then
           MAX_ITERATIONS="$1"
-        elif [[ "$1" != -* ]]; then
+        else
           log_warn "Ignoring unknown argument: $1"
         fi
         shift
@@ -414,8 +425,25 @@ parse_args() {
     esac
   fi
 
+  # Validate numeric arguments
   if ! [[ "$MIN_REVIEW_PASSES" =~ ^[0-9]+$ ]]; then
     log_error "--min-review-passes must be a non-negative integer"
+    exit 1
+  fi
+  if ! [[ "$MAX_TASKS" =~ ^[0-9]+$ ]]; then
+    log_error "--max-tasks must be a non-negative integer"
+    exit 1
+  fi
+  if ! [[ "$STALL_MINUTES" =~ ^[1-9][0-9]*$ ]]; then
+    log_error "--stall-minutes must be a positive integer (> 0)"
+    exit 1
+  fi
+  if ! [[ "$STALL_THRESHOLD" =~ ^[1-9][0-9]*$ ]]; then
+    log_error "--stall-threshold must be a positive integer (> 0)"
+    exit 1
+  fi
+  if ! [[ "$MAX_TASK_ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
+    log_error "--max-attempts must be a positive integer (> 0)"
     exit 1
   fi
 }
@@ -457,6 +485,8 @@ Options:
   --verify-tests               Enable test verification (default: on)
   --no-verify-tests            Disable test verification
   --scoped-tests-only          Skip global npm test if task has scoped verification
+  --final-e2e                  Run full E2E suite at end (default: true if e2e exists)
+  --no-final-e2e               Skip final E2E regression suite
   --council-review             Enable Council of Subagents review (Analyst/Sentinel/Designer/Healer)
   --no-council-review          Disable council review (default)
 
@@ -684,7 +714,7 @@ check_prerequisites() {
     fi
     
     # Check if beads is initialized
-    if [[ ! -d ".beads" ]]; then
+    if [[ ! -d "$PROJECT_ROOT/.beads" ]]; then
       log_error "Beads not initialized in this project."
       log_error "Run: br init"
       exit 1
@@ -905,7 +935,7 @@ select_task_source() {
   local has_graph=false
   
   # Check what's available
-  [[ -d ".beads" ]] && command -v br &> /dev/null && has_beads=true
+  [[ -d "$PROJECT_ROOT/.beads" ]] && command -v br &> /dev/null && has_beads=true
   [[ -f "$TASK_GRAPH" ]] && has_graph=true
   
   # If both are available, ask user
@@ -1072,7 +1102,7 @@ extract_section() {
 build_task_json_from_bead() {
   local bead_json="$1"
   local id title desc labels_json
-  # Use here-strings (<<<) instead of echo to avoid escape sequence interpretation (Issue 18)
+  # Use here-strings (<<<) instead of echo to preserve backslashes and special characters in JSON
   id=$(jq -r '.id' <<< "$bead_json")
   title=$(jq -r '.title' <<< "$bead_json")
   desc=$(jq -r '.description // ""' <<< "$bead_json")
@@ -1120,9 +1150,26 @@ get_review_tool_for_task() {
 
 load_default_verification() {
   local default_value="${DEFAULT_VERIFY:-${RALPH_DEFAULT_VERIFY:-}}"
+
+  # Check verification.txt file
   if [[ -z "$default_value" && -f "$PROJECT_ROOT/verification.txt" ]]; then
     default_value=$(grep -v '^[[:space:]]*#' "$PROJECT_ROOT/verification.txt" | sed '/^[[:space:]]*$/d')
   fi
+
+  # Auto-detect verification command from project stack (package.json, Cargo.toml, etc.)
+  if [[ -z "$default_value" ]]; then
+    local test_cmd build_cmd
+    test_cmd=$(get_cmd "test" 2>/dev/null) || true
+    build_cmd=$(get_cmd "build" 2>/dev/null) || true
+    if [[ -n "$test_cmd" ]]; then
+      default_value="$test_cmd"
+      log_info "Auto-detected verification from stack: $test_cmd"
+    elif [[ -n "$build_cmd" ]]; then
+      default_value="$build_cmd"
+      log_info "Auto-detected verification from stack: $build_cmd"
+    fi
+  fi
+
   printf '%s\n' "$default_value"
 }
 
@@ -1146,8 +1193,8 @@ get_task_llm_verification() {
   '
 }
 
-# Refresh task verification from source (Pattern 8 fix)
-# Re-reads bead/task-graph to pick up mid-iteration fixes
+# Refresh task verification by re-reading from source (bead file or task-graph.json)
+# This allows picking up verification commands that were added/fixed during iteration
 refresh_task_verification() {
   local task_id="$1"
   local task_json
@@ -1224,7 +1271,7 @@ run_task_verification() {
 
   log_info "Running task-specific verification..."
   while IFS= read -r cmd; do
-    # Trim whitespace without xargs (xargs strips quotes - Issue 21)
+    # Trim whitespace using parameter expansion (xargs would strip quotes from commands)
     cmd="${cmd#"${cmd%%[![:space:]]*}"}"
     cmd="${cmd%"${cmd##*[![:space:]]}"}"
     [[ -z "$cmd" ]] && continue
@@ -1235,10 +1282,9 @@ run_task_verification() {
       continue
     fi
 
-    # Fix common test framework CLI syntax errors (Pattern 7)
-    # Vitest uses -t not --grep for test filtering
-    # BUT: Skip for E2E tests - Playwright uses --grep correctly (Issue 22)
-    if [[ "$cmd" != *"e2e"* ]] && [[ "$cmd" == *"npm"*"test"*"--grep"* ]] && [[ -f "package.json" ]] && grep -q '"vitest"' package.json 2>/dev/null; then
+    # Auto-fix Vitest CLI syntax: Vitest uses -t for test name filtering, not --grep
+    # Skip this fix for E2E tests since Playwright correctly uses --grep
+    if [[ "$cmd" != *"e2e"* ]] && [[ "$cmd" == *"npm"*"test"*"--grep"* ]] && [[ -f "$PROJECT_ROOT/package.json" ]] && grep -q '"vitest"' "$PROJECT_ROOT/package.json" 2>/dev/null; then
       local fixed_cmd="${cmd//--grep/-t}"
       log_warn "Auto-fixing Vitest syntax: --grep → -t"
       cmd="$fixed_cmd"
@@ -1350,9 +1396,9 @@ $diff_content"
 # Usage: _exec_with_timeout <tmp_output_file> <log_file_or_empty> <cmd...>
 # Sets global _EXEC_RC with the exit code
 #
-# Issue 20 fix: Avoid | tee which causes PTY buffering issues with Claude CLI.
-# Write directly to file, then display. Use `tail -f log_file` in another terminal
-# for real-time monitoring.
+# Avoid piping through tee which causes PTY buffering issues with interactive CLIs.
+# Instead, write directly to file then display contents afterward.
+# For real-time monitoring, use `tail -f log_file` in a separate terminal.
 _exec_with_timeout() {
   local tmp_output="$1"
   local log_file="$2"
@@ -1376,11 +1422,19 @@ _exec_with_timeout() {
   fi
   _EXEC_RC=$?
 
-  # Append to log file if specified
-  [[ -n "$log_file" ]] && cat "$tmp_output" >> "$log_file"
+  # Ensure file buffers are flushed after potential timeout/kill
+  sync 2>/dev/null || true
 
-  # Always show output to console
-  cat "$tmp_output"
+  # Append to log file if specified (with explicit error handling)
+  if [[ -n "$log_file" ]]; then
+    if [[ -s "$tmp_output" ]]; then
+      cat "$tmp_output" >> "$log_file"
+    else
+      echo "[WARNING] Command produced no output (tmp file empty)" >> "$log_file"
+    fi
+  fi
+
+  # Note: Output is returned via the file, not stdout - caller reads tmp_output
 }
 
 # Run a task with the specified tool
@@ -1410,7 +1464,10 @@ run_with_tool() {
   log_tool "Using: $tool"
 
   # Create temp file to capture output (needed for correct exit code capture)
-  tmp_output=$(mktemp)
+  tmp_output=$(mktemp) || {
+    log_error "Failed to create temp file for output capture"
+    return 1
+  }
   trap "rm -f '$tmp_output'" RETURN
 
   # Get the command for the tool
@@ -1435,17 +1492,33 @@ run_with_tool() {
   _exec_with_timeout "$tmp_output" "$log_file" $cmd "$prompt"
   local rc=$_EXEC_RC
 
-  # Read output from temp file
-  local output
-  output=$(cat "$tmp_output")
+  # Read output from temp file with robust error handling
+  local output=""
+  if [[ -f "$tmp_output" ]]; then
+    if [[ -s "$tmp_output" ]]; then
+      output=$(cat "$tmp_output")
+    else
+      log_warn "Tool output file exists but is empty: $tmp_output"
+      if [[ -n "$log_file" ]]; then
+        echo "[DEBUG] tmp_output=$tmp_output exists but empty" >> "$log_file"
+        echo "[DEBUG] Checking for stray temp files with TASK_COMPLETE:" >> "$log_file"
+        # Check both Linux (/tmp) and macOS (/var/folders) temp locations
+        local tmpdir="${TMPDIR:-/tmp}"
+        find "$tmpdir" -maxdepth 1 -name 'tmp.*' -mmin -5 -exec grep -l "TASK_COMPLETE" {} \; 2>/dev/null >> "$log_file" || true
+      fi
+    fi
+  else
+    log_warn "Tool output file missing: $tmp_output"
+  fi
 
   # Log completion status
   if [[ -n "$log_file" ]]; then
     echo "" >> "$log_file"
-    if [[ "$rc" -eq 124 ]]; then
-      echo "=== TIMEOUT after ${STALL_MINUTES}m: $(date -Iseconds) ===" >> "$log_file"
+    local output_size=${#output}
+    if [[ "$rc" -eq 124 ]] || [[ "$rc" -eq 137 ]] || [[ "$rc" -eq 143 ]]; then
+      echo "=== TIMEOUT after ${STALL_MINUTES}m (rc=$rc, output_size=$output_size): $(date -Iseconds) ===" >> "$log_file"
     else
-      echo "=== Finished (rc=$rc): $(date -Iseconds) ===" >> "$log_file"
+      echo "=== Finished (rc=$rc, output_size=$output_size): $(date -Iseconds) ===" >> "$log_file"
     fi
   fi
 
@@ -1490,7 +1563,7 @@ run_council_review() {
       # There are uncommitted changes - review those
       changed_files="$uncommitted_files"
       diff_content="$uncommitted_diff"
-    elif git rev-parse HEAD~1 &>/dev/null 2>&1; then
+    elif git rev-parse HEAD~1 &>/dev/null; then
       # No uncommitted changes, but there's a previous commit
       # Review the most recent commit (task probably committed its work)
       changed_files=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
@@ -2026,6 +2099,32 @@ get_next_task_beads() {
   build_task_json_from_bead "$bead_json"
 }
 
+# Reset stale IN_PROGRESS beads from previous failed runs.
+# When Ralph crashes or is interrupted, beads may be left in IN_PROGRESS state.
+# This function resets them to open so they can be retried.
+reset_stale_in_progress_beads() {
+  [[ "$USE_BEADS" != "true" ]] && return 0
+
+  # Get all beads that are currently in_progress
+  local in_progress
+  in_progress=$(br list --status in_progress --json 2>/dev/null || echo "[]")
+
+  if [[ "$in_progress" == "[]" || -z "$in_progress" ]]; then
+    return 0
+  fi
+
+  local count
+  count=$(jq 'length' <<< "$in_progress")
+  if [[ "$count" -gt 0 ]]; then
+    log_warn "Found $count stale IN_PROGRESS beads from previous run"
+    # Reset each to open status
+    jq -r '.[].id' <<< "$in_progress" | while read -r bead_id; do
+      log_info "Resetting stale bead $bead_id to open"
+      br update "$bead_id" --status open --comment "Reset by Ralph (stale IN_PROGRESS)" 2>/dev/null || true
+    done
+  fi
+}
+
 # Get task by ID
 get_task_by_id() {
   local task_id="$1"
@@ -2036,7 +2135,7 @@ get_task_by_id() {
       echo ""
       return
     fi
-    # Handle both array and object responses (Pattern 14 fix)
+    # Normalize response: br show may return an array or a single object
     bead_json=$(jq 'if type == "array" then .[0] else . end' <<< "$bead_json")
     build_task_json_from_bead "$bead_json"
   else
@@ -2454,9 +2553,10 @@ capture_learnings() {
 # Check if npm script exists in package.json
 has_npm_script() {
   local script="$1"
-  [[ -f "package.json" ]] || return 1
+  [[ -f "$PROJECT_ROOT/package.json" ]] || return 1
   command -v node &>/dev/null || return 1
-  node -e 'const p=require("./package.json"); const s=process.argv[1]; process.exit(((p.scripts||{})[s])?0:1)' "$script" 2>/dev/null
+  # Pass path as argument to avoid issues with special characters in path
+  node -e 'const p=require(process.argv[1]); const s=process.argv[2]; process.exit(((p.scripts||{})[s])?0:1)' "$PROJECT_ROOT/package.json" "$script" 2>/dev/null
 }
 
 # Get the command for a given task type (lint, test, build, typecheck)
@@ -2465,13 +2565,13 @@ get_cmd() {
   local cmd_type="$1"  # lint, test, build, typecheck, dev
 
   # Makefile is the universal override - check first
-  if [[ -f "Makefile" ]] && grep -q "^${cmd_type}:" Makefile 2>/dev/null; then
+  if [[ -f "$PROJECT_ROOT/Makefile" ]] && grep -q "^${cmd_type}:" "$PROJECT_ROOT/Makefile" 2>/dev/null; then
     echo "make $cmd_type"
     return 0
   fi
 
-  # Project-type detection
-  if [[ -f "package.json" ]]; then
+  # Project-type detection (priority order: Node > Python > Rust > Go > Ruby)
+  if [[ -f "$PROJECT_ROOT/package.json" ]]; then
     # Node.js - check if script exists
     if has_npm_script "$cmd_type"; then
       echo "npm run $cmd_type"
@@ -2482,10 +2582,10 @@ get_cmd() {
       typecheck)
         has_npm_script "type-check" && echo "npm run type-check" && return 0
         has_npm_script "types" && echo "npm run types" && return 0
-        [[ -f "tsconfig.json" ]] && command -v tsc &>/dev/null && echo "tsc --noEmit" && return 0
+        [[ -f "$PROJECT_ROOT/tsconfig.json" ]] && command -v tsc &>/dev/null && echo "tsc --noEmit" && return 0
         ;;
     esac
-  elif [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]] || [[ -f "requirements.txt" ]]; then
+  elif [[ -f "$PROJECT_ROOT/pyproject.toml" ]] || [[ -f "$PROJECT_ROOT/setup.py" ]] || [[ -f "$PROJECT_ROOT/requirements.txt" ]]; then
     # Python
     case "$cmd_type" in
       lint) echo "ruff check ."; return 0 ;;
@@ -2493,15 +2593,15 @@ get_cmd() {
       typecheck) echo "mypy ."; return 0 ;;
       build) echo "pip install -e ."; return 0 ;;
       dev)
-        if [[ -f "app.py" ]] || [[ -f "application.py" ]]; then
+        if [[ -f "$PROJECT_ROOT/app.py" ]] || [[ -f "$PROJECT_ROOT/application.py" ]]; then
           echo "flask run --debug"; return 0
-        elif command -v uvicorn &>/dev/null && [[ -f "main.py" ]]; then
+        elif command -v uvicorn &>/dev/null && [[ -f "$PROJECT_ROOT/main.py" ]]; then
           echo "uvicorn main:app --reload"; return 0
-        elif [[ -f "main.py" ]]; then
+        elif [[ -f "$PROJECT_ROOT/main.py" ]]; then
           echo "python main.py"; return 0
         fi ;;
     esac
-  elif [[ -f "Cargo.toml" ]]; then
+  elif [[ -f "$PROJECT_ROOT/Cargo.toml" ]]; then
     # Rust
     case "$cmd_type" in
       lint) echo "cargo clippy -- -D warnings"; return 0 ;;
@@ -2510,7 +2610,7 @@ get_cmd() {
       build) echo "cargo build --release"; return 0 ;;
       dev) echo "cargo run"; return 0 ;;
     esac
-  elif [[ -f "go.mod" ]]; then
+  elif [[ -f "$PROJECT_ROOT/go.mod" ]]; then
     # Go
     case "$cmd_type" in
       lint)
@@ -2525,7 +2625,7 @@ get_cmd() {
       build) echo "go build -o bin/ ./..."; return 0 ;;
       dev) echo "go run ."; return 0 ;;
     esac
-  elif [[ -f "Gemfile" ]]; then
+  elif [[ -f "$PROJECT_ROOT/Gemfile" ]]; then
     # Ruby
     case "$cmd_type" in
       lint) echo "bundle exec rubocop"; return 0 ;;
@@ -2593,20 +2693,20 @@ verify_build() {
         # Clippy: "error[E0001]: message"
         local error_count=0
 
-        # Try multiple patterns to extract error count
-        # Pattern 1: "X error(s)" summary
+        # Try multiple patterns to extract error count from various linter formats
+        # ESLint/standard style: "X error(s)" in summary line
         local summary_match=$(echo "$lint_output" | grep -oE "[0-9]+ errors?" | head -1 | grep -oE "[0-9]+" || echo "")
         if [[ -n "$summary_match" ]]; then
           error_count=$summary_match
         fi
 
-        # Pattern 2: "Found X error(s)" (ruff style)
+        # Ruff/Python style: "Found X error(s)" summary
         if [[ $error_count -eq 0 ]]; then
           summary_match=$(echo "$lint_output" | grep -oE "Found [0-9]+ error" | grep -oE "[0-9]+" || echo "")
           [[ -n "$summary_match" ]] && error_count=$summary_match
         fi
 
-        # Pattern 3: Count lines with error indicators (generic)
+        # Fallback: count lines matching file:line:col format (works with most linters)
         if [[ $error_count -eq 0 ]]; then
           # Count lines containing file:line patterns (common to all linters)
           error_count=$(echo "$lint_output" | grep -cE "^[^:]+:[0-9]+:" || echo "0")
@@ -2656,8 +2756,9 @@ verify_build() {
       else
         log_error "❌ TypeCheck FAILED"
         typecheck_passed=false
-        # Extract error count (TypeScript-specific, but harmless for others)
-        local error_count=$(echo "$typecheck_output" | grep -cE "error|Error" || echo "unknown")
+        # Count lines containing "error" (case-insensitive) - works for TypeScript and most type checkers
+        local error_count
+        error_count=$(echo "$typecheck_output" | grep -ciE "error" || echo "0")
         log_error "   Type errors: $error_count"
         # Show first few errors
         echo "$typecheck_output" | grep -iE "error" | head -5 | while read -r line; do
@@ -2725,7 +2826,7 @@ verify_build() {
       set -e
 
       if [[ $test_exit -eq 0 ]]; then
-        # Sanity check: verify tests actually ran (Option I from proposal)
+        # Sanity check: verify tests actually ran (prevents false positives from empty test suites)
         local tests_ran
         tests_ran=$(echo "$test_output" | grep -oE '[0-9]+ (passed|passing)' | grep -oE '^[0-9]+' | head -1 || echo "")
         if [[ -z "$tests_ran" || "$tests_ran" -eq 0 ]]; then
@@ -3247,6 +3348,9 @@ main() {
 
   print_status
 
+  # Reset any stale IN_PROGRESS beads left over from previous crashed/aborted runs
+  reset_stale_in_progress_beads
+
   local tasks_completed=0
   for ((i=1; i<=MAX_ITERATIONS; i++)); do
     # Check MAX_TASKS limit
@@ -3294,32 +3398,109 @@ main() {
     local task_json=$(get_next_task)
     
     if [[ -z "$task_json" || "$task_json" == "null" ]]; then
-      # Check if all done or all blocked
+      # Check if all done, all blocked, or some failed
       local pending=$(count_tasks "pending")
       local completed=$(count_tasks "completed")
-      
+      local failed=$(count_tasks "failed")
+
       if [[ "$pending" -eq 0 ]]; then
-        echo ""
-        log_success "╔════════════════════════════════════════════════════╗"
-        log_success "║          🎉 ALL TASKS COMPLETED! 🎉                ║"
-        log_success "╚════════════════════════════════════════════════════╝"
-        print_status
+        # No pending tasks - either all completed or some failed
+        if [[ "$failed" -eq 0 ]]; then
+          # Run full E2E regression suite before declaring success
+          if [[ "$FINAL_E2E" == "true" ]]; then
+            local e2e_cmd=""
+            if has_npm_script "test:e2e"; then
+              e2e_cmd="npm run test:e2e"
+            elif has_npm_script "e2e"; then
+              e2e_cmd="npm run e2e"
+            elif [[ -f "$PROJECT_ROOT/playwright.config.ts" ]] || [[ -f "$PROJECT_ROOT/playwright.config.js" ]]; then
+              e2e_cmd="npx playwright test"
+            fi
 
-        # Final summary to progress file
-        {
-          echo ""
-          echo "---"
-          echo "## Session Complete - $(date -Iseconds)"
-          echo ""
-          echo "- All tasks completed successfully!"
-          echo "- Iterations used: $i"
-          echo "- Total completed: $(count_tasks 'completed')"
-          echo "- Build failures during session: $BUILD_FAIL_COUNT"
-          echo ""
-        } >> "$PROGRESS_FILE"
+            if [[ -n "$e2e_cmd" ]]; then
+              echo ""
+              log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              log_info "FINAL E2E REGRESSION SUITE"
+              log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              log_info "Running: $e2e_cmd"
+              echo ""
 
-        echo "<promise>COMPLETE</promise>"
-        exit 0
+              set +e
+              eval "$e2e_cmd"
+              local e2e_rc=$?
+              set -e
+
+              if [[ $e2e_rc -ne 0 ]]; then
+                echo ""
+                log_error "╔════════════════════════════════════════════════════╗"
+                log_error "║     FINAL E2E SUITE FAILED - REGRESSIONS FOUND     ║"
+                log_error "╚════════════════════════════════════════════════════╝"
+                log_error "All tasks completed but full E2E suite found regressions."
+                log_error "Fix E2E failures before pushing."
+
+                {
+                  echo ""
+                  echo "---"
+                  echo "## Session Failed E2E - $(date -Iseconds)"
+                  echo ""
+                  echo "- Tasks completed: $completed"
+                  echo "- Final E2E suite: FAILED"
+                  echo "- Regressions detected in full test suite"
+                  echo ""
+                } >> "$PROGRESS_FILE"
+
+                exit 1
+              fi
+              log_success "Full E2E regression suite passed!"
+            fi
+          fi
+
+          echo ""
+          log_success "╔════════════════════════════════════════════════════╗"
+          log_success "║          ALL TASKS COMPLETED SUCCESSFULLY          ║"
+          log_success "╚════════════════════════════════════════════════════╝"
+          print_status
+
+          # Final summary to progress file
+          {
+            echo ""
+            echo "---"
+            echo "## Session Complete - $(date -Iseconds)"
+            echo ""
+            echo "- All tasks completed successfully!"
+            echo "- Iterations used: $i"
+            echo "- Total completed: $completed"
+            echo "- Build failures during session: $BUILD_FAIL_COUNT"
+            echo ""
+          } >> "$PROGRESS_FILE"
+
+          echo "<promise>COMPLETE</promise>"
+          exit 0
+        else
+          # Some tasks failed, no pending tasks left
+          echo ""
+          log_warn "╔════════════════════════════════════════════════════╗"
+          log_warn "║          SESSION ENDED - SOME TASKS FAILED         ║"
+          log_warn "╚════════════════════════════════════════════════════╝"
+          print_status
+
+          # Final summary to progress file
+          {
+            echo ""
+            echo "---"
+            echo "## Session Ended - $(date -Iseconds)"
+            echo ""
+            echo "- Status: Some tasks failed"
+            echo "- Completed: $completed"
+            echo "- Failed: $failed"
+            echo "- Iterations used: $i"
+            echo "- Build failures during session: $BUILD_FAIL_COUNT"
+            echo ""
+            echo "Review failed tasks before retrying."
+          } >> "$PROGRESS_FILE"
+
+          exit 1
+        fi
       else
         log_warn "All remaining tasks are blocked. Check dependencies."
         print_status
@@ -3331,7 +3512,8 @@ main() {
           echo "## Session Blocked - $(date -Iseconds)"
           echo ""
           echo "- Status: All remaining tasks are blocked"
-          echo "- Completed: $(count_tasks 'completed')"
+          echo "- Completed: $completed"
+          echo "- Failed: $failed"
           echo "- Pending (blocked): $pending"
           echo "- Build failures: $BUILD_FAIL_COUNT"
           echo ""
@@ -3396,9 +3578,22 @@ main() {
     # Handle tool failures (including timeouts)
     if [[ "$tool_rc" -ne 0 ]]; then
       local fail_reason="tool exit code $tool_rc"
-      if [[ "$tool_rc" -eq 124 ]]; then
-        fail_reason="timeout after ${STALL_MINUTES}m"
-        log_error "Tool timed out after ${STALL_MINUTES} minutes."
+
+      # Detect timeout-related exit codes:
+      # 124 = GNU timeout (SIGTERM sent)
+      # 137 = 128+9 = SIGKILL (--kill-after triggered)
+      # 143 = 128+15 = SIGTERM received by process
+      if [[ "$tool_rc" -eq 124 ]] || [[ "$tool_rc" -eq 137 ]] || [[ "$tool_rc" -eq 143 ]]; then
+        fail_reason="timeout after ${STALL_MINUTES}m (exit $tool_rc)"
+        log_error "Tool timed out after ${STALL_MINUTES} minutes (exit code $tool_rc)"
+
+        # Check if output is empty/minimal - indicates CLI hung during startup
+        local output_size=${#OUTPUT}
+        if [[ "$output_size" -lt 100 ]]; then
+          log_error "EMPTY OUTPUT DETECTED - Claude CLI likely hung during context loading"
+          log_error "This task may be too complex. Consider breaking it into smaller sub-tasks."
+          fail_reason="timeout with no output (task too complex?)"
+        fi
         update_loop_state "timeout" "implement" 1 "timed out"
       else
         log_error "Tool failed with exit code $tool_rc"
@@ -3425,7 +3620,7 @@ main() {
       log_info "Agent reports task complete. Verifying build..."
 
       # CRITICAL: Run task-specific verification BEFORE any reviews
-      # Re-read verification to pick up mid-iteration fixes (Pattern 8)
+      # Re-read verification commands in case they were updated during iteration
       local fresh_verification
       fresh_verification=$(refresh_task_verification "$task_id")
       if [[ -n "$fresh_verification" ]]; then

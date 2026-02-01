@@ -350,3 +350,66 @@ Tracking structural issues observed during ralph.sh execution that may need code
   1. Race condition: tmp file deleted before ralph reads it
   2. File handle issue: output not flushed before read
   3. Wrong tmp file being read
+- **User Fix Applied (2026-02-01)**: See Issue 29 Fix Summary
+  - Removed redundant `cat "$tmp_output"` causing double output
+  - Added `sync` after command execution
+  - Added explicit `-s` check for empty files
+  - Changed from hardcoded `/tmp` to `$TMPDIR` for macOS
+
+---
+
+## Issue 30: False Timeout Reports - Immediate Process Termination
+
+- **Symptom**: Ralph reports "Tool timed out after 45 minutes (exit code 143)" but process dies within seconds
+- **Root Cause**: Exit codes 143 (SIGTERM) and 137 (SIGKILL) are reported as timeouts, but actual cause is different
+- **Status**: 🔴 STRUCTURAL - Misleading error messages
+- **Evidence** (2026-02-01):
+  - bd-758 iterations 1-5 all "timed out" within 30 seconds each
+  - Log timestamps show rapid succession of failures
+  - Actual tests (E2E-US-013-04, E2E-US-013-06) pass when run manually
+  - The claude instance completes work but gets killed before ralph reads output
+- **Impact**:
+  - Misleading logs make debugging harder
+  - Beads loop infinitely despite work being complete
+  - Resource waste from repeated attempts
+- **Diagnosis**:
+  ```bash
+  # Check timestamps to see if "45 minute" timeouts are actually fast
+  grep -E "(Spawning|timed out)" /tmp/ralph_full_run.log | tail -20
+
+  # Verify tests actually pass
+  npm run test:e2e -- --grep 'E2E-US-XXX'
+  ```
+- **Proposed Fix for ralph.sh**:
+  1. Track actual elapsed time and report it accurately
+  2. Distinguish between timeout kills and external kills
+  3. Check if work was actually completed before marking as failed
+  4. Add: `if tests pass && tmp file has TASK_COMPLETE → close bead`
+
+---
+
+## Issue 31: Resource Contention Causes Immediate Claude Death
+
+- **Symptom**: New claude instances for ralph die immediately (exit 137/143)
+- **Root Cause**: Too many concurrent claude instances competing for resources
+- **Status**: 🔴 STRUCTURAL - Related to Issue 28
+- **Evidence** (2026-02-01):
+  - 22 claude instances running simultaneously
+  - Total CPU: 112%+ across all instances
+  - Top instances using 97.5% and 64.5% CPU each
+  - New instances spawned by ralph get killed immediately
+- **Impact**: Ralph cannot complete any beads until resources are freed
+- **Workaround**:
+  ```bash
+  # Check resource usage before running ralph
+  ps aux | grep claude | wc -l
+  ps aux | grep claude | awk '{sum+=$3} END {print sum"%"}'
+
+  # If too many instances, kill non-essential ones
+  # (Be careful - identify which are from ralph vs interactive sessions)
+  ```
+- **Proposed Fix for ralph.sh**:
+  1. Check claude instance count before spawning
+  2. If count > threshold (e.g., 10), wait or warn
+  3. Track PID of spawned claude instance
+  4. Clean up orphaned instances from previous ralph runs

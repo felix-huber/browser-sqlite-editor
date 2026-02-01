@@ -93,3 +93,7 @@ Run Started: 2026-01-30T22:30:26+01:00
 | bd-8se | P8-02k: E2E fill — Sidebar multi-DB switching stress | FAILED | - | tool failed (rc=143) |
 | bd-8se | P8-02k: E2E fill — Sidebar multi-DB switching stress | FAILED | - | tool failed (rc=143) |
 | bd-8se | P8-02k: E2E fill — Sidebar multi-DB switching stress | DONE | 84dd371e827f9d560482f70907114f56e0ae203a | clean |
+| bd-758 | P8-02m: E2E fill — IndexedDB fallback switch/rename | FAILED | - | tool failed (rc=143) |
+| bd-758 | P8-02m: E2E fill — IndexedDB fallback switch/rename | FAILED | - | tool failed (rc=137) |
+| bd-758 | P8-02m: E2E fill — IndexedDB fallback switch/rename | FAILED | - | tool failed (rc=143) |
+| bd-758 | P8-02m: E2E fill — IndexedDB fallback switch/rename | FAILED | - | tool failed (rc=137) |
