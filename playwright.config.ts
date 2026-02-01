@@ -36,7 +36,7 @@ export default defineConfig({
     timeout: 10000,
   },
   use: {
-    baseURL: 'http://localhost:4173',
+    baseURL: 'http://127.0.0.1:4173',
     // Capture traces on first retry for debugging failures
     trace: 'on-first-retry',
     // Capture screenshots on failure for visual debugging
@@ -68,11 +68,13 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run build && npm run preview',
-    url: 'http://localhost:4173',
+    command: process.env.CI
+      ? 'npm run preview -- --host 127.0.0.1 --port 4173 --strictPort'
+      : 'npm run build && npm run preview -- --host 127.0.0.1 --port 4173 --strictPort',
+    url: 'http://127.0.0.1:4173',
     reuseExistingServer: !process.env.CI,
-    timeout: 60000,
-    stdout: 'pipe',
-    stderr: 'pipe',
+    timeout: 120000,
+    stdout: process.env.CI ? 'inherit' : 'pipe',
+    stderr: process.env.CI ? 'inherit' : 'pipe',
   },
 });

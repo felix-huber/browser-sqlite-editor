@@ -70,6 +70,61 @@ type ParserState =
   | 'block_comment';
 
 /**
+ * Check if the current position matches a word boundary keyword.
+ * The keyword must be preceded and followed by non-word characters.
+ */
+function matchKeyword(sql: string, pos: number, keyword: string): boolean {
+  // Check if we have enough characters
+  if (pos + keyword.length > sql.length) {
+    return false;
+  }
+
+  // Check the keyword itself (case-insensitive)
+  const slice = sql.slice(pos, pos + keyword.length);
+  if (slice.toUpperCase() !== keyword.toUpperCase()) {
+    return false;
+  }
+
+  // Check for word boundary before (must be non-word char or start of string)
+  if (pos > 0) {
+    const charBefore = sql[pos - 1];
+    if (/\w/.test(charBefore)) {
+      return false;
+    }
+  }
+
+  // Check for word boundary after (must be non-word char or end of string)
+  const posAfter = pos + keyword.length;
+  if (posAfter < sql.length) {
+    const charAfter = sql[posAfter];
+    if (/\w/.test(charAfter)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Check if BEGIN at the current position is a block delimiter (not a transaction command).
+ * BEGIN is a block delimiter when it appears after certain keywords like CREATE TRIGGER.
+ * It is a transaction command when it's at the start of a statement.
+ */
+function isBeginBlockDelimiter(currentStatement: string): boolean {
+  // Normalize the current statement so far
+  const normalized = currentStatement.trim().toUpperCase();
+
+  // BEGIN is a block delimiter in CREATE TRIGGER statements
+  // Pattern: CREATE [TEMP|TEMPORARY] TRIGGER ... ON table_name BEGIN
+  if (normalized.startsWith('CREATE')) {
+    // Check if this is a trigger creation
+    return /CREATE\s+(TEMP(ORARY)?\s+)?TRIGGER\b/i.test(normalized);
+  }
+
+  return false;
+}
+
+/**
  * Split SQL text into individual statements.
  *
  * Handles:
@@ -77,6 +132,7 @@ type ParserState =
  * - Line comments (--)
  * - Block comments (/* *\/)
  * - Empty statements (consecutive semicolons)
+ * - BEGIN...END blocks in triggers - semicolons inside are not statement separators
  *
  * @param sql Multi-statement SQL text
  * @returns Array of individual SQL statements (trimmed, non-empty)
@@ -86,6 +142,8 @@ export function splitStatements(sql: string): string[] {
   let current = '';
   let state: ParserState = 'normal';
   let i = 0;
+  // Track BEGIN...END nesting depth for triggers and compound statements
+  let beginEndDepth = 0;
 
   while (i < sql.length) {
     const char = sql[i];
@@ -93,13 +151,36 @@ export function splitStatements(sql: string): string[] {
 
     switch (state) {
       case 'normal':
-        if (char === ';') {
-          // End of statement
-          const trimmed = current.trim();
-          if (trimmed) {
-            statements.push(trimmed);
+        // Check for BEGIN keyword
+        if (matchKeyword(sql, i, 'BEGIN')) {
+          // Only treat as block delimiter if inside a CREATE TRIGGER statement
+          if (isBeginBlockDelimiter(current)) {
+            beginEndDepth++;
           }
-          current = '';
+          current += sql.slice(i, i + 5); // Add 'BEGIN'
+          i += 4; // Will be incremented by 1 at end of loop
+        }
+        // Check for END keyword (ends a block)
+        else if (matchKeyword(sql, i, 'END')) {
+          current += sql.slice(i, i + 3); // Add 'END'
+          if (beginEndDepth > 0) {
+            beginEndDepth--;
+          }
+          i += 2; // Will be incremented by 1 at end of loop
+        }
+        else if (char === ';') {
+          // Only treat as statement separator if not inside BEGIN...END
+          if (beginEndDepth === 0) {
+            // End of statement
+            const trimmed = current.trim();
+            if (trimmed) {
+              statements.push(trimmed);
+            }
+            current = '';
+          } else {
+            // Inside BEGIN...END block, keep the semicolon
+            current += char;
+          }
         } else if (char === "'" ) {
           current += char;
           state = 'single_quote';

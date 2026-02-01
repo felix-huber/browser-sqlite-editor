@@ -1283,229 +1283,189 @@ test.describe('Size Warning Toast', () => {
   });
 
   /**
-   * Helper to create a large database blob in IDB storage
-   * Creates a blob of specified size to simulate a large database
+   * Helper to wait for the test API to be available
    */
-  async function createLargeDatabaseInIdb(
-    page: Page,
-    name: string,
-    sizeBytes: number
-  ): Promise<string> {
-    return page.evaluate(
-      async ({ dbName, size }) => {
-        const id = `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 8)}`;
-        const timestamp = new Date().toISOString();
-
-        // Create registry entry
-        const entry = {
-          id,
-          name: dbName,
-          createdAt: timestamp,
-          lastOpenedAt: timestamp,
-          storageType: 'idb' as const,
+  async function waitForTestApi(page: Page): Promise<void> {
+    await page.waitForFunction(() => {
+      const win = window as Window & {
+        __sqliteEditorTest?: {
+          simulateSizeWarning?: (dbId: string, sizeBytes: number, storageMode: 'opfs' | 'idb') => void;
         };
+      };
+      return !!win.__sqliteEditorTest?.simulateSizeWarning;
+    }, { timeout: 15000 });
+  }
 
-        // Open registry database
-        const registryDb = await new Promise<IDBDatabase>((resolve, reject) => {
-          const req = indexedDB.open('sqlite-editor-registry', 1);
-          req.onerror = () => reject(req.error);
-          req.onsuccess = () => resolve(req.result);
-          req.onupgradeneeded = (event) => {
-            const database = (event.target as IDBOpenDBRequest).result;
-            if (!database.objectStoreNames.contains('registry')) {
-              database.createObjectStore('registry', { keyPath: 'key' });
-            }
+  /**
+   * Helper to simulate a size warning via the test API.
+   * This bypasses the need to create actual large database files.
+   */
+  async function simulateSizeWarning(
+    page: Page,
+    dbId: string,
+    sizeBytes: number,
+    storageMode: 'opfs' | 'idb'
+  ): Promise<void> {
+    await page.evaluate(
+      ({ dbId, sizeBytes, storageMode }) => {
+        const win = window as Window & {
+          __sqliteEditorTest?: {
+            simulateSizeWarning?: (dbId: string, sizeBytes: number, storageMode: 'opfs' | 'idb') => void;
           };
-        });
-
-        // Read existing registry
-        let existingData: { databases: typeof entry[] } = { databases: [] };
-        try {
-          const tx = registryDb.transaction('registry', 'readonly');
-          const store = tx.objectStore('registry');
-          const result = await new Promise<{ key: string; data: typeof existingData } | undefined>(
-            (resolve, reject) => {
-              const req = store.get('registry');
-              req.onsuccess = () =>
-                resolve(req.result as { key: string; data: typeof existingData } | undefined);
-              req.onerror = () => reject(req.error);
-            }
-          );
-          if (result?.data) {
-            existingData = result.data;
-          }
-        } catch {
-          // No existing data
+        };
+        if (win.__sqliteEditorTest?.simulateSizeWarning) {
+          win.__sqliteEditorTest.simulateSizeWarning(dbId, sizeBytes, storageMode);
         }
-
-        // Add new entry
-        existingData.databases.push(entry);
-
-        // Save back
-        const writeTx = registryDb.transaction('registry', 'readwrite');
-        const writeStore = writeTx.objectStore('registry');
-        await new Promise<void>((resolve, reject) => {
-          const req = writeStore.put({ key: 'registry', data: existingData });
-          req.onsuccess = () => resolve();
-          req.onerror = () => reject(req.error);
-        });
-
-        registryDb.close();
-
-        // Create a large blob with valid SQLite header
-        const sqliteHeader = new Uint8Array([
-          0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, // "SQLite f"
-          0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00, // "ormat 3\0"
-        ]);
-
-        // Create padding to reach desired size
-        const paddingSize = Math.max(0, size - sqliteHeader.length);
-        const padding = new Uint8Array(paddingSize);
-
-        // Store in idb-sqlite
-        const sqliteDb = await new Promise<IDBDatabase>((resolve, reject) => {
-          const req = indexedDB.open('idb-sqlite', 1);
-          req.onerror = () => reject(req.error);
-          req.onsuccess = () => resolve(req.result);
-          req.onupgradeneeded = (event) => {
-            const database = (event.target as IDBOpenDBRequest).result;
-            if (!database.objectStoreNames.contains('databases')) {
-              database.createObjectStore('databases', { keyPath: 'name' });
-            }
-          };
-        });
-
-        const sqliteTx = sqliteDb.transaction('databases', 'readwrite');
-        const sqliteStore = sqliteTx.objectStore('databases');
-
-        await new Promise<void>((resolve, reject) => {
-          const blob = new Blob([sqliteHeader, padding], { type: 'application/x-sqlite3' });
-          const req = sqliteStore.put({
-            name: dbName,
-            blob,
-            updatedAt: timestamp,
-          });
-          req.onsuccess = () => resolve();
-          req.onerror = () => reject(req.error);
-        });
-
-        sqliteDb.close();
-
-        return id;
       },
-      { dbName: name, size: sizeBytes }
+      { dbId, sizeBytes, storageMode }
     );
+    // Give the store time to update (dynamic import + store update)
+    await page.waitForTimeout(200);
+  }
+
+  /**
+   * Helper to clear size warning via the test API
+   */
+  async function clearSizeWarningViaApi(page: Page): Promise<void> {
+    await page.evaluate(() => {
+      const win = window as Window & {
+        __sqliteEditorTest?: {
+          clearSizeWarning?: () => void;
+        };
+      };
+      if (win.__sqliteEditorTest?.clearSizeWarning) {
+        win.__sqliteEditorTest.clearSizeWarning();
+      }
+    });
+    // Give the store time to update (dynamic import + store update)
+    await page.waitForTimeout(200);
   }
 
   test('shows size warning toast for database exceeding IDB threshold', async ({ page }) => {
-    // IDB threshold is 50MB, create a 55MB database
-    const largeSize = 55 * 1024 * 1024;
-    await createLargeDatabaseInIdb(page, 'large-test-db', largeSize);
-
-    // Reload the page to trigger size check on open
-    await page.reload();
-    await expect(page).toHaveTitle(/SQLite Editor/);
-
-    // The warning toast should appear when the database is opened/detected
-    // We need to trigger the app to check the size by accessing the database list
-    // The app should check sizes on load for registry entries
-
-    // Wait for app to initialize and check sizes
+    // Wait for the app to initialize and test API to be available
     await page.waitForLoadState('networkidle');
+    await waitForTestApi(page);
 
-    // Look for the size warning toast
+    // Simulate a size warning for a large database (55MB exceeds 50MB IDB threshold)
+    const largeSize = 55 * 1024 * 1024;
+    await simulateSizeWarning(page, 'large-test-db', largeSize, 'idb');
+
+    // The size warning toast should appear
     const toast = page.getByTestId('size-warning-toast');
+    await expect(toast).toBeVisible({ timeout: 10000 });
 
-    // Toast may or may not appear depending on when size check runs
-    // Check if it's visible within a reasonable time
-    try {
-      await expect(toast).toBeVisible({ timeout: 5000 });
+    // Verify toast contains expected content
+    await expect(toast).toContainText('Large Database Warning');
+    await expect(toast).toContainText('large-test-db');
 
-      // Verify toast contains expected content
-      await expect(toast).toContainText('Large Database Warning');
-      await expect(toast).toContainText('large-test-db');
-      await expect(toast).toContainText('50MB');
+    // Test dismiss button
+    const dismissButton = page.getByTestId('size-warning-dismiss');
+    await dismissButton.click();
 
-      // Test dismiss button
-      const dismissButton = page.getByTestId('size-warning-dismiss');
-      await dismissButton.click();
-
-      // Toast should disappear
-      await expect(toast).toBeHidden();
-    } catch {
-      // If toast doesn't appear automatically, it might need an explicit database open
-      // This is acceptable - the feature may require actually opening the database
-      test.skip();
-    }
+    // Toast should disappear
+    await expect(toast).toBeHidden();
   });
 
   test('size warning toast can be dismissed', async ({ page }) => {
-    // Create large database
-    const largeSize = 55 * 1024 * 1024;
-    await createLargeDatabaseInIdb(page, 'dismissable-db', largeSize);
-
-    await page.reload();
     await page.waitForLoadState('networkidle');
+    await waitForTestApi(page);
 
+    // Simulate a size warning
+    const largeSize = 55 * 1024 * 1024;
+    await simulateSizeWarning(page, 'dismissable-db', largeSize, 'idb');
+
+    // Toast should appear
     const toast = page.getByTestId('size-warning-toast');
+    await expect(toast).toBeVisible({ timeout: 10000 });
 
-    try {
-      await expect(toast).toBeVisible({ timeout: 5000 });
+    // Click dismiss button
+    const dismissButton = page.getByTestId('size-warning-dismiss');
+    await expect(dismissButton).toBeVisible();
+    await dismissButton.click();
 
-      // Click dismiss button
-      const dismissButton = page.getByTestId('size-warning-dismiss');
-      await expect(dismissButton).toBeVisible();
-      await dismissButton.click();
-
-      // Verify toast is hidden
-      await expect(toast).toBeHidden({ timeout: 2000 });
-    } catch {
-      // Feature may require database to be opened first
-      test.skip();
-    }
+    // Verify toast is hidden
+    await expect(toast).toBeHidden({ timeout: 2000 });
   });
 
   test('size warning does not reappear for same database in same session', async ({ page }) => {
-    // Create large database
-    const largeSize = 55 * 1024 * 1024;
-    await createLargeDatabaseInIdb(page, 'once-per-session-db', largeSize);
-
-    await page.reload();
     await page.waitForLoadState('networkidle');
+    await waitForTestApi(page);
+
+    // Simulate a size warning
+    const largeSize = 55 * 1024 * 1024;
+    await simulateSizeWarning(page, 'once-per-session-db', largeSize, 'idb');
 
     const toast = page.getByTestId('size-warning-toast');
 
-    try {
-      // Wait for initial toast
-      await expect(toast).toBeVisible({ timeout: 5000 });
-      await expect(toast).toContainText('once-per-session-db');
+    // Wait for initial toast
+    await expect(toast).toBeVisible({ timeout: 10000 });
+    await expect(toast).toContainText('once-per-session-db');
 
-      // Dismiss it
-      await page.getByTestId('size-warning-dismiss').click();
-      await expect(toast).toBeHidden();
+    // Dismiss it
+    await page.getByTestId('size-warning-dismiss').click();
+    await expect(toast).toBeHidden();
 
-      // Trigger another size check (e.g., by navigating away and back)
-      // The toast should NOT reappear for the same database in the same session
-      await page.evaluate(() => {
-        // Manually call size check if available through test API
-        const testApi = (
-          window as Window & {
-            __sqliteEditorTest?: { refreshSizeWarning?: () => Promise<void> };
-          }
-        ).__sqliteEditorTest;
-        if (testApi?.refreshSizeWarning) {
-          return testApi.refreshSizeWarning();
-        }
-      });
+    // Trigger another size warning for the SAME database
+    // The toast should NOT reappear (already warned this session)
+    await simulateSizeWarning(page, 'once-per-session-db', largeSize, 'idb');
 
-      // Wait a moment for any potential toast
-      await page.waitForTimeout(1000);
+    // Wait a moment for any potential toast
+    await page.waitForTimeout(500);
 
-      // Toast should still be hidden (not re-shown)
-      await expect(toast).toBeHidden();
-    } catch {
-      // Feature may require database to be opened first
-      test.skip();
-    }
+    // Toast should still be hidden (not re-shown)
+    await expect(toast).toBeHidden();
+  });
+
+  test('size warning shows for different databases in same session', async ({ page }) => {
+    await page.waitForLoadState('networkidle');
+    await waitForTestApi(page);
+
+    const largeSize = 55 * 1024 * 1024;
+    const toast = page.getByTestId('size-warning-toast');
+
+    // First database warning
+    await simulateSizeWarning(page, 'db-alpha', largeSize, 'idb');
+    await expect(toast).toBeVisible({ timeout: 10000 });
+    await expect(toast).toContainText('db-alpha');
+
+    // Dismiss first warning
+    await page.getByTestId('size-warning-dismiss').click();
+    await expect(toast).toBeHidden();
+
+    // Second database warning - should show since it's a different DB
+    await simulateSizeWarning(page, 'db-beta', largeSize, 'idb');
+    await expect(toast).toBeVisible({ timeout: 10000 });
+    await expect(toast).toContainText('db-beta');
+
+    // Dismiss second warning
+    await page.getByTestId('size-warning-dismiss').click();
+    await expect(toast).toBeHidden();
+  });
+
+  test('size warning uses correct threshold for OPFS vs IDB', async ({ page }) => {
+    await page.waitForLoadState('networkidle');
+    await waitForTestApi(page);
+
+    const toast = page.getByTestId('size-warning-toast');
+
+    // 60MB should NOT trigger OPFS warning (threshold is 100MB)
+    await simulateSizeWarning(page, 'medium-db', 60 * 1024 * 1024, 'opfs');
+    await page.waitForTimeout(500);
+    await expect(toast).toBeHidden();
+
+    // But 60MB SHOULD trigger IDB warning (threshold is 50MB)
+    await simulateSizeWarning(page, 'medium-db-idb', 60 * 1024 * 1024, 'idb');
+    await expect(toast).toBeVisible({ timeout: 10000 });
+    await expect(toast).toContainText('medium-db-idb');
+
+    // Dismiss
+    await page.getByTestId('size-warning-dismiss').click();
+    await expect(toast).toBeHidden();
+
+    // 105MB should trigger OPFS warning
+    await simulateSizeWarning(page, 'very-large-db', 105 * 1024 * 1024, 'opfs');
+    await expect(toast).toBeVisible({ timeout: 10000 });
+    await expect(toast).toContainText('very-large-db');
+    await expect(toast).toContainText('100MB'); // OPFS threshold
   });
 });

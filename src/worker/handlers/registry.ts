@@ -4,7 +4,7 @@
 
 import type { WorkerRequest, WorkerResponse, WorkerErrorCode, StorageMode } from '../../types';
 import { getEngine } from '../../core/engine/db-engine';
-import { OPFS_VFS_NAME, getOPFSDatabaseSize } from '../../core/engine/opfs-vfs';
+import { OPFS_VFS_NAME, getOPFSDatabaseSize, ensureAppDirectories } from '../../core/engine/opfs-vfs';
 import { getRegistry, toFilename, forceReinitializeRegistry, resetRegistry } from '../db-registry';
 import { resolveDbPath } from '../storage';
 import { getIdbDbSize } from '../idb-storage';
@@ -282,10 +282,18 @@ export async function handleResetAppRequest(
   postResponse: PostResponse
 ): Promise<void> {
   try {
-    // Close any open database
+    // Shutdown the engine completely to release file handles, VFS, and IDB connections
+    // This is more thorough than just close() as it also closes the VFS
     const engine = getEngine();
-    await engine.close();
+    await engine.shutdown();
     resetSessionTracker();
+
+    // Reset registry singleton BEFORE clearing storage
+    // This ensures no new connections are opened during cleanup
+    resetRegistry();
+
+    // Small delay to allow any pending IDB transactions to complete
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     // Clear OPFS
     try {
@@ -305,30 +313,48 @@ export async function handleResetAppRequest(
       console.warn('[resetApp] Failed to clear OPFS:', err);
     }
 
-    // Clear IndexedDB databases
-    const idbNames = [
-      'sqlite-editor-registry',
-      'idb-batch-atomic',
-      'idb-sqlite',
-    ];
-    for (const name of idbNames) {
+    // Recreate OPFS app directories immediately after clearing
+    // This ensures the directory structure exists before page reload and any
+    // subsequent operations. Without this, importing a database after reset
+    // could fail with NotFoundError because the directories don't exist.
+    try {
+      await ensureAppDirectories();
+    } catch (err) {
+      console.warn('[resetApp] Failed to recreate OPFS directories:', err);
+    }
+
+    // Helper to delete an IndexedDB - non-blocking approach
+    // If deletion is blocked, we log and continue. The next page load will
+    // find an empty registry and won't discover these databases anyway.
+    const deleteIdb = async (name: string): Promise<void> => {
       try {
         await new Promise<void>((resolve, reject) => {
           const req = indexedDB.deleteDatabase(name);
           req.onsuccess = () => resolve();
           req.onerror = () => reject(req.error);
           req.onblocked = () => {
-            console.warn(`[resetApp] IDB delete blocked for "${name}"`);
+            // Database is blocked by open connections
+            // This is OK - the page will reload and the database will be
+            // orphaned (no registry entry). The user can try again if needed.
+            console.warn(`[resetApp] IDB delete blocked for "${name}", proceeding anyway`);
             resolve();
           };
         });
       } catch (err) {
+        // Log but don't fail the overall reset
         console.warn(`[resetApp] Failed to delete IDB "${name}":`, err);
       }
-    }
+    };
 
-    // Reset registry singleton
-    resetRegistry();
+    // Clear all known IndexedDB databases
+    const idbNames = [
+      'sqlite-editor-registry',
+      'idb-batch-atomic',
+      'idb-sqlite',
+    ];
+
+    // Delete all IDBs in parallel for faster cleanup
+    await Promise.all(idbNames.map((name) => deleteIdb(name)));
 
     postResponse({ type: 'success' }, id);
   } catch (err) {

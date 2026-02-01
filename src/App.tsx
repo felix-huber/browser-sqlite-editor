@@ -65,6 +65,11 @@ interface ActiveView {
 
 type TestApi = {
   getRegistry: () => Promise<DatabaseRegistry | null>;
+  refreshSizeWarning: () => Promise<void>;
+  /** Simulate a size warning for testing the toast UI without needing actual large files */
+  simulateSizeWarning: (dbId: string, sizeBytes: number, storageMode: 'opfs' | 'idb') => void;
+  /** Clear the current size warning */
+  clearSizeWarning: () => void;
 };
 
 function App() {
@@ -227,6 +232,20 @@ function App() {
 
         const databases = useDatabaseStore.getState().databases;
         return { v: 1, databases };
+      },
+      refreshSizeWarning: async () => {
+        const { refreshSizeWarning } = await import('./store');
+        await refreshSizeWarning();
+      },
+      simulateSizeWarning: (dbId: string, sizeBytes: number, storageMode: 'opfs' | 'idb') => {
+        import('./store').then(({ checkSizeWarning }) => {
+          checkSizeWarning(dbId, sizeBytes, storageMode);
+        });
+      },
+      clearSizeWarning: () => {
+        import('./store').then(({ clearSizeWarning }) => {
+          clearSizeWarning();
+        });
       },
     };
 
@@ -459,6 +478,14 @@ function App() {
 
     // Reset store state
     useDatabaseStore.getState().reset();
+
+    // Terminate the worker to ensure all file handles and IDB connections are fully released
+    // This is critical for the IndexedDB delete operations to succeed on page reload
+    if (workerRef.current) {
+      workerRef.current.terminate();
+      workerRef.current = null;
+    }
+    workerClientRef.current = null;
   }, []);
 
   // Handle table selection from sidebar

@@ -114,6 +114,55 @@ SELECT * FROM users;
     expect(statements[1]).toBe("INSERT INTO users VALUES (1, 'John')");
     expect(statements[2]).toBe('SELECT * FROM users');
   });
+
+  it('handles CREATE TRIGGER with BEGIN...END block', () => {
+    const sql = `
+CREATE TRIGGER people_update AFTER UPDATE ON people BEGIN UPDATE people SET note = note; END;
+SELECT * FROM sqlite_master;
+`;
+    const statements = splitStatements(sql);
+    expect(statements).toHaveLength(2);
+    expect(statements[0]).toContain('CREATE TRIGGER');
+    expect(statements[0]).toContain('BEGIN');
+    expect(statements[0]).toContain('UPDATE people SET note = note;');
+    expect(statements[0]).toContain('END');
+    expect(statements[1]).toBe('SELECT * FROM sqlite_master');
+  });
+
+  it('handles CREATE TRIGGER with multiple statements in BEGIN...END', () => {
+    const sql = `
+CREATE TRIGGER audit_trigger AFTER INSERT ON users BEGIN
+  INSERT INTO audit_log VALUES (NEW.id);
+  UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+SELECT 1;
+`;
+    const statements = splitStatements(sql);
+    expect(statements).toHaveLength(2);
+    expect(statements[0]).toContain('CREATE TRIGGER');
+    expect(statements[0]).toContain('INSERT INTO audit_log');
+    expect(statements[0]).toContain('UPDATE users SET updated_at');
+    expect(statements[0]).toContain('END');
+    expect(statements[1]).toBe('SELECT 1');
+  });
+
+  it('handles CREATE TEMP TRIGGER with BEGIN...END block', () => {
+    const sql = 'CREATE TEMP TRIGGER temp_trig AFTER INSERT ON t BEGIN SELECT 1; END; SELECT 2';
+    const statements = splitStatements(sql);
+    expect(statements).toHaveLength(2);
+    expect(statements[0]).toContain('CREATE TEMP TRIGGER');
+    expect(statements[0]).toContain('END');
+    expect(statements[1]).toBe('SELECT 2');
+  });
+
+  it('does not confuse BEGIN TRANSACTION with BEGIN...END block', () => {
+    const sql = 'BEGIN; INSERT INTO t VALUES (1); COMMIT';
+    const statements = splitStatements(sql);
+    expect(statements).toHaveLength(3);
+    expect(statements[0]).toBe('BEGIN');
+    expect(statements[1]).toBe('INSERT INTO t VALUES (1)');
+    expect(statements[2]).toBe('COMMIT');
+  });
 });
 
 // =============================================================================

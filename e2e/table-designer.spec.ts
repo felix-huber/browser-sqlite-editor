@@ -228,8 +228,8 @@ test.describe('Table Designer - Edit Mode', () => {
     await expect(page.getByTestId('cell-0-name')).toContainText('Ada');
   });
 
-  // Skip: triggers are not preserved during table rebuild in SQLite - this is expected behavior
-  test.skip('indexes and triggers survive rebuild', async ({ page }) => {
+  // Note: Our rebuild logic extracts and recreates triggers/indexes
+  test('indexes and triggers survive rebuild', async ({ page }) => {
     await openDesignerForTable(page, dbName, 'people');
     const deleteButton = page.locator('[data-testid^="column-delete-"]').nth(2);
     await deleteButton.click();

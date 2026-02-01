@@ -144,8 +144,11 @@ export function Welcome({
     setIsResetting(true);
     try {
       await onResetApp();
-      // Reload the page after reset
-      window.location.reload();
+      // Small delay to ensure async storage operations complete
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Hard reload the page after reset using navigation to ensure completely fresh state
+      // This is more reliable than reload() because it ensures any cached state is cleared
+      window.location.href = window.location.pathname + '?reset=' + Date.now();
     } catch (err) {
       setToastMessage({
         type: 'error',

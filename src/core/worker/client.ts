@@ -587,9 +587,12 @@ export class WorkerClient {
    * Reset the app - clear all storage and reset registry.
    * This is a destructive operation that wipes all databases.
    * After calling this, you should reload the page.
+   *
+   * Note: Uses a longer timeout (60s) as IndexedDB deletion can be slow
+   * when databases are blocked by other connections.
    */
   async resetApp(): Promise<void> {
-    await this.request<{ type: 'success' }>({ type: 'resetApp' });
+    await this.request<{ type: 'success' }>({ type: 'resetApp' }, 60000);
   }
 
   /**

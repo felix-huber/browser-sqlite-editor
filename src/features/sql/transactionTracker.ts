@@ -189,8 +189,9 @@ export async function executeWithTransactionTracking(
         // Update tracker state after successful execution
         tracker.handleStatement(stmt);
       } catch (err) {
-        // On error, if we're in a transaction, issue rollback
-        if (tracker.isInTransaction()) {
+        // On error, if we're in a transaction and auto-rollback is enabled, issue rollback
+        // When skipAutoRollback (autoRollbackOrphan=false), the caller handles rollback
+        if (autoRollbackOrphan && tracker.isInTransaction()) {
           try {
             await engine.exec('ROLLBACK');
           } catch {

@@ -29,6 +29,7 @@ async function openImportDialogWithFile(page: import('@playwright/test').Page, f
   await page.getByTestId('import-data-input').setInputFiles(filePath);
   await expect(page.getByTestId('import-dialog')).toBeVisible({ timeout: 10000 });
   await expect(page.getByTestId('import-preview')).toBeVisible({ timeout: 10000 });
+  await expect(page.getByTestId('import-button')).toBeVisible({ timeout: 10000 });
 }
 
 test.describe('Import/Export (real UI)', () => {
@@ -76,19 +77,23 @@ test.describe('Import/Export (real UI)', () => {
     await expect(page.getByTestId('cell-0-name')).toHaveText('Widget');
   });
 
-  // TODO: Investigate flaky import timing in CI
-  test.skip('type override applies to imported schema', async ({ page }) => {
+  test('type override applies to imported schema', async ({ page }) => {
     const csvPath = writeTempFile('ages.csv', 'id,age\n1,10\n2,20\n');
     await openImportDialogWithFile(page, csvPath);
 
     await page.getByTestId('table-name-input').fill('ages');
-    await page.getByTestId('type-dropdown-1').selectOption('TEXT');
+    const typeDropdown = page.getByTestId('type-dropdown-1');
+    await expect(typeDropdown).toBeEnabled({ timeout: 10000 });
+    await typeDropdown.selectOption('TEXT');
+    await expect(typeDropdown).toHaveValue('TEXT');
+    await expect(page.getByTestId('import-button')).toBeEnabled({ timeout: 10000 });
     await page.getByTestId('import-button').click();
     // Import can take longer in CI - increase timeout
-    await expect(page.getByTestId('import-dialog')).toBeHidden({ timeout: 20000 });
+    await expect(page.getByTestId('import-dialog')).toBeHidden({ timeout: 30000 });
+    await waitForReady(page);
 
-    await runSql(page, "PRAGMA table_info('ages')");
-    await expect(page.getByTestId('cell-1-type')).toHaveText('TEXT');
+    await runSql(page, "SELECT type FROM pragma_table_info('ages') WHERE name = 'age'");
+    await expect(page.getByTestId('cell-0-type')).toHaveText('TEXT');
   });
 
   test('type override shows mismatch warnings for invalid coercion', async ({ page }) => {
@@ -99,20 +104,27 @@ test.describe('Import/Export (real UI)', () => {
     await expect(page.getByTestId('mismatch-warning')).toBeVisible();
   });
 
-  // TODO: Investigate constraint violation error display in CI
-  test.skip('import rollback occurs on constraint violation', async ({ page }) => {
+  test('import rollback occurs on constraint violation', async ({ page }) => {
     const csvPath = writeTempFile('dupes.csv', 'email\na@example.com\n');
     await openImportDialogWithFile(page, csvPath);
 
-    await page.getByTestId('target-append').click();
-    await page.getByTestId('table-name-select').selectOption('unique_table');
+    const appendTarget = page.getByTestId('target-append');
+    await expect(appendTarget).toBeEnabled({ timeout: 15000 });
+    await appendTarget.click();
+    const tableSelect = page.getByTestId('table-name-select');
+    await expect(tableSelect).toBeVisible({ timeout: 10000 });
+    await tableSelect.selectOption('unique_table');
+    await expect(tableSelect).toHaveValue('unique_table');
+    await expect(page.getByTestId('import-button')).toBeEnabled({ timeout: 10000 });
     await page.getByTestId('import-button').click();
 
-    await expect(page.getByTestId('error-state')).toBeVisible({ timeout: 10000 });
-    // Error message within error-state should mention the constraint violation
     const errorState = page.getByTestId('error-state');
+    await expect(errorState).toBeVisible({ timeout: 20000 });
+    // Error message within error-state should mention the constraint violation
     await expect(errorState.getByText(/CONSTRAINT|unique|violated/i)).toBeVisible();
     await page.getByTestId('close-button').click();
+    await expect(page.getByTestId('import-dialog')).toBeHidden({ timeout: 10000 });
+    await waitForReady(page);
 
     await runSql(page, 'SELECT COUNT(*) AS count FROM unique_table');
     await expect(page.getByTestId('cell-0-count')).toHaveText('1');
