@@ -1,6 +1,6 @@
 {
-  "runId": "2026-02-01T01:33:25+01:00",
-  "updatedAt": "2026-02-01T01:33:25+01:00",
+  "runId": "2026-02-01T01:36:57+01:00",
+  "updatedAt": "2026-02-01T01:36:57+01:00",
   "mode": {
     "loop": true,
     "beads": true
@@ -8,13 +8,13 @@
   "task": {
     "id": "bd-29u",
     "subject": "Split CI into separate workflows for per-job badges",
-    "status": "running",
-    "phase": "implement",
+    "status": "completed",
+    "phase": "done",
     "attempt": 1
   },
   "tools": {
     "implementer": "smart",
     "reviewer": "smart"
   },
-  "note": "started"
+  "note": "all checks passed"
 }
