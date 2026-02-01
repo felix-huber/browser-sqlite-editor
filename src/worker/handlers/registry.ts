@@ -24,7 +24,13 @@ export async function handleOpenRequest(
 
     const { path, vfsName } = await resolveDbPath(request.dbName);
     const readOnly = request.readOnly ?? false;
-    const createIfMissing = vfsName === OPFS_VFS_NAME && !readOnly;
+    // For OPFS mode, always pass createIfMissing: true because:
+    // - The OPFSCoopSyncVFS maintains an internal accessiblePaths cache
+    // - Files imported via streamFileToOpfs() bypass the VFS and aren't in this cache
+    // - Without SQLITE_OPEN_CREATE, the VFS throws "File not found" for uncached paths
+    // - SQLITE_OPEN_CREATE makes the VFS check the actual OPFS filesystem
+    // - This is safe even if the file exists (SQLite just opens it normally)
+    const createIfMissing = vfsName === OPFS_VFS_NAME;
     await openDatabase(path, vfsName, { readOnly, createIfMissing });
     postResponse({ type: 'lockStatus', isWriter: !readOnly }, id);
   } catch (err) {

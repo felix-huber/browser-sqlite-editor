@@ -11,6 +11,7 @@ import {
   WorkerError,
   WorkerTimeoutError,
   WorkerCrashError,
+  WorkerReinitError,
   getWorkerClient,
 } from '../worker/client';
 
@@ -272,6 +273,24 @@ describe('WorkerClient - Worker Crash Detection', () => {
       expect(error).toBeInstanceOf(WorkerCrashError);
       expect((error as Error).message).toBe('Out of memory');
     }
+  });
+});
+
+describe('WorkerClient - Reinitialize', () => {
+  it('should reject pending requests when reinitialized', async () => {
+    const worker1 = createMockWorker();
+    const worker2 = createMockWorker();
+    const client = new WorkerClient({ worker: worker1 });
+
+    const promise = client.request({ type: 'ping' });
+
+    client.init(worker2);
+
+    await expect(promise).rejects.toThrow(WorkerReinitError);
+    expect(worker1.terminate).toHaveBeenCalledTimes(1);
+    expect(client.isReady()).toBe(true);
+
+    client.terminate();
   });
 });
 

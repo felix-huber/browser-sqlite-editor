@@ -59,6 +59,16 @@ export class WorkerCrashError extends WorkerError {
   }
 }
 
+/**
+ * Error thrown when the worker is replaced during reinitialization
+ */
+export class WorkerReinitError extends WorkerError {
+  constructor(message = 'Worker reinitialized') {
+    super(message, 'CANCELED');
+    this.name = 'WorkerReinitError';
+  }
+}
+
 // =============================================================================
 // Message Types (Internal)
 // =============================================================================
@@ -126,7 +136,11 @@ export class WorkerClient {
    */
   init(worker: Worker): void {
     if (this.worker) {
-      this.terminate();
+      this.resetWorker({
+        error: new WorkerReinitError(),
+        terminateWorker: true,
+        markTerminated: false,
+      });
     }
     this.worker = worker;
     this.isTerminated = false;
@@ -194,20 +208,11 @@ export class WorkerClient {
    */
   private handleError(event: ErrorEvent): void {
     if (this.isTerminated) return;
-
-    this.isTerminated = true;
-    // Reject all pending requests
-    const error = new WorkerCrashError(event.message || 'Worker error');
-    for (const [id, pending] of this.pendingRequests) {
-      clearTimeout(pending.timeoutId);
-      this.pendingRequests.delete(id);
-      pending.reject(error);
-    }
-
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-    }
+    this.resetWorker({
+      error: new WorkerCrashError(event.message || 'Worker error'),
+      terminateWorker: true,
+      markTerminated: true,
+    });
   }
 
   /**
@@ -215,19 +220,11 @@ export class WorkerClient {
    */
   private handleMessageError(): void {
     if (this.isTerminated) return;
-
-    this.isTerminated = true;
-    const error = new WorkerCrashError('Worker message error');
-    for (const [id, pending] of this.pendingRequests) {
-      clearTimeout(pending.timeoutId);
-      this.pendingRequests.delete(id);
-      pending.reject(error);
-    }
-
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-    }
+    this.resetWorker({
+      error: new WorkerCrashError('Worker message error'),
+      terminateWorker: true,
+      markTerminated: true,
+    });
   }
 
   /**
@@ -608,21 +605,32 @@ export class WorkerClient {
    */
   terminate(): void {
     if (this.isTerminated) return;
+    this.resetWorker({
+      error: new WorkerCrashError('Worker terminated'),
+      terminateWorker: true,
+      markTerminated: true,
+    });
+  }
 
-    this.isTerminated = true;
+  private resetWorker(options: {
+    error: Error;
+    terminateWorker: boolean;
+    markTerminated: boolean;
+  }): void {
+    if (options.markTerminated) {
+      this.isTerminated = true;
+    }
 
-    // Reject all pending requests
-    const error = new WorkerCrashError('Worker terminated');
     for (const [id, pending] of this.pendingRequests) {
       clearTimeout(pending.timeoutId);
       this.pendingRequests.delete(id);
-      pending.reject(error);
+      pending.reject(options.error);
     }
 
-    if (this.worker) {
+    if (this.worker && options.terminateWorker) {
       this.worker.terminate();
-      this.worker = null;
     }
+    this.worker = null;
   }
 
   /**

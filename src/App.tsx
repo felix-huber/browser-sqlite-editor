@@ -173,6 +173,7 @@ function App() {
 
   // Initialize worker on mount
   useEffect(() => {
+    let isActive = true;
     const initPromise = (async () => {
       try {
         // Create worker
@@ -190,21 +191,31 @@ function App() {
         // Wait for worker to be ready
         await client.ping();
 
+        if (!isActive) return;
+
         // Load registry
         await loadRegistry();
       } catch (err) {
-        console.error('Failed to initialize:', err);
+        if (isActive) {
+          console.error('Failed to initialize:', err);
+        }
       } finally {
-        setIsLoading(false);
+        if (isActive) {
+          setIsLoading(false);
+        }
       }
     })();
 
     workerReadyRef.current = initPromise;
 
     return () => {
+      isActive = false;
       if (workerRef.current) {
         workerRef.current.terminate();
+        workerRef.current = null;
       }
+      workerClientRef.current = null;
+      workerReadyRef.current = null;
     };
   }, []);
 

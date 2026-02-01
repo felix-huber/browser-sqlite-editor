@@ -239,9 +239,21 @@ export class DatabaseEngine {
       const readOnly = options?.readOnly ?? false;
       const createIfMissing = options?.createIfMissing ?? false;
 
-      let flags = readOnly ? SQLite.SQLITE_OPEN_READONLY : SQLite.SQLITE_OPEN_READWRITE;
-      if (!readOnly && createIfMissing) {
-        flags |= SQLite.SQLITE_OPEN_CREATE;
+      // For OPFS mode with createIfMissing, we need READWRITE+CREATE even when the caller
+      // wants read-only access. This is because:
+      // 1. OPFSCoopSyncVFS has an internal accessiblePaths cache that may not include files
+      //    written directly to OPFS (bypassing the VFS)
+      // 2. The VFS only properly initializes persistent file handles when SQLITE_OPEN_MAIN_DB
+      //    is set, which SQLite only adds for READWRITE mode
+      // 3. Using READONLY+CREATE causes the VFS to skip the MAIN_DB path and may truncate
+      //    unbound access handles (destroying file contents)
+      // We enforce read-only via PRAGMA query_only = ON after opening.
+      let flags: number;
+      if (createIfMissing) {
+        // Always use READWRITE+CREATE for VFS compatibility
+        flags = SQLite.SQLITE_OPEN_READWRITE | SQLite.SQLITE_OPEN_CREATE;
+      } else {
+        flags = readOnly ? SQLite.SQLITE_OPEN_READONLY : SQLite.SQLITE_OPEN_READWRITE;
       }
 
       this.db = await this.sqlite3.open_v2(name, flags, vfsName);

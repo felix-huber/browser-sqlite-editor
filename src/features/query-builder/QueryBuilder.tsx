@@ -1,4 +1,4 @@
-import { useCallback, useState, useMemo, useEffect, type DragEvent } from 'react'
+import { useCallback, useState, useMemo, useEffect, useRef, type DragEvent } from 'react'
 import {
   ReactFlow,
   Controls,
@@ -71,6 +71,19 @@ export function QueryBuilder({
   const [nodes, setNodes, onNodesChange] = useNodesState<TableBoxNodeType>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<JoinEdgeType>([])
   const [searchQuery, setSearchQuery] = useState('')
+
+  // Keep refs for stable callbacks (avoids infinite loops in useEffect)
+  const nodesRef = useRef(nodes)
+  nodesRef.current = nodes
+
+  // Refs for prop callbacks to avoid recreating internal callbacks when props change
+  const onTablesChangeRef = useRef(onTablesChange)
+  onTablesChangeRef.current = onTablesChange
+  const onJoinsChangeRef = useRef(onJoinsChange)
+  onJoinsChangeRef.current = onJoinsChange
+  const onStateChangeRef = useRef(onStateChange)
+  onStateChangeRef.current = onStateChange
+
   const [showLimitWarning, setShowLimitWarning] = useState(false)
   const [connectionError, setConnectionError] = useState<string | null>(null)
 
@@ -121,9 +134,9 @@ export function QueryBuilder({
   const handleClear = useCallback(() => {
     setNodes([])
     setEdges([])
-    onTablesChange?.([])
-    onJoinsChange?.([])
-  }, [setNodes, setEdges, onTablesChange, onJoinsChange])
+    onTablesChangeRef.current?.([])
+    onJoinsChangeRef.current?.([])
+  }, [setNodes, setEdges])
 
   // Helper to extract column name from handle ID (e.g., "column_name-source" -> "column_name")
   const extractColumnFromHandle = useCallback((handleId: string | null | undefined): string => {
@@ -133,18 +146,19 @@ export function QueryBuilder({
   }, [])
 
   // Helper to get table name from node ID
+  // Uses ref to avoid recreating callback when nodes change (prevents infinite loops)
   const getTableNameFromNode = useCallback(
     (nodeId: string): string => {
-      const node = nodes.find((n) => n.id === nodeId)
+      const node = nodesRef.current.find((n) => n.id === nodeId)
       return node?.data.tableName ?? ''
     },
-    [nodes]
+    []
   )
 
   // Notify parent of join changes
   const notifyJoinsChange = useCallback(
     (currentEdges: JoinEdgeType[]) => {
-      if (!onJoinsChange) return
+      if (!onJoinsChangeRef.current) return
 
       const joins: JoinConfig[] = currentEdges.map((edge) => ({
         id: edge.id,
@@ -155,9 +169,9 @@ export function QueryBuilder({
         joinType: edge.data?.joinType ?? 'INNER',
       }))
 
-      onJoinsChange(joins)
+      onJoinsChangeRef.current(joins)
     },
-    [onJoinsChange, getTableNameFromNode]
+    [getTableNameFromNode]
   )
 
   const handleRemoveTable = useCallback(
@@ -168,7 +182,7 @@ export function QueryBuilder({
         const toRemove = nds.filter((node) => node.data.tableName === tableName)
         removedNodeIds = new Set(toRemove.map((node) => node.id))
         const updated = nds.filter((node) => node.data.tableName !== tableName)
-        onTablesChange?.(updated.map((n) => n.data.tableName))
+        onTablesChangeRef.current?.(updated.map((n) => n.data.tableName))
         return updated
       })
 
@@ -181,7 +195,7 @@ export function QueryBuilder({
         return updated
       })
     },
-    [setNodes, setEdges, onTablesChange, notifyJoinsChange]
+    [setNodes, setEdges, notifyJoinsChange]
   )
 
   // Handle drop on canvas
@@ -235,11 +249,11 @@ export function QueryBuilder({
 
       setNodes((nds) => {
         const updated = [...nds, newNode]
-        onTablesChange?.(updated.map((n) => n.data.tableName))
+        onTablesChangeRef.current?.(updated.map((n) => n.data.tableName))
         return updated
       })
     },
-    [nodes.length, tablesOnCanvas, setNodes, onTablesChange, tableColumns, handleSelectionChange, handleRemoveTable]
+    [nodes.length, tablesOnCanvas, setNodes, tableColumns, handleSelectionChange, handleRemoveTable]
   )
 
   // Update node columns when tableColumns change
@@ -267,8 +281,8 @@ export function QueryBuilder({
 
   // Notify parent of state changes
   useEffect(() => {
-    onStateChange?.(nodes, edges)
-  }, [nodes, edges, onStateChange])
+    onStateChangeRef.current?.(nodes, edges)
+  }, [nodes, edges])
 
   // Validate connection - prevent self-join on same column
   const isValidConnection: IsValidConnection<JoinEdgeType> = useCallback(
