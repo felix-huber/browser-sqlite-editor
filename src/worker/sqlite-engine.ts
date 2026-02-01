@@ -10,7 +10,7 @@
  */
 
 import { getEngine } from '../core/engine/db-engine';
-import { OPFS_VFS_NAME } from '../core/engine/opfs-vfs';
+import { OPFS_VFS_NAME, ensureAppDirectories } from '../core/engine/opfs-vfs';
 
 // =============================================================================
 // Types
@@ -55,6 +55,12 @@ export async function openDatabase(
   // Initialize engine if needed
   if (!engine.isReady()) {
     await engine.initialize();
+  }
+
+  // For OPFS mode, ensure directories exist before opening
+  // This is critical after resetApp which deletes the OPFS directories
+  if (vfsName === OPFS_VFS_NAME) {
+    await ensureAppDirectories();
   }
 
   // Open the database
