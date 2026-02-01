@@ -4,7 +4,10 @@ Offline SQLite editor in your browser. Visual table designer, ERD diagrams, SQL 
 
 **100% browser-based, powered by WASM. Private. Open source.**
 
-[![CI](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml/badge.svg)](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/ci.yml)
+[![Build](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/build.yml/badge.svg)](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/build.yml)
+[![Test](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/test.yml/badge.svg)](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/test.yml)
+[![Lint](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/lint.yml/badge.svg)](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/lint.yml)
+[![Typecheck](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/typecheck.yml/badge.svg)](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/typecheck.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![PWA](https://img.shields.io/badge/PWA-installable-blueviolet)](https://web.dev/progressive-web-apps/)
 
