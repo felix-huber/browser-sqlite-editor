@@ -1326,7 +1326,7 @@ test.describe('Size Warning Toast', () => {
   /**
    * Helper to clear size warning via the test API
    */
-  async function clearSizeWarningViaApi(page: Page): Promise<void> {
+  async function _clearSizeWarningViaApi(page: Page): Promise<void> {
     await page.evaluate(() => {
       const win = window as Window & {
         __sqliteEditorTest?: {
