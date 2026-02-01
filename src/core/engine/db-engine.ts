@@ -520,6 +520,20 @@ export function getEngine(): DatabaseEngine {
 }
 
 /**
+ * Reset the engine singleton
+ *
+ * Call this after shutdown() to ensure a completely fresh engine instance
+ * is created on the next getEngine() call. This is necessary because shutdown()
+ * clears internal state but doesn't remove the singleton reference, which can
+ * cause issues when reinitializing (e.g., VFS re-registration conflicts).
+ *
+ * Use this when you need a full reset (e.g., after clearing storage).
+ */
+export function resetEngine(): void {
+  _engineInstance = null;
+}
+
+/**
  * Type alias for SQLiteCompatibleType from wa-sqlite
  */
 declare module '@journeyapps/wa-sqlite' {

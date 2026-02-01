@@ -3,7 +3,7 @@
  */
 
 import type { WorkerRequest, WorkerResponse, WorkerErrorCode, StorageMode } from '../../types';
-import { getEngine } from '../../core/engine/db-engine';
+import { getEngine, resetEngine } from '../../core/engine/db-engine';
 import { OPFS_VFS_NAME, getOPFSDatabaseSize, ensureAppDirectories } from '../../core/engine/opfs-vfs';
 import { getRegistry, toFilename, forceReinitializeRegistry, resetRegistry } from '../db-registry';
 import { resolveDbPath } from '../storage';
@@ -287,6 +287,12 @@ export async function handleResetAppRequest(
     const engine = getEngine();
     await engine.shutdown();
     resetSessionTracker();
+
+    // Reset engine singleton to ensure a fresh instance on next use
+    // This is critical because shutdown() clears internal state but the singleton
+    // reference remains, and reinitializing an engine after VFS was closed can
+    // cause errors like "SES Removing unpermitted intrinsics" due to stale state
+    resetEngine();
 
     // Reset registry singleton BEFORE clearing storage
     // This ensures no new connections are opened during cleanup
