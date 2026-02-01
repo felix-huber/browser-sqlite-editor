@@ -1475,7 +1475,7 @@ run_with_tool() {
   case "$tool" in
     claude)
       # Claude Code CLI: -p for print mode, --dangerously-skip-permissions for YOLO
-      cmd="${CLAUDE_CMD:-claude -p --dangerously-skip-permissions}"
+      cmd="${CLAUDE_CMD:-claude -p --dangerously-skip-permissions --no-session-persistence}"
       ;;
     codex)
       # Codex CLI: exec for execution mode, --yolo for no approvals

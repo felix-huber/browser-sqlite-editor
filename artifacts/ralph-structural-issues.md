@@ -355,6 +355,12 @@ Tracking structural issues observed during ralph.sh execution that may need code
   - Added `sync` after command execution
   - Added explicit `-s` check for empty files
   - Changed from hardcoded `/tmp` to `$TMPDIR` for macOS
+- **ROOT CAUSE IDENTIFIED (2026-02-01)**:
+  - Claude CLI **backgrounds requests** when stdout/stderr are redirected to files
+  - When stdin/stdout are not TTY, claude spawns async task and returns immediately with task ID
+  - Ralph's timeout kills the process (exit 143) before any actual output
+  - **FIX**: Add `--no-session-persistence` flag to claude command (line 1478)
+  - This forces synchronous execution and ensures output goes directly to stdout/stderr
 
 ---
 
