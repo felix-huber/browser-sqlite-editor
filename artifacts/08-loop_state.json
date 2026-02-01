@@ -1,20 +1,20 @@
 {
-  "runId": "2026-02-01T01:36:57+01:00",
-  "updatedAt": "2026-02-01T01:36:57+01:00",
+  "runId": "2026-02-01T02:06:53+01:00",
+  "updatedAt": "2026-02-01T02:06:53+01:00",
   "mode": {
     "loop": true,
     "beads": true
   },
   "task": {
-    "id": "bd-29u",
-    "subject": "Split CI into separate workflows for per-job badges",
-    "status": "completed",
-    "phase": "done",
+    "id": "bd-2ko",
+    "subject": "Fix flaky E2E test: grid-read sorting indicator",
+    "status": "running",
+    "phase": "implement",
     "attempt": 1
   },
   "tools": {
     "implementer": "smart",
     "reviewer": "smart"
   },
-  "note": "all checks passed"
+  "note": "started"
 }
