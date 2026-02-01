@@ -945,13 +945,13 @@ test.describe('UI Import Tests', () => {
   test.describe('App Ready State', () => {
     test('app shows ready indicator', async ({ page }) => {
       // The status bar should show ready state
-      const statusBar = page.locator('footer');
+      const statusBar = page.locator('[role="status"]');
       await expect(statusBar).toBeVisible();
       await expect(statusBar).toContainText('Ready');
     });
 
     test('app shows SQLite WASM engine', async ({ page }) => {
-      const statusBar = page.locator('footer');
+      const statusBar = page.locator('[role="status"]');
       await expect(statusBar).toContainText('SQLite WASM');
     });
 
@@ -1013,7 +1013,7 @@ test.describe('UI Import Tests', () => {
       await expect(page).toHaveTitle(/SQLite Editor/);
 
       // Wait for app to fully load
-      const statusBar = page.locator('footer');
+      const statusBar = page.locator('[role="status"]');
       await expect(statusBar).toContainText('Ready', { timeout: 10000 });
 
       // Verify registry still unchanged after refresh
@@ -1066,7 +1066,7 @@ test.describe('UI Import Tests', () => {
       await expect(page).toHaveTitle(/SQLite Editor/);
 
       // Wait for ready state
-      const statusBar = page.locator('footer');
+      const statusBar = page.locator('[role="status"]');
       await expect(statusBar).toContainText('Ready', { timeout: 10000 });
 
       // Verify no artifacts in storage

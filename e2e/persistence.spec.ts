@@ -775,7 +775,7 @@ test.describe('Storage Mode Indicator', () => {
 
   test('status bar shows storage mode information', async ({ page }) => {
     // The status bar should exist
-    const statusBar = page.locator('footer');
+    const statusBar = page.locator('[role="status"]');
     await expect(statusBar).toBeVisible();
 
     // Should show "SQLite WASM" text indicating the engine
