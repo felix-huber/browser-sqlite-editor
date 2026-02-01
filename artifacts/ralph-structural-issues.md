@@ -305,3 +305,48 @@ Tracking structural issues observed during ralph.sh execution that may need code
   1. Add heartbeat detection - if no output for X minutes, timeout
   2. Break complex stress tests into smaller focused tests
   3. Add progress indicators in bead prompts
+
+---
+
+## Issue 28: Too Many Claude Instances Cause Resource Contention
+
+- **Symptom**: Ralph spawns claude but it produces no output - hangs indefinitely
+- **Root Cause**: 30+ claude instances running simultaneously, consuming 80%+ CPU
+- **Status**: 🔴 STRUCTURAL - Resource contention blocks new claude instances
+- **Impact**: New claude instances can't start properly; ralph loops with no progress
+- **Diagnosis**:
+  ```bash
+  ps aux | grep "claude" | grep -v grep | wc -l  # Check count
+  ps aux | grep "claude" | awk '{sum+=$3} END {print sum"%"}'  # Check CPU
+  ```
+- **Workaround**: Kill stale claude instances before running ralph:
+  ```bash
+  # Kill old/idle claude instances (be careful!)
+  pkill -9 -f "claude" 2>/dev/null  # Nuclear option
+  ```
+- **Proposed Fix for ralph.sh**:
+  1. Check claude instance count before spawning
+  2. If too many instances, wait or kill oldest idle ones
+  3. Add instance limit (e.g., max 5 concurrent claude instances)
+
+---
+
+## Issue 29: Ralph Not Capturing Claude Output from Tmp File
+
+- **Symptom**: Claude completes task (tmp file has `TASK_COMPLETE`) but ralph shows no output
+- **Root Cause**: Disconnect between tmp file write and ralph's output capture
+- **Status**: 🔴 STRUCTURAL - Output capture failure
+- **Evidence**:
+  - Tmp file `/var/folders/.../T/tmp.9jNNyB5elT` contains full claude output with TASK_COMPLETE
+  - bd-2as.log shows no output after "--- output ---"
+  - Bead stuck as IN_PROGRESS despite task being done
+- **Impact**: Completed work is lost; bead loops infinitely
+- **Diagnosis**:
+  ```bash
+  # Check if tmp files have claude output
+  cat /var/folders/s3/*/T/tmp.* 2>/dev/null | grep -l "TASK_COMPLETE"
+  ```
+- **Possible Causes**:
+  1. Race condition: tmp file deleted before ralph reads it
+  2. File handle issue: output not flushed before read
+  3. Wrong tmp file being read
