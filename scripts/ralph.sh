@@ -8,7 +8,7 @@ set -euo pipefail
 # https://github.com/snarktank/ralph
 #
 # Supports multiple AI coding tools:
-#   - Claude Code: claude -p --dangerously-skip-permissions
+#   - Claude Code: claude -p --dangerously-skip-permissions --no-session-persistence
 #   - Codex CLI: codex exec --yolo
 #   - Smart routing (default): backend→Codex, UI→Claude
 #
@@ -27,7 +27,7 @@ set -euo pipefail
 #   --beads                      Use beads_rust (br) for task management instead of task-graph.json
 #
 # CLI Flags Used:
-#   Claude Code: claude -p --dangerously-skip-permissions "<prompt>"
+#   Claude Code: claude -p --dangerously-skip-permissions --no-session-persistence "<prompt>"
 #   Codex CLI:   codex exec --yolo "<prompt>"
 #
 # Examples:
@@ -579,8 +579,10 @@ Learnings Capture:
   Useful for improving future prompts and workflows.
 
 CLI Flags Used (YOLO mode by default):
-  Claude Code: claude -p --dangerously-skip-permissions "<prompt>"
+  Claude Code: claude -p --dangerously-skip-permissions --no-session-persistence "<prompt>"
   Codex CLI:   codex exec --yolo "<prompt>"
+
+  Note: Commands run with stdin redirected from /dev/null to ensure synchronous execution.
 
 Environment Variables:
   CLAUDE_CMD       Custom Claude Code command
@@ -1415,6 +1417,7 @@ _exec_with_timeout() {
 
   # Execute with direct file redirection (avoids PTY buffering issues)
   # Output goes to tmp_output, which is later copied to log_file
+  # Redirect stdin from /dev/null to prevent CLI from waiting for input
   if [[ -n "$timeout_cmd" ]]; then
     "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" < /dev/null > "$tmp_output" 2>&1
   else
@@ -1475,6 +1478,7 @@ run_with_tool() {
   case "$tool" in
     claude)
       # Claude Code CLI: -p for print mode, --dangerously-skip-permissions for YOLO
+      # --no-session-persistence ensures synchronous execution when stdout is redirected
       cmd="${CLAUDE_CMD:-claude -p --dangerously-skip-permissions --no-session-persistence}"
       ;;
     codex)
@@ -3557,7 +3561,7 @@ main() {
     local prompt=$(generate_prompt "$task_json")
     
     # Save prompt for debugging
-    echo "$prompt" > "/tmp/ralph-prompt-$task_id.md"
+    echo "$prompt" > "${TMPDIR:-/tmp}/ralph-prompt-$task_id.md"
     
     # Set current task for logging
     CURRENT_TASK_ID="$task_id"
@@ -3570,46 +3574,72 @@ main() {
     log_info "Log file: $LOGS_DIR/${task_id}.log"
     update_loop_state "running" "implement" 1 "started"
 
+    local start_time=$(date +%s)
     set +e
     OUTPUT=$(run_with_tool "$selected_tool" "$prompt")
     local tool_rc=$?
     set -e
+    local end_time=$(date +%s)
+    local elapsed_total_seconds=$((end_time - start_time))
+    local elapsed_minutes=$((elapsed_total_seconds / 60))
+    local elapsed_seconds=$((elapsed_total_seconds % 60))
 
     # Handle tool failures (including timeouts)
     if [[ "$tool_rc" -ne 0 ]]; then
       local fail_reason="tool exit code $tool_rc"
+      local output_size=${#OUTPUT}
 
-      # Detect timeout-related exit codes:
-      # 124 = GNU timeout (SIGTERM sent)
-      # 137 = 128+9 = SIGKILL (--kill-after triggered)
-      # 143 = 128+15 = SIGTERM received by process
-      if [[ "$tool_rc" -eq 124 ]] || [[ "$tool_rc" -eq 137 ]] || [[ "$tool_rc" -eq 143 ]]; then
-        fail_reason="timeout after ${STALL_MINUTES}m (exit $tool_rc)"
-        log_error "Tool timed out after ${STALL_MINUTES} minutes (exit code $tool_rc)"
+      # Check if output contains TASK_COMPLETE despite error exit code
+      # This can happen if process is killed after completing work
+      if echo "$OUTPUT" | grep -q "<promise>TASK_COMPLETE</promise>"; then
+        log_warn "Process exited with rc=$tool_rc but output contains TASK_COMPLETE"
+        log_warn "Elapsed: ${elapsed_minutes}m ${elapsed_seconds}s - attempting to process as success"
+        # Don't treat as failure - fall through to success handling below
+      else
+        # Detect signal-based exit codes
+        # 124 = GNU timeout command exit code
+        # 137 = 128+9 = SIGKILL
+        # 143 = 128+15 = SIGTERM
+        if [[ "$tool_rc" -eq 124 ]]; then
+          # Exit code 124 is specifically from the timeout command
+          fail_reason="timeout after ${elapsed_minutes}m ${elapsed_seconds}s (rc=124)"
+          log_error "Tool timed out after ${elapsed_minutes}m ${elapsed_seconds}s (timeout command)"
+          update_loop_state "timeout" "implement" 1 "timed out"
+        elif [[ "$tool_rc" -eq 137 ]] || [[ "$tool_rc" -eq 143 ]]; then
+          # Signal-based termination - could be timeout OR external kill
+          local timeout_threshold=$(( STALL_MINUTES * 60 - 60 ))  # Within 1 min of timeout
+          if [[ "$elapsed_total_seconds" -ge "$timeout_threshold" ]]; then
+            fail_reason="timeout after ${elapsed_minutes}m ${elapsed_seconds}s (signal, rc=$tool_rc)"
+            log_error "Tool likely timed out after ${elapsed_minutes}m ${elapsed_seconds}s (exit code $tool_rc)"
+            update_loop_state "timeout" "implement" 1 "timed out"
+          else
+            fail_reason="killed by signal after ${elapsed_minutes}m ${elapsed_seconds}s (rc=$tool_rc)"
+            log_error "Tool killed by signal after ${elapsed_minutes}m ${elapsed_seconds}s (exit code $tool_rc)"
+            log_error "This was NOT a timeout - process was killed externally or crashed"
+            update_loop_state "failed" "implement" 1 "killed by signal"
+          fi
 
-        # Check if output is empty/minimal - indicates CLI hung during startup
-        local output_size=${#OUTPUT}
-        if [[ "$output_size" -lt 100 ]]; then
-          log_error "EMPTY OUTPUT DETECTED - Claude CLI likely hung during context loading"
-          log_error "This task may be too complex. Consider breaking it into smaller sub-tasks."
-          fail_reason="timeout with no output (task too complex?)"
+          # Check if output is empty/minimal
+          if [[ "$output_size" -lt 100 ]]; then
+            log_error "EMPTY OUTPUT DETECTED - CLI may have hung during startup"
+            fail_reason="${fail_reason}, no output"
+          fi
+        else
+          log_error "Tool failed with exit code $tool_rc after ${elapsed_minutes}m ${elapsed_seconds}s"
+          update_loop_state "failed" "implement" 1 "tool failed (rc=$tool_rc)"
         fi
-        update_loop_state "timeout" "implement" 1 "timed out"
-      else
-        log_error "Tool failed with exit code $tool_rc"
-        update_loop_state "failed" "implement" 1 "tool failed (rc=$tool_rc)"
-      fi
 
-      handle_task_failure "$task_id" "$subject" "$selected_tool" "$i" "$fail_reason" "tool failed (rc=$tool_rc)"
+        handle_task_failure "$task_id" "$subject" "$selected_tool" "$i" "$fail_reason" "tool failed (rc=$tool_rc)"
 
-      if [[ "$CONTINUE_ON_ERROR" == "true" ]]; then
-        log_warn "Task failed. Waiting 30s before next task..."
-        sleep 30
-        CURRENT_TASK_ID=""
-        continue
-      else
-        log_error "Stopping due to tool failure. Use --continue-on-error to keep going."
-        exit 1
+        if [[ "$CONTINUE_ON_ERROR" == "true" ]]; then
+          log_warn "Task failed. Waiting 30s before next task..."
+          sleep 30
+          CURRENT_TASK_ID=""
+          continue
+        else
+          log_error "Stopping due to tool failure. Use --continue-on-error to keep going."
+          exit 1
+        fi
       fi
     fi
 

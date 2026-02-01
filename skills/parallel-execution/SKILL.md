@@ -319,6 +319,24 @@ This task may be too complex. Consider breaking it into smaller sub-tasks.
 3. Add progress markers to bead prompts ("Log progress after each step")
 4. Implement complex E2E tests manually, use Ralph for unit/integration tests
 
+### CLI Execution Details
+
+Ralph runs AI tools with specific flags to ensure reliable automated execution:
+
+```bash
+# Claude Code (synchronous mode)
+claude -p --dangerously-skip-permissions --no-session-persistence "<prompt>"
+
+# Codex CLI
+codex exec --yolo "<prompt>"
+```
+
+**Key behaviors:**
+- `--no-session-persistence` ensures Claude runs synchronously when stdout is redirected
+- Stdin is redirected from `/dev/null` to prevent CLI from waiting for input
+- Output is captured to temp file, then copied to task log
+- Use `tail -f .beads/logs/<task-id>.log` for real-time monitoring
+
 ## Phase Gates
 
 Ralph waits for all tasks in a phase to complete before starting the next:

@@ -306,7 +306,8 @@ for LENS in "${LENSES_TO_RUN[@]}"; do
       --browser-no-cookie-sync \
       --model gpt-5.2-pro \
       --timeout auto \
-      --browser-attachments never \
+      --browser-attachments auto \
+      --force \
       --prompt "$(cat "$PROMPT_FILE")" \
       "${FILE_ARGS_ARRAY[@]}" \
       --write-output "$OUTPUT_FILE" 2>&1 | tee "$OUTPUT_DIR/oracle-${LENS}-round${ROUND}-attempt${ATTEMPT}.log"

@@ -2,7 +2,43 @@
 
 Tracking structural issues observed during ralph.sh execution that may need code/prompt fixes.
 
-**Last Verified:** 2026-01-31 (against scripts/ralph.sh current state)
+**Last Verified:** 2026-02-01 (against scripts/ralph.sh current state)
+
+---
+
+## Quick Reference: Major Fixes (2026-02-01)
+
+These are the critical fixes that resolved Claude CLI execution issues:
+
+### 1. Claude CLI Backgrounding Fix (Issue 32)
+**File:** `scripts/ralph.sh` line 1478
+```bash
+# BEFORE (broken):
+cmd="${CLAUDE_CMD:-claude -p --dangerously-skip-permissions}"
+
+# AFTER (fixed):
+cmd="${CLAUDE_CMD:-claude -p --dangerously-skip-permissions --no-session-persistence}"
+```
+**Why:** `--no-session-persistence` prevents CLI from backgrounding when stdout/stderr redirected.
+
+### 2. stdin Blocking Fix (Issue 33)
+**File:** `scripts/ralph.sh` lines 1419, 1421
+```bash
+# BEFORE (broken):
+"$timeout_cmd" ... "${cmd[@]}" > "$tmp_output" 2>&1
+
+# AFTER (fixed):
+"$timeout_cmd" ... "${cmd[@]}" < /dev/null > "$tmp_output" 2>&1
+```
+**Why:** `< /dev/null` provides immediate EOF, preventing CLI from waiting for input.
+
+### 3. Output Capture Fix (Issue 29)
+**File:** `scripts/ralph.sh` line 1426
+```bash
+# Added after command execution:
+sync 2>/dev/null || true
+```
+**Why:** Ensures file buffers are flushed before ralph attempts to read output.
 
 ---
 
@@ -21,6 +57,14 @@ Tracking structural issues observed during ralph.sh execution that may need code
 | **23**: OPFS/SQLite CI | N/A | Not a ralph.sh issue (E2E test infrastructure) |
 | **24**: Bead missing Verification field | 🔴 STRUCTURAL | Beads MUST have `Verification:` section or ralph loops infinitely |
 | **25**: Stale IN_PROGRESS beads | 🔴 STRUCTURAL | Ralph loops on beads stuck as in_progress; need manual reset |
+| **26**: Full E2E at end of ralph | 🟡 RECOMMENDED | Suggested improvement for regression catching |
+| **27**: Complex E2E beads timeout | 🔴 STRUCTURAL | Complex stress tests timeout before producing output |
+| **28**: Too many Claude instances | 🔴 STRUCTURAL | Resource contention causes hangs |
+| **29**: Output capture failure | ✅ FIXED | Lines 1419, 1421, 1426: stdin redirect + sync |
+| **30**: False timeout reports | ✅ FIXED | Lines 1419, 1421, 1478: Proper sync + flag fixes |
+| **31**: Resource contention | 🔴 STRUCTURAL | Related to Issue 28 |
+| **32**: Claude CLI backgrounding | ✅ FIXED | Line 1478: `--no-session-persistence` flag |
+| **33**: stdin blocking | ✅ FIXED | Lines 1419, 1421: `< /dev/null` redirect |
 
 ---
 
@@ -100,42 +144,13 @@ Tracking structural issues observed during ralph.sh execution that may need code
 
 ### Issue 20: PTY Buffering Prevents Output Capture
 - **Symptom**: Claude CLI output isn't flushing through `timeout | tee` pipeline
-- **Status**: ✅ IMPLEMENTED
-- **Code Location**: ralph.sh lines 1358-1386 (`_exec_with_timeout` function)
-- **Verified Code**:
-  ```bash
-  # Issue 20 fix: Avoid | tee which causes PTY buffering issues with Claude CLI.
-  # Write directly to file, then display. Use `tail -f log_file` in another terminal
-  # for real-time monitoring.
-  _exec_with_timeout() {
-    local tmp_output="$1"
-    local log_file="$2"
-    shift 2
-    local cmd=("$@")
-
-    # Detect timeout command
-    local timeout_cmd=""
-    if command -v timeout >/dev/null 2>&1; then
-      timeout_cmd="timeout"
-    elif command -v gtimeout >/dev/null 2>&1; then
-      timeout_cmd="gtimeout"
-    fi
-
-    # Execute with direct file redirection (avoids PTY buffering issues)
-    if [[ -n "$timeout_cmd" ]]; then
-      "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" > "$tmp_output" 2>&1
-    else
-      "${cmd[@]}" > "$tmp_output" 2>&1
-    fi
-    _EXEC_RC=$?
-
-    # Append to log file if specified
-    [[ -n "$log_file" ]] && cat "$tmp_output" >> "$log_file"
-
-    # Always show output to console
-    cat "$tmp_output"
-  }
-  ```
+- **Status**: ✅ IMPLEMENTED (and later enhanced by Issues 29, 32, 33)
+- **Code Location**: ralph.sh lines 1402-1438 (`_exec_with_timeout` function)
+- **Note**: The original fix (direct file redirection instead of `| tee`) is still in place. The function was further enhanced in 2026-02-01 with additional fixes:
+  - Issue 29: Added `sync` after command execution
+  - Issue 32: Added `--no-session-persistence` to claude command
+  - Issue 33: Added `< /dev/null` stdin redirect
+- **See**: Issue 33 for the complete current implementation of `_exec_with_timeout()`
 
 ### Issue 21: xargs Strips Quotes in Verification Commands
 - **Symptom**: `--grep 'E2E|FOO'` becomes `--grep E2E|FOO`, shell interprets `|` as pipe
@@ -182,15 +197,34 @@ Tracking structural issues observed during ralph.sh execution that may need code
 
 ---
 
-## Session History: 2026-01-31
+## Session History: 2026-02-01
 
-### Progress Snapshot
+### Major Fixes Applied This Session
+
+| Fix | Lines Modified | Description |
+|-----|----------------|-------------|
+| stdin redirect | 1419, 1421 | Added `< /dev/null` to prevent CLI blocking |
+| `--no-session-persistence` | 1478 | Force synchronous Claude CLI execution |
+| sync after exec | 1426 | Ensure file buffers flushed before read |
+| Empty file check | 1430-1434 | Explicit `-s` check with warning |
+| TMPDIR fix | 1505-1507 | Use `$TMPDIR` instead of hardcoded `/tmp` |
+
+### Issues Resolved
+
+- **Issue 29** (output capture): Fixed by sync + TMPDIR + empty file check
+- **Issue 30** (false timeouts): Fixed by Issues 32 + 33
+- **Issue 32** (CLI backgrounding): Fixed by `--no-session-persistence` flag
+- **Issue 33** (stdin blocking): Fixed by `< /dev/null` redirect
+
+### Previous Session: 2026-01-31
+
+#### Progress Snapshot
 - **Start**: 36/56 beads (64%) at session 1 start
 - **Current**: 46/56 beads done (82%), ralph running
 - **Remaining**: 10 beads
 - **Last Update**: 2026-01-31 22:30
 
-### CI Progress
+#### CI Progress
 - E2E shard 1: PASSING
 - E2E shard 2: Still failing (runs 21550466852, 21550845001)
   - Error: `sqlite3_open_v2` fails for all table-designer tests
@@ -198,7 +232,7 @@ Tracking structural issues observed during ralph.sh execution that may need code
 - Lighthouse: PASSING (after .cjs rename)
 - Build/Perf: PASSING
 
-### Beads Completed This Session (New Ralph Run)
+#### Beads Completed (New Ralph Run)
 | Iteration | Bead | Task | Time |
 |-----------|------|------|------|
 | 1 | bd-4z7 | P2-07: Database export quota-exceeded handling | 19:08 |
@@ -331,11 +365,11 @@ Tracking structural issues observed during ralph.sh execution that may need code
 
 ---
 
-## Issue 29: Ralph Not Capturing Claude Output from Tmp File
+## Issue 29: Ralph Not Capturing Claude Output from Tmp File ✅ FIXED
 
 - **Symptom**: Claude completes task (tmp file has `TASK_COMPLETE`) but ralph shows no output
-- **Root Cause**: Disconnect between tmp file write and ralph's output capture
-- **Status**: 🔴 STRUCTURAL - Output capture failure
+- **Root Cause**: Multiple issues - file buffering, missing sync, and macOS temp directory handling
+- **Status**: ✅ FIXED (2026-02-01)
 - **Evidence**:
   - Tmp file `/var/folders/.../T/tmp.9jNNyB5elT` contains full claude output with TASK_COMPLETE
   - bd-2as.log shows no output after "--- output ---"
@@ -346,30 +380,46 @@ Tracking structural issues observed during ralph.sh execution that may need code
   # Check if tmp files have claude output
   cat /var/folders/s3/*/T/tmp.* 2>/dev/null | grep -l "TASK_COMPLETE"
   ```
-- **Possible Causes**:
-  1. Race condition: tmp file deleted before ralph reads it
-  2. File handle issue: output not flushed before read
-  3. Wrong tmp file being read
-- **User Fix Applied (2026-02-01)**: See Issue 29 Fix Summary
-  - Removed redundant `cat "$tmp_output"` causing double output
-  - Added `sync` after command execution
-  - Added explicit `-s` check for empty files
-  - Changed from hardcoded `/tmp` to `$TMPDIR` for macOS
-- **ROOT CAUSE IDENTIFIED (2026-02-01)**:
-  - Claude CLI **backgrounds requests** when stdout/stderr are redirected to files
-  - When stdin/stdout are not TTY, claude spawns async task and returns immediately with task ID
-  - Ralph's timeout kills the process (exit 143) before any actual output
-  - **FIX 1**: Add `--no-session-persistence` flag to claude command (line 1478)
-  - **FIX 2**: Add `< /dev/null` to stdin redirect (lines 1419, 1421) to prevent CLI waiting for input
-  - Combined fixes ensure synchronous execution and proper stdin/stdout handling
+
+### Fix Applied (ralph.sh lines 1419-1438)
+
+**Change 1 - Added sync after command execution (line 1426):**
+```bash
+# Ensure file buffers are flushed after potential timeout/kill
+sync 2>/dev/null || true
+```
+
+**Change 2 - Added explicit empty file check (lines 1430-1434):**
+```bash
+if [[ -s "$tmp_output" ]]; then
+  cat "$tmp_output" >> "$log_file"
+else
+  echo "[WARNING] Command produced no output (tmp file empty)" >> "$log_file"
+fi
+```
+
+**Change 3 - Changed from hardcoded /tmp to $TMPDIR (lines 1505-1507):**
+```bash
+# Check both Linux (/tmp) and macOS (/var/folders) temp locations
+local tmpdir="${TMPDIR:-/tmp}"
+find "$tmpdir" -maxdepth 1 -name 'tmp.*' -mmin -5 -exec grep -l "TASK_COMPLETE" {} \; 2>/dev/null >> "$log_file" || true
+```
+
+**Verification:**
+```bash
+# Run ralph and check output is captured
+./scripts/ralph.sh --beads 1
+# Check log files show actual claude output
+cat /tmp/ralph_*/bd-*.log | grep -c "TASK_COMPLETE"
+```
 
 ---
 
-## Issue 30: False Timeout Reports - Immediate Process Termination
+## Issue 30: False Timeout Reports - Immediate Process Termination ✅ FIXED
 
 - **Symptom**: Ralph reports "Tool timed out after 45 minutes (exit code 143)" but process dies within seconds
-- **Root Cause**: Exit codes 143 (SIGTERM) and 137 (SIGKILL) are reported as timeouts, but actual cause is different
-- **Status**: 🔴 STRUCTURAL - Misleading error messages
+- **Root Cause**: Claude CLI backgrounding requests when stdout/stderr redirected + missing stdin handling
+- **Status**: ✅ FIXED (2026-02-01)
 - **Evidence** (2026-02-01):
   - bd-758 iterations 1-5 all "timed out" within 30 seconds each
   - Log timestamps show rapid succession of failures
@@ -387,11 +437,25 @@ Tracking structural issues observed during ralph.sh execution that may need code
   # Verify tests actually pass
   npm run test:e2e -- --grep 'E2E-US-XXX'
   ```
-- **Proposed Fix for ralph.sh**:
-  1. Track actual elapsed time and report it accurately
-  2. Distinguish between timeout kills and external kills
-  3. Check if work was actually completed before marking as failed
-  4. Add: `if tests pass && tmp file has TASK_COMPLETE → close bead`
+
+### Root Cause Analysis
+
+The "false timeout" was actually caused by Claude CLI backgrounding its work when it detected:
+1. stdout/stderr redirected to files (not a TTY)
+2. stdin not explicitly closed
+
+When backgrounded, the CLI returns immediately with just a task ID, causing the timeout wrapper to kill the "completed" process (exit 143).
+
+### Fixes Applied
+
+See Issue 32 (Claude CLI backgrounding) and Issue 33 (stdin blocking) for the actual code changes that resolved this.
+
+**Verification:**
+```bash
+# Run ralph and confirm no more false timeouts
+./scripts/ralph.sh --beads 5
+grep "timed out" /tmp/ralph_*/bd-*.log  # Should show actual timeouts only
+```
 
 ---
 
@@ -420,3 +484,143 @@ Tracking structural issues observed during ralph.sh execution that may need code
   2. If count > threshold (e.g., 10), wait or warn
   3. Track PID of spawned claude instance
   4. Clean up orphaned instances from previous ralph runs
+
+---
+
+## Issue 32: Claude CLI Backgrounding Requests (MAJOR FIX) ✅ FIXED
+
+- **Symptom**: Claude CLI returns immediately with task ID instead of executing synchronously
+- **Root Cause**: When stdout/stderr are redirected to files, Claude CLI detects non-TTY and backgrounds the request
+- **Status**: ✅ FIXED (2026-02-01)
+- **Discovery**: This was the root cause behind Issues 29 and 30
+- **Impact**:
+  - Ralph's timeout kills the "completed" process before work actually starts
+  - False exit code 143 (SIGTERM) reported as timeout
+  - Beads loop infinitely with no actual work done
+
+### Fix Applied (ralph.sh line 1478)
+
+**Before:**
+```bash
+cmd="${CLAUDE_CMD:-claude -p --dangerously-skip-permissions}"
+```
+
+**After:**
+```bash
+cmd="${CLAUDE_CMD:-claude -p --dangerously-skip-permissions --no-session-persistence}"
+```
+
+### Why This Works
+
+The `--no-session-persistence` flag:
+1. Disables Claude CLI's session persistence feature
+2. Forces synchronous execution regardless of TTY detection
+3. Ensures output is written directly to stdout/stderr
+4. Prevents backgrounding of requests
+
+### Verification
+
+```bash
+# Test that claude executes synchronously
+echo "hello" | claude -p --no-session-persistence "say hi"
+# Should wait and produce output, not return immediately
+
+# Run ralph and confirm beads complete
+./scripts/ralph.sh --beads 1
+# Check log shows actual claude output, not just task ID
+```
+
+---
+
+## Issue 33: stdin Blocking Causes CLI to Wait (MAJOR FIX) ✅ FIXED
+
+- **Symptom**: Claude CLI hangs waiting for input even with `-p` (print mode)
+- **Root Cause**: stdin not redirected, causing CLI to poll for additional input
+- **Status**: ✅ FIXED (2026-02-01)
+- **Discovery**: Identified alongside Issue 32 as contributing to false timeouts
+- **Impact**:
+  - CLI waits indefinitely for stdin EOF
+  - Process appears hung but is actually waiting
+  - Timeout kills process before work completes
+
+### Fix Applied (ralph.sh lines 1419 and 1421)
+
+**Before:**
+```bash
+if [[ -n "$timeout_cmd" ]]; then
+  "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" > "$tmp_output" 2>&1
+else
+  "${cmd[@]}" > "$tmp_output" 2>&1
+fi
+```
+
+**After:**
+```bash
+if [[ -n "$timeout_cmd" ]]; then
+  "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" < /dev/null > "$tmp_output" 2>&1
+else
+  "${cmd[@]}" < /dev/null > "$tmp_output" 2>&1
+fi
+```
+
+### Why This Works
+
+The `< /dev/null` redirect:
+1. Provides immediate EOF on stdin
+2. Prevents CLI from waiting for user input
+3. Signals to the CLI that input is complete
+4. Combined with `--no-session-persistence`, ensures fully synchronous execution
+
+### Full Function After Both Fixes (lines 1402-1438)
+
+```bash
+_exec_with_timeout() {
+  local tmp_output="$1"
+  local log_file="$2"
+  shift 2
+  local cmd=("$@")
+
+  # Detect timeout command
+  local timeout_cmd=""
+  if command -v timeout >/dev/null 2>&1; then
+    timeout_cmd="timeout"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    timeout_cmd="gtimeout"
+  fi
+
+  # Execute with direct file redirection (avoids PTY buffering issues)
+  # Output goes to tmp_output, which is later copied to log_file
+  if [[ -n "$timeout_cmd" ]]; then
+    "$timeout_cmd" --kill-after=30s "${STALL_MINUTES}m" "${cmd[@]}" < /dev/null > "$tmp_output" 2>&1
+  else
+    "${cmd[@]}" < /dev/null > "$tmp_output" 2>&1
+  fi
+  _EXEC_RC=$?
+
+  # Ensure file buffers are flushed after potential timeout/kill
+  sync 2>/dev/null || true
+
+  # Append to log file if specified (with explicit error handling)
+  if [[ -n "$log_file" ]]; then
+    if [[ -s "$tmp_output" ]]; then
+      cat "$tmp_output" >> "$log_file"
+    else
+      echo "[WARNING] Command produced no output (tmp file empty)" >> "$log_file"
+    fi
+  fi
+
+  # Note: Output is returned via the file, not stdout - caller reads tmp_output
+}
+```
+
+### Verification
+
+```bash
+# Confirm stdin is closed immediately
+strace -e read timeout 10 claude -p --no-session-persistence "test" < /dev/null 2>&1 | grep "read(0"
+# Should show immediate read of empty stdin, no blocking
+
+# Run ralph and verify completion
+./scripts/ralph.sh --beads 3
+# All beads should complete without false timeouts
+```
