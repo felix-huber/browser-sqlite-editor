@@ -17,8 +17,9 @@ let engineReady = true;
 let journalModeResponse = 'delete';
 
 // Use vi.hoisted to ensure mock values are available during module hoisting
-const { mockEngine, mockEnsureAppDirectories } = vi.hoisted(() => {
+const { mockEngine, mockEnsureAppDirectories, mockCreateEmptyOPFSFile } = vi.hoisted(() => {
   const mockEnsureAppDirectories = vi.fn().mockResolvedValue(undefined);
+  const mockCreateEmptyOPFSFile = vi.fn().mockResolvedValue(true);
   const mockEngine = {
     exec: vi.fn(),
     query: vi.fn(),
@@ -28,7 +29,7 @@ const { mockEngine, mockEnsureAppDirectories } = vi.hoisted(() => {
     isReady: vi.fn(() => true),
     getDbName: vi.fn().mockReturnValue(null),
   };
-  return { mockEngine, mockEnsureAppDirectories };
+  return { mockEngine, mockEnsureAppDirectories, mockCreateEmptyOPFSFile };
 });
 
 vi.mock('../../core/engine/db-engine', () => ({
@@ -40,6 +41,7 @@ vi.mock('../../core/engine/opfs-vfs', () => ({
   OPFS_VFS_NAME: 'opfs-coop-sync',
   IDB_VFS_NAME: 'idb-batch-atomic',
   ensureAppDirectories: mockEnsureAppDirectories,
+  createEmptyOPFSFile: mockCreateEmptyOPFSFile,
 }));
 
 // Import after mocks are set up

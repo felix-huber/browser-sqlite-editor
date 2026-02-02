@@ -1366,51 +1366,91 @@ export class DatabaseRegistry {
       this.data = { databases: [] };
     }
 
-    // Get actual database files
-    let actualFiles = await this.adapter.listFiles(this.storageMode);
+    // Get actual database files from BOTH storage backends
+    // Registry can contain entries for databases in either storage type
+    let opfsFiles: string[] = [];
+    let idbFiles: string[] = [];
+
+    if (this.storageMode === 'opfs') {
+      // OPFS is the primary registry storage, but we need to check IDB too
+      // for databases that were created before OPFS migration or with explicit IDB storage
+      opfsFiles = await this.adapter.listFiles('opfs');
+      idbFiles = await this.adapter.listFiles('idb');
+    } else {
+      // IDB mode - only check IDB (no OPFS available)
+      idbFiles = await this.adapter.listFiles('idb');
+    }
 
     // === CASE COLLISION RESOLUTION (OPFS only) ===
     if (this.storageMode === 'opfs' && this.adapter.getFileLastModified && this.adapter.renameRawFile) {
-      actualFiles = await this.resolveCaseCollisions(actualFiles, result);
+      opfsFiles = await this.resolveCaseCollisions(opfsFiles, result);
     }
 
     // Find orphans (registry has entry, no file)
+    // IMPORTANT: Check each entry against its OWN storageType, not the registry's storageMode
     const validEntries: RegistryEntry[] = [];
     for (const entry of this.data.databases) {
-      const filename = this.storageMode === 'opfs'
-        ? toFilename(entry.name)
-        : entry.name;
+      // Determine which file list to check based on the entry's storage type
+      const entryStorageType = entry.storageType ?? this.storageMode;
+      let exists = false;
 
-      const exists = actualFiles.includes(filename);
+      if (entryStorageType === 'opfs') {
+        // OPFS entries use sanitized filenames
+        const filename = toFilename(entry.name);
+        exists = opfsFiles.includes(filename);
+      } else {
+        // IDB entries use the database name directly
+        exists = idbFiles.includes(entry.name);
+      }
+
       if (exists) {
         validEntries.push(entry);
       } else {
         result.orphansRemoved.push(entry.id);
         workerDebugLog(
-          `[DatabaseRegistry] Orphan DB detected: id="${entry.id}", name="${entry.name}" (no corresponding file found)`
+          `[DatabaseRegistry] Orphan DB detected: id="${entry.id}", name="${entry.name}", storageType="${entryStorageType}" (no corresponding file found)`
         );
       }
     }
 
     // Find discovered files (file exists, no registry entry)
-    const registeredNames = new Set(
-      this.data.databases.map((e) =>
-        this.storageMode === 'opfs' ? toFilename(e.name) : e.name
-      )
+    // Check OPFS files
+    const registeredOpfsFilenames = new Set(
+      this.data.databases
+        .filter((e) => (e.storageType ?? this.storageMode) === 'opfs')
+        .map((e) => toFilename(e.name))
+    );
+    const registeredIdbNames = new Set(
+      this.data.databases
+        .filter((e) => (e.storageType ?? this.storageMode) === 'idb')
+        .map((e) => e.name)
     );
 
-    for (const filename of actualFiles) {
-      if (!registeredNames.has(filename)) {
-        // Derive name from filename (only transform for OPFS)
-        const name = this.storageMode === 'opfs'
-          ? filename.replace(/\.sqlite$/, '').replace(/_/g, ' ')
-          : filename;
+    // Discover OPFS files not in registry
+    for (const filename of opfsFiles) {
+      if (!registeredOpfsFilenames.has(filename)) {
+        const name = filename.replace(/\.sqlite$/, '').replace(/_/g, ' ');
         const newEntry: RegistryEntry = {
           id: generateId(),
           name,
           createdAt: now(),
           lastOpenedAt: now(),
-          storageType: this.storageMode,
+          storageType: 'opfs',
+        };
+        validEntries.push(newEntry);
+        result.discovered.push(newEntry.id);
+      }
+    }
+
+    // Discover IDB files not in registry
+    for (const name of idbFiles) {
+      if (!registeredIdbNames.has(name)) {
+        const newEntry: RegistryEntry = {
+          id: generateId(),
+          name,
+          createdAt: now(),
+          lastOpenedAt: now(),
+          storageType: 'idb',
         };
         validEntries.push(newEntry);
         result.discovered.push(newEntry.id);
@@ -1422,7 +1462,7 @@ export class DatabaseRegistry {
 
     // === ORPHANED SIDECAR AND JOURNAL CLEANUP (OPFS only) ===
     if (this.storageMode === 'opfs' && this.adapter.listAllFiles && this.adapter.deleteRawFile) {
-      await this.cleanOrphanedFiles(actualFiles, result);
+      await this.cleanOrphanedFiles(opfsFiles, result);
     }
 
     // Persist if any changes were made

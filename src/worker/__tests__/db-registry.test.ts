@@ -31,6 +31,8 @@ import * as debugModule from '../../shared/utils/debug';
 interface MockStorageState {
   registryData: RegistryData | null;
   fileList: string[];
+  /** List of IDB files (if different from OPFS fileList). Defaults to empty array. */
+  idbFileList?: string[];
   opfsAvailable: boolean;
   throwOnRead: boolean;
   existingFiles: Set<string>;
@@ -58,7 +60,16 @@ function createMockAdapter(state: MockStorageState): StorageAdapter {
     writeRegistry: vi.fn(async (_mode, data: RegistryData) => {
       state.registryData = data;
     }),
-    listFiles: vi.fn(async () => state.fileList),
+    listFiles: vi.fn(async (mode: 'opfs' | 'idb') => {
+      // Return OPFS files for 'opfs' mode, IDB files for 'idb' mode
+      // When opfsAvailable=false (pure IDB mode), fileList represents IDB files
+      // When opfsAvailable=true, fileList is for OPFS and idbFileList is for IDB
+      if (mode === 'opfs') {
+        return state.fileList;
+      }
+      // IDB mode: use idbFileList if set, otherwise use fileList when in IDB-only mode
+      return state.idbFileList ?? (state.opfsAvailable ? [] : state.fileList);
+    }),
     renameFile: vi.fn(async (_mode, oldName: string, newName: string) => {
       if (state.throwOnRename) {
         throw new Error('Simulated rename failure');
@@ -425,7 +436,8 @@ describe('DatabaseRegistry - Self-Healing', () => {
           },
         ],
       };
-      mockState.fileList = ['Valid DB']; // File exists
+      // IDB entries are checked against idbFileList, not fileList (which is for OPFS)
+      mockState.idbFileList = ['Valid DB']; // File exists in IDB
 
       const adapter = createMockAdapter(mockState);
       const registry = new DatabaseRegistry(adapter);

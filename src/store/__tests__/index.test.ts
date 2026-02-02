@@ -1726,4 +1726,190 @@ describe('Query Builder State Persistence', () => {
       expect(result.current.queryBuilderState?.nodes[0].data.selectedColumns).toHaveLength(3);
     });
   });
+
+  describe('openDb clears queryBuilderState', () => {
+    // This tests the fix from commit 5fa131f: Clear Query Builder state when switching databases
+    // (state is database-specific and must be reset)
+
+    // Mock dependencies
+    const mockWorkerClient = {
+      getRegistry: vi.fn(),
+      openDb: vi.fn(),
+      closeDb: vi.fn(),
+      createDb: vi.fn(),
+      deleteDb: vi.fn(),
+      renameDb: vi.fn(),
+      getSchema: vi.fn(),
+      getDbSize: vi.fn(),
+    };
+
+    const mockLockManager = {
+      acquireLock: vi.fn(),
+      releaseLock: vi.fn(),
+    };
+
+    beforeEach(() => {
+      useDatabaseStore.getState().reset();
+      vi.resetAllMocks();
+      setActionDeps({
+        workerClient: mockWorkerClient as never,
+        lockManager: mockLockManager as never,
+      });
+    });
+
+    afterEach(() => {
+      resetActionDeps();
+    });
+
+    it('should clear queryBuilderState when opening a different database', async () => {
+      const store = useDatabaseStore.getState();
+
+      // Set up initial state with query builder state (simulating a user who
+      // built a query and is now switching to a different database)
+      store.setQueryBuilderState({
+        nodes: [
+          {
+            id: 'table-users-789',
+            type: 'tableBox' as const,
+            position: { x: 100, y: 100 },
+            data: {
+              tableName: 'users',
+              alias: 't1',
+              columns: [{ name: 'id', type: 'INTEGER', isPrimaryKey: true }],
+              selectedColumns: ['id'],
+            },
+          },
+        ],
+        joins: [
+          {
+            id: 'join-1',
+            sourceTable: 'users',
+            sourceColumn: 'id',
+            targetTable: 'orders',
+            targetColumn: 'user_id',
+            joinType: 'INNER' as const,
+          },
+        ],
+        whereConditions: [
+          { id: 'w1', column: 't1.id', operator: '>' as const, value: '10' },
+        ],
+        whereLogic: 'AND',
+        sortConditions: [{ column: 't1.id', direction: 'ASC' as const }],
+        limit: 100,
+      });
+
+      expect(getState().queryBuilderState).not.toBeNull();
+      expect(getState().queryBuilderState?.nodes).toHaveLength(1);
+      expect(getState().queryBuilderState?.joins).toHaveLength(1);
+
+      // Set up mocks for opening a new database
+      mockWorkerClient.getDbSize.mockResolvedValue({
+        sizeBytes: 1024,
+        storageMode: 'opfs',
+      });
+      mockLockManager.acquireLock.mockResolvedValue({
+        acquired: true,
+        holderId: null,
+        holderStale: false,
+      });
+      mockWorkerClient.openDb.mockResolvedValue({ isWriter: true });
+      mockWorkerClient.getSchema.mockResolvedValue({
+        tables: ['products', 'categories'],
+        views: [],
+        indexes: [],
+      });
+
+      await openDb('new-database');
+
+      // Query builder state should be cleared when switching databases
+      expect(getState().queryBuilderState).toBeNull();
+      expect(getState().activeDbId).toBe('new-database');
+    });
+
+    it('should clear queryBuilderState even when opening IDB database', async () => {
+      const store = useDatabaseStore.getState();
+
+      // Set up existing query builder state
+      store.setQueryBuilderState({
+        nodes: [],
+        joins: [],
+        whereConditions: [
+          { id: 'w1', column: 't1.status', operator: '=' as const, value: 'active' },
+        ],
+        whereLogic: 'OR',
+        sortConditions: [],
+        limit: 50,
+      });
+
+      expect(getState().queryBuilderState).not.toBeNull();
+
+      // Set up mocks for IDB database
+      mockWorkerClient.getDbSize.mockResolvedValue({
+        sizeBytes: 512,
+        storageMode: 'idb',
+      });
+      mockWorkerClient.openDb.mockResolvedValue({ isWriter: true });
+      mockWorkerClient.getSchema.mockResolvedValue({
+        tables: ['data'],
+        views: [],
+        indexes: [],
+      });
+
+      await openDb('idb-database');
+
+      // Query builder state should still be cleared for IDB databases
+      expect(getState().queryBuilderState).toBeNull();
+      expect(getState().storageMode).toBe('idb');
+    });
+
+    it('should clear queryBuilderState before loading new schema', async () => {
+      // This ensures the state is cleared at the right time in the openDb flow
+      const store = useDatabaseStore.getState();
+
+      store.setQueryBuilderState({
+        nodes: [
+          {
+            id: 'old-node',
+            type: 'tableBox' as const,
+            position: { x: 0, y: 0 },
+            data: {
+              tableName: 'old_table',
+              alias: 't1',
+              columns: [],
+              selectedColumns: ['col1', 'col2'],
+            },
+          },
+        ],
+        joins: [],
+        whereConditions: [],
+        whereLogic: 'AND',
+        sortConditions: [],
+        limit: null,
+      });
+
+      mockWorkerClient.getDbSize.mockResolvedValue({
+        sizeBytes: 1024,
+        storageMode: 'opfs',
+      });
+      mockLockManager.acquireLock.mockResolvedValue({
+        acquired: true,
+        holderId: null,
+        holderStale: false,
+      });
+      mockWorkerClient.openDb.mockResolvedValue({ isWriter: true });
+
+      // Track when queryBuilderState is cleared relative to getSchema
+      let stateWhenSchemaFetched: typeof store.queryBuilderState = undefined;
+      mockWorkerClient.getSchema.mockImplementation(async () => {
+        // Capture the state at the moment getSchema is called
+        stateWhenSchemaFetched = getState().queryBuilderState;
+        return { tables: ['new_table'], views: [], indexes: [] };
+      });
+
+      await openDb('another-db');
+
+      // queryBuilderState should have been null when getSchema was called
+      expect(stateWhenSchemaFetched).toBeNull();
+    });
+  });
 });
