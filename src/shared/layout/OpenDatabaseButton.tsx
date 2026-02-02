@@ -194,7 +194,6 @@ export function OpenDatabaseButton({
         className={`${baseClasses} ${disabledClasses} ${className}`}
         disabled={disabled}
         title={`Open Database (${shortcutKey})`}
-        aria-label={`Open Database (${shortcutKey})`}
         data-testid={testId}
       >
         {FolderOpenIcon}
