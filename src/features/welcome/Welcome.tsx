@@ -183,7 +183,7 @@ export function Welcome({
       className="flex-1 flex flex-col items-center p-8 min-h-0 overflow-y-auto"
       data-testid="welcome-screen"
     >
-      <div className="max-w-md w-full flex flex-col items-center gap-8 my-auto">
+      <div className="max-w-md w-full flex flex-col items-center gap-8 py-4">
         {/* Database Icon */}
         <div className="w-20 h-20 rounded-2xl bg-navy-100 flex items-center justify-center">
           <svg
