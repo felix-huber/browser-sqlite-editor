@@ -563,4 +563,280 @@ describe('executePaginatedQuery integration', () => {
       .mock.calls.filter(([sql]) => sql.startsWith('SELECT COUNT(*)'));
     expect(countCalls).toHaveLength(1);
   });
+
+  /**
+   * Test for the indexOf bug fix (line 424).
+   *
+   * Before the fix: result.columns.indexOf(colName) was used, which always returned
+   * the index of the FIRST occurrence of a column name. For duplicate column names
+   * (common in JOINs), this caused later duplicates to get the wrong columnType.
+   *
+   * After the fix: colIndex (the map callback's second parameter) is used instead,
+   * correctly mapping each column to its corresponding type.
+   */
+  describe('duplicate column names in JOIN results', () => {
+    it('assigns correct types to duplicate column names (indexOf bug fix)', async () => {
+      // Simulates: SELECT a.id, a.name, b.id, b.status FROM users a JOIN orders b
+      // Both tables have 'id' column, but with potentially different types
+      const engine = createMockEngine((sql) => {
+        if (sql.startsWith('SELECT COUNT(*)')) {
+          return { columns: ['COUNT(*)'], columnTypes: ['INTEGER'], rows: [[2]] };
+        }
+        if (sql.startsWith('SELECT sql FROM sqlite_master')) {
+          return { columns: ['sql'], columnTypes: ['TEXT'], rows: [] };
+        }
+        if (sql.startsWith('PRAGMA table_xinfo')) {
+          return {
+            columns: ['cid', 'name', 'type', 'notnull', 'dflt_value', 'pk', 'hidden'],
+            columnTypes: ['INTEGER', 'TEXT', 'TEXT', 'INTEGER', 'TEXT', 'INTEGER', 'INTEGER'],
+            rows: [], // Empty - columns not found in table metadata
+          };
+        }
+        // The paginated query result with duplicate 'id' columns
+        if (sql.includes('LIMIT')) {
+          return {
+            columns: ['id', 'name', 'id', 'status'],
+            // Different types for the two 'id' columns to verify correct mapping
+            columnTypes: ['INTEGER', 'TEXT', 'TEXT', 'TEXT'],
+            rows: [
+              [1, 'Alice', 'ORD-001', 'pending'],
+              [2, 'Bob', 'ORD-002', 'shipped'],
+            ],
+          };
+        }
+        return { columns: [], columnTypes: [], rows: [] };
+      });
+
+      const result = await executePaginatedQuery(engine, {
+        sql: 'SELECT a.id, a.name, b.id, b.status FROM users a JOIN orders b',
+        limit: 10,
+        offset: 0,
+        // No tableName - simulates ad-hoc query without table metadata
+      });
+
+      // Verify each column has the correct type
+      // Before the fix, columns[2] would have type 'INTEGER' (from indexOf('id') = 0)
+      // After the fix, columns[2] correctly has type 'TEXT' (from colIndex = 2)
+      expect(result.columns).toEqual([
+        { name: 'id', type: 'INTEGER', isGenerated: false, generatedExpression: null },
+        { name: 'name', type: 'TEXT', isGenerated: false, generatedExpression: null },
+        { name: 'id', type: 'TEXT', isGenerated: false, generatedExpression: null },
+        { name: 'status', type: 'TEXT', isGenerated: false, generatedExpression: null },
+      ]);
+    });
+
+    it('handles three duplicate columns with different types', async () => {
+      // Edge case: three columns with same name, each with different type
+      const engine = createMockEngine((sql) => {
+        if (sql.startsWith('SELECT COUNT(*)')) {
+          return { columns: ['COUNT(*)'], columnTypes: ['INTEGER'], rows: [[1]] };
+        }
+        if (sql.startsWith('SELECT sql FROM sqlite_master')) {
+          return { columns: ['sql'], columnTypes: ['TEXT'], rows: [] };
+        }
+        if (sql.startsWith('PRAGMA table_xinfo')) {
+          return {
+            columns: ['cid', 'name', 'type', 'notnull', 'dflt_value', 'pk', 'hidden'],
+            columnTypes: ['INTEGER', 'TEXT', 'TEXT', 'INTEGER', 'TEXT', 'INTEGER', 'INTEGER'],
+            rows: [],
+          };
+        }
+        if (sql.includes('LIMIT')) {
+          return {
+            columns: ['val', 'val', 'val'],
+            columnTypes: ['INTEGER', 'REAL', 'TEXT'],
+            rows: [[1, 1.5, 'one']],
+          };
+        }
+        return { columns: [], columnTypes: [], rows: [] };
+      });
+
+      const result = await executePaginatedQuery(engine, {
+        sql: 'SELECT a.val, b.val, c.val FROM t1 a, t2 b, t3 c',
+        limit: 10,
+        offset: 0,
+      });
+
+      // Each 'val' column should have its own correct type
+      expect(result.columns[0].type).toBe('INTEGER');
+      expect(result.columns[1].type).toBe('REAL');
+      expect(result.columns[2].type).toBe('TEXT');
+    });
+
+    it('correctly maps types when only some columns are duplicates', async () => {
+      // Mix of unique and duplicate columns
+      const engine = createMockEngine((sql) => {
+        if (sql.startsWith('SELECT COUNT(*)')) {
+          return { columns: ['COUNT(*)'], columnTypes: ['INTEGER'], rows: [[1]] };
+        }
+        if (sql.startsWith('SELECT sql FROM sqlite_master')) {
+          return { columns: ['sql'], columnTypes: ['TEXT'], rows: [] };
+        }
+        if (sql.startsWith('PRAGMA table_xinfo')) {
+          return {
+            columns: ['cid', 'name', 'type', 'notnull', 'dflt_value', 'pk', 'hidden'],
+            columnTypes: ['INTEGER', 'TEXT', 'TEXT', 'INTEGER', 'TEXT', 'INTEGER', 'INTEGER'],
+            rows: [],
+          };
+        }
+        if (sql.includes('LIMIT')) {
+          return {
+            columns: ['id', 'name', 'id', 'created_at', 'name'],
+            columnTypes: ['INTEGER', 'TEXT', 'TEXT', 'DATETIME', 'VARCHAR'],
+            rows: [[1, 'Alice', 'uuid-1', '2024-01-01', 'Product A']],
+          };
+        }
+        return { columns: [], columnTypes: [], rows: [] };
+      });
+
+      const result = await executePaginatedQuery(engine, {
+        sql: 'SELECT u.id, u.name, p.id, p.created_at, p.name FROM users u JOIN products p',
+        limit: 10,
+        offset: 0,
+      });
+
+      // Verify all columns have correct types
+      expect(result.columns.map(c => ({ name: c.name, type: c.type }))).toEqual([
+        { name: 'id', type: 'INTEGER' },
+        { name: 'name', type: 'TEXT' },
+        { name: 'id', type: 'TEXT' },
+        { name: 'created_at', type: 'DATETIME' },
+        { name: 'name', type: 'VARCHAR' },
+      ]);
+    });
+
+    it('handles columns not found in table metadata with correct types', async () => {
+      // When tableName is provided, columns not in table metadata should use columnTypes
+      // The indexOf fix ensures we use the correct index, not indexOf(colName)
+      const engine = createMockEngine((sql) => {
+        if (sql.startsWith('SELECT COUNT(*)')) {
+          return { columns: ['COUNT(*)'], columnTypes: ['INTEGER'], rows: [[1]] };
+        }
+        if (sql.startsWith('SELECT sql FROM sqlite_master')) {
+          return {
+            columns: ['sql'],
+            columnTypes: ['TEXT'],
+            rows: [['CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)']]
+          };
+        }
+        if (sql.startsWith('PRAGMA table_xinfo("users")')) {
+          return {
+            columns: ['cid', 'name', 'type', 'notnull', 'dflt_value', 'pk', 'hidden'],
+            columnTypes: ['INTEGER', 'TEXT', 'TEXT', 'INTEGER', 'TEXT', 'INTEGER', 'INTEGER'],
+            rows: [
+              [0, 'id', 'INTEGER', 0, null, 1, 0],
+              [1, 'name', 'TEXT', 0, null, 0, 0],
+            ],
+          };
+        }
+        if (sql.includes('LIMIT')) {
+          return {
+            // id and name match users table, order_id and total don't
+            // The fix ensures order_id gets BLOB (index 2) and total gets REAL (index 3)
+            columns: ['id', 'name', 'order_id', 'total'],
+            columnTypes: ['INTEGER', 'TEXT', 'BLOB', 'REAL'],
+            rows: [[1, 'Alice', 'ORD-001', 99.99]],
+          };
+        }
+        return { columns: [], columnTypes: [], rows: [] };
+      });
+
+      const result = await executePaginatedQuery(engine, {
+        sql: 'SELECT u.id, u.name, o.order_id, o.total FROM users u JOIN orders o',
+        limit: 10,
+        offset: 0,
+        tableName: 'users',
+      });
+
+      // id and name come from table metadata (users)
+      expect(result.columns[0]).toEqual({
+        name: 'id',
+        type: 'INTEGER',
+        isGenerated: false,
+        generatedExpression: null,
+      });
+      expect(result.columns[1]).toEqual({
+        name: 'name',
+        type: 'TEXT',
+        isGenerated: false,
+        generatedExpression: null,
+      });
+      // order_id and total not in users table - use columnTypes with correct indices
+      expect(result.columns[2]).toEqual({
+        name: 'order_id',
+        type: 'BLOB', // From columnTypes[2]
+        isGenerated: false,
+        generatedExpression: null,
+      });
+      expect(result.columns[3]).toEqual({
+        name: 'total',
+        type: 'REAL', // From columnTypes[3]
+        isGenerated: false,
+        generatedExpression: null,
+      });
+    });
+
+    it('correctly handles multiple columns not in table metadata (indexOf bug scenario)', async () => {
+      // This is the exact scenario the indexOf bug would affect:
+      // Multiple columns with the same name that don't exist in table metadata
+      // Before fix: all would get the type of the first occurrence via indexOf
+      const engine = createMockEngine((sql) => {
+        if (sql.startsWith('SELECT COUNT(*)')) {
+          return { columns: ['COUNT(*)'], columnTypes: ['INTEGER'], rows: [[1]] };
+        }
+        if (sql.startsWith('SELECT sql FROM sqlite_master')) {
+          return {
+            columns: ['sql'],
+            columnTypes: ['TEXT'],
+            rows: [['CREATE TABLE metrics (timestamp INTEGER)']]
+          };
+        }
+        if (sql.startsWith('PRAGMA table_xinfo("metrics")')) {
+          return {
+            columns: ['cid', 'name', 'type', 'notnull', 'dflt_value', 'pk', 'hidden'],
+            columnTypes: ['INTEGER', 'TEXT', 'TEXT', 'INTEGER', 'TEXT', 'INTEGER', 'INTEGER'],
+            rows: [
+              [0, 'timestamp', 'INTEGER', 0, null, 0, 0],
+            ],
+          };
+        }
+        if (sql.includes('LIMIT')) {
+          return {
+            // 'value' appears 3 times - not in table metadata, each with different type
+            // Before fix: all three would get INTEGER (indexOf('value') = 0)
+            // After fix: each gets its correct type from colIndex
+            columns: ['timestamp', 'value', 'value', 'value'],
+            columnTypes: ['INTEGER', 'INTEGER', 'REAL', 'TEXT'],
+            rows: [[1704067200, 42, 3.14, 'hello']],
+          };
+        }
+        return { columns: [], columnTypes: [], rows: [] };
+      });
+
+      const result = await executePaginatedQuery(engine, {
+        sql: 'SELECT timestamp, v1.value, v2.value, v3.value FROM metrics JOIN values v1...',
+        limit: 10,
+        offset: 0,
+        tableName: 'metrics',
+      });
+
+      // timestamp comes from table metadata
+      expect(result.columns[0]).toEqual({
+        name: 'timestamp',
+        type: 'INTEGER',
+        isGenerated: false,
+        generatedExpression: null,
+      });
+      // All three 'value' columns should have their correct types
+      // This is what the indexOf bug fix enables
+      expect(result.columns[1].name).toBe('value');
+      expect(result.columns[1].type).toBe('INTEGER'); // columnTypes[1]
+
+      expect(result.columns[2].name).toBe('value');
+      expect(result.columns[2].type).toBe('REAL'); // columnTypes[2], not INTEGER
+
+      expect(result.columns[3].name).toBe('value');
+      expect(result.columns[3].type).toBe('TEXT'); // columnTypes[3], not INTEGER
+    });
+  });
 });
