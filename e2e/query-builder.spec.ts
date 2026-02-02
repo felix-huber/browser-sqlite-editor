@@ -389,7 +389,7 @@ test.describe('Query Builder PRD Scenarios', () => {
       );
       INSERT INTO customers (name, email) VALUES ('Customer1', 'c1@test.com');
     `);
-    await page.getByTestId('tab-query-builder').click();
+    await navigateToTab(page, 'tab-query-builder');
     await expect(page.getByTestId('query-builder-view')).toBeVisible();
 
     // Part 1: Verify duplicate table is blocked
@@ -701,7 +701,7 @@ test.describe('Query Builder JOIN Functionality', () => {
     // First add a product without a category
     await page.getByTestId('tab-sql').click();
     await runSql(page, "INSERT INTO products (name, price, category_id) VALUES ('Orphan Product', 9.99, NULL)");
-    await page.getByTestId('tab-query-builder').click();
+    await navigateToTab(page, 'tab-query-builder');
     await expect(page.getByTestId('query-builder-view')).toBeVisible();
 
     // Add tables
@@ -1178,8 +1178,8 @@ test.describe('Query Builder State Persistence', () => {
     await page.getByTestId(`recent-db-${DB_NAME}`).click();
     await waitForReady(page);
 
-    // 6. Navigate to Query Builder
-    await page.getByTestId('tab-query-builder').click();
+    // 6. Navigate to Query Builder (handle unsaved prompt if it appears)
+    await navigateToTab(page, 'tab-query-builder');
     await expect(page.getByTestId('query-builder-view')).toBeVisible();
 
     // 7. Verify the canvas is empty (state was cleared)
