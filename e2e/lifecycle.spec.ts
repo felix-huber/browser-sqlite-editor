@@ -239,9 +239,10 @@ async function renameDatabaseDirect(
         entry.name = newN;
 
         // Helper function to convert name to filename
+        // NOTE: Must match toFilename() in src/worker/db-registry.ts
         const toFilename = (name: string): string => {
           return name
-            .replace(/[<>:"/\\|?*]/g, '_')
+            .replace(/[<>:"/\\|?*()]/g, '_')
             .replace(/\s+/g, '_')
             .toLowerCase() + '.sqlite';
         };
@@ -408,8 +409,9 @@ async function deleteDatabaseDirect(
         try {
           const dbDir = await appDir.getDirectoryHandle('databases');
           // Helper to convert name to filename (same logic as app)
+          // NOTE: Must match toFilename() in src/worker/db-registry.ts
           const toFilename = (n: string): string =>
-            n.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_').toLowerCase();
+            n.replace(/[<>:"/\\|?*()]/g, '_').replace(/\s+/g, '_').toLowerCase();
           const filename = toFilename(name) + '.sqlite';
           const erdFilename = toFilename(name) + '.erd.json';
 
@@ -618,8 +620,9 @@ test.describe('Database Lifecycle E2E (US-013)', () => {
         const filesAfter = await listOpfsFiles(page);
 
         // Convert dbName to expected filename format (same as app's toFilename)
-        const expectedSqliteFile = dbName.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_').toLowerCase() + '.sqlite';
-        const expectedErdFile = dbName.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_').toLowerCase() + '.erd.json';
+        // NOTE: Must match toFilename() in src/worker/db-registry.ts
+        const expectedSqliteFile = dbName.replace(/[<>:"/\\|?*()]/g, '_').replace(/\s+/g, '_').toLowerCase() + '.sqlite';
+        const expectedErdFile = dbName.replace(/[<>:"/\\|?*()]/g, '_').replace(/\s+/g, '_').toLowerCase() + '.erd.json';
 
         // Neither .sqlite nor .erd.json should exist for this database
         expect(filesAfter.includes(expectedSqliteFile)).toBe(false);

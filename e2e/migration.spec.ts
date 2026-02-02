@@ -93,9 +93,9 @@ async function createLegacyDatabase(page: Page, name: string): Promise<string> {
     const root = await navigator.storage.getDirectory();
     const legacyDir = await root.getDirectoryHandle('sqlite-editor', { create: true });
 
-    // Derive filename from name
+    // Derive filename from name (must match toFilename() in src/worker/db-registry.ts)
     const filename = dbName
-      .replace(/[<>:"/\\|?*]/g, '_')
+      .replace(/[<>:"/\\|?*()]/g, '_')
       .replace(/\s+/g, '_')
       .toLowerCase() + '.sqlite';
 
