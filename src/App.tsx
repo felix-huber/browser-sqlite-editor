@@ -447,7 +447,7 @@ function App() {
 
   const handleOpenSample = useCallback(async () => {
     try {
-      const response = await fetch('/sakila.db');
+      const response = await fetch(`${import.meta.env.BASE_URL}sakila.db`);
       if (!response.ok) {
         throw new Error('Failed to load sample database');
       }
