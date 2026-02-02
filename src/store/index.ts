@@ -522,29 +522,49 @@ export async function loadRegistry(): Promise<void> {
 /**
  * Open a database by ID
  *
- * 1. Acquires a lock (exclusive if available, otherwise read-only)
- * 2. Opens the database via the worker
- * 3. Loads the schema
- * 4. Updates activeDbId, isReadOnly, lockHolder, and schema in the store
+ * 1. Checks storage type (IDB databases skip lock acquisition - they're multi-tab safe)
+ * 2. For OPFS: Acquires a lock (exclusive if available, otherwise read-only)
+ * 3. Opens the database via the worker
+ * 4. Loads the schema
+ * 5. Updates activeDbId, isReadOnly, lockHolder, and schema in the store
  *
  * @param id Database ID to open
  */
 export async function openDb(id: string): Promise<void> {
   const store = useDatabaseStore.getState();
 
-  // Try to acquire the write lock
-  const lockResult = await _deps.lockManager.acquireLock(id);
+  // Check storage type to determine if lock acquisition is needed
+  // IDB databases are multi-tab safe and don't need Web Locks
+  let storageMode: StorageMode = 'opfs'; // Default assumption
+  try {
+    const sizeInfo = await _deps.workerClient.getDbSize(id);
+    storageMode = sizeInfo.storageMode;
+  } catch {
+    // If we can't determine storage mode, assume OPFS (safer)
+  }
+
+  // IDB databases are multi-tab safe - skip lock acquisition
+  // OPFS databases need Web Locks for single-writer guarantee
+  let lockResult = { acquired: true, holderStale: false };
+  if (storageMode === 'opfs') {
+    lockResult = await _deps.lockManager.acquireLock(id);
+  }
 
   // Open the database via worker
-  await _deps.workerClient.openDb(id, { readOnly: !lockResult.acquired });
+  // For IDB, always open with readOnly=false since it's multi-tab safe
+  // For OPFS, use the lock result to determine read-only mode
+  const readOnly = storageMode === 'opfs' && !lockResult.acquired;
+  await _deps.workerClient.openDb(id, { readOnly });
 
   // Determine lock state
-  const isWriter = lockResult.acquired;
+  // IDB databases always have write access (multi-tab safe)
+  const isWriter = storageMode === 'idb' || lockResult.acquired;
   const isReadOnly = !isWriter;
   const lockHolder: LockHolder = isWriter ? 'self' : 'other';
 
-  // Set active database and read-only state
+  // Set active database, storage mode, and lock state
   store.setActiveDb(id);
+  store.setStorageMode(storageMode);
   store.setReadOnly(isReadOnly);
   store.setLockHolder(lockHolder);
 
@@ -559,7 +579,6 @@ export async function openDb(id: string): Promise<void> {
   // Check size warning after database is opened
   try {
     const sizeInfo = await _deps.workerClient.getDbSize(id);
-    store.setStorageMode(sizeInfo.storageMode);
     checkSizeWarning(id, sizeInfo.sizeBytes, sizeInfo.storageMode);
   } catch {
     // Size check is non-critical, don't fail the open
@@ -581,8 +600,9 @@ export async function closeDb(): Promise<void> {
     return; // Nothing to close
   }
 
-  // Release the lock if we hold it
-  if (store.lockHolder === 'self') {
+  // Release the lock if we hold it (only for OPFS databases)
+  // IDB databases don't use Web Locks (they're multi-tab safe)
+  if (store.lockHolder === 'self' && store.storageMode === 'opfs') {
     await _deps.lockManager.releaseLock(activeDbId);
   }
 

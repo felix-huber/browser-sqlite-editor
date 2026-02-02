@@ -69,7 +69,10 @@ export async function handleImportRequest(
       await registry.init();
     }
 
-    const storageMode = registry.getStorageMode();
+    // Always use IDB for imports to avoid OPFS multi-tab lock conflicts.
+    // OPFS uses exclusive createSyncAccessHandle() locks that conflict across tabs.
+    // IDB is multi-tab safe and has negligible performance difference for typical use.
+    const storageMode = 'idb' as const;
 
     const importResult = await importDatabase(request.file, {
       nameHint: request.nameHint,

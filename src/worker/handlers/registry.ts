@@ -19,10 +19,15 @@ export async function handleOpenRequest(
   postResponse: PostResponse
 ): Promise<void> {
   try {
+    console.log('[handleOpenRequest] Starting for db:', request.dbName);
     // Reset transaction tracker when opening a new database
     resetSessionTracker();
+    console.log('[handleOpenRequest] Session tracker reset');
 
+    console.log('[handleOpenRequest] Resolving db path...');
     const { path, vfsName } = await resolveDbPath(request.dbName);
+    console.log('[handleOpenRequest] Path resolved:', path, 'VFS:', vfsName);
+
     const readOnly = request.readOnly ?? false;
     // For OPFS mode, always pass createIfMissing: true because:
     // - The OPFSCoopSyncVFS maintains an internal accessiblePaths cache
@@ -31,8 +36,15 @@ export async function handleOpenRequest(
     // - SQLITE_OPEN_CREATE makes the VFS check the actual OPFS filesystem
     // - This is safe even if the file exists (SQLite just opens it normally)
     const createIfMissing = vfsName === OPFS_VFS_NAME;
+    console.log('[handleOpenRequest] Opening database...');
     await openDatabase(path, vfsName, { readOnly, createIfMissing });
-    postResponse({ type: 'lockStatus', isWriter: !readOnly }, id);
+    console.log('[handleOpenRequest] Database opened successfully');
+    // IDB databases are multi-tab safe, so they don't need lock detection.
+    // Only OPFS databases need the single-writer lock because OPFS uses
+    // exclusive createSyncAccessHandle locks that can't be shared across tabs.
+    const isIdbDatabase = vfsName !== OPFS_VFS_NAME;
+    const isWriter = isIdbDatabase ? true : !readOnly;
+    postResponse({ type: 'lockStatus', isWriter }, id);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const isNotFound = message.includes('NotFoundError') ||
@@ -92,16 +104,25 @@ export async function handleCreateDbRequest(
   postResponse: PostResponse
 ): Promise<void> {
   try {
-    const { path, vfsName } = await resolveDbPath(request.name, { allowCreate: true });
-    await openDatabase(path, vfsName, { createIfMissing: true });
+    // OPFSCoopSyncVFS cannot create new database files - it can only open existing ones.
+    // For new database creation, we use IDB VFS which properly supports SQLITE_OPEN_CREATE.
+    // Imported databases go to OPFS (via streamFileToOpfs), new databases use IDB.
+    const idbVfsName = 'idb-batch-atomic';
+
+    console.log('[handleCreateDbRequest] Creating via IDB VFS:', request.name);
+    await openDatabase(request.name, idbVfsName, { createIfMissing: true });
+    console.log('[handleCreateDbRequest] Database created successfully');
+
     const registry = getRegistry();
     if (!registry.isInitialized()) {
       await registry.init();
     }
-    await registry.registerDatabase(request.name);
+    // Register with 'idb' storage type
+    await registry.registerDatabase(request.name, 'idb');
     postResponse({ type: 'success' }, id);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    console.error('[handleCreateDbRequest] Error:', err);
     postResponse({
       type: 'error',
       message: `Failed to create database: ${message}`,

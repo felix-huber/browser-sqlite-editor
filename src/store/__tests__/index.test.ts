@@ -694,6 +694,7 @@ describe('Database Actions', () => {
     deleteDb: vi.fn(),
     renameDb: vi.fn(),
     getSchema: vi.fn(),
+    getDbSize: vi.fn(),
   };
 
   const mockLockManager = {
@@ -736,93 +737,271 @@ describe('Database Actions', () => {
   });
 
   describe('openDb', () => {
-    it('should set activeDbId, isReadOnly=false and load schema when lock acquired', async () => {
-      mockLockManager.acquireLock.mockResolvedValue({
-        acquired: true,
-        holderId: null,
-        holderStale: false,
-      });
-      mockWorkerClient.openDb.mockResolvedValue({ isWriter: true });
-      mockWorkerClient.getSchema.mockResolvedValue({
-        tables: ['users', 'orders'],
-        views: ['recent_orders'],
-        indexes: ['idx_user_id'],
+    describe('OPFS storage mode (requires Web Locks)', () => {
+      beforeEach(() => {
+        // Default to OPFS storage mode for these tests
+        mockWorkerClient.getDbSize.mockResolvedValue({
+          sizeBytes: 1024,
+          storageMode: 'opfs',
+        });
       });
 
-      await openDb('test-db-1');
+      it('should set activeDbId, isReadOnly=false and load schema when lock acquired', async () => {
+        mockLockManager.acquireLock.mockResolvedValue({
+          acquired: true,
+          holderId: null,
+          holderStale: false,
+        });
+        mockWorkerClient.openDb.mockResolvedValue({ isWriter: true });
+        mockWorkerClient.getSchema.mockResolvedValue({
+          tables: ['users', 'orders'],
+          views: ['recent_orders'],
+          indexes: ['idx_user_id'],
+        });
 
-      expect(mockLockManager.acquireLock).toHaveBeenCalledWith('test-db-1');
-      expect(mockWorkerClient.openDb).toHaveBeenCalledWith('test-db-1', { readOnly: false });
-      expect(mockWorkerClient.getSchema).toHaveBeenCalledTimes(1);
+        await openDb('test-db-1');
 
-      const state = getState();
-      expect(state.activeDbId).toBe('test-db-1');
-      expect(state.isReadOnly).toBe(false);
-      expect(state.lockHolder).toBe('self');
-      expect(state.schema).toEqual({
-        tables: ['users', 'orders'],
-        views: ['recent_orders'],
-        indexes: ['idx_user_id'],
+        // OPFS databases require lock acquisition
+        expect(mockLockManager.acquireLock).toHaveBeenCalledWith('test-db-1');
+        expect(mockWorkerClient.openDb).toHaveBeenCalledWith('test-db-1', { readOnly: false });
+        expect(mockWorkerClient.getSchema).toHaveBeenCalledTimes(1);
+
+        const state = getState();
+        expect(state.activeDbId).toBe('test-db-1');
+        expect(state.isReadOnly).toBe(false);
+        expect(state.lockHolder).toBe('self');
+        expect(state.storageMode).toBe('opfs');
+        expect(state.schema).toEqual({
+          tables: ['users', 'orders'],
+          views: ['recent_orders'],
+          indexes: ['idx_user_id'],
+        });
+      });
+
+      it('should set isReadOnly=true when lock not acquired', async () => {
+        mockLockManager.acquireLock.mockResolvedValue({
+          acquired: false,
+          holderId: 'other-tab',
+          holderStale: false,
+        });
+        mockWorkerClient.openDb.mockResolvedValue({ isWriter: false });
+        mockWorkerClient.getSchema.mockResolvedValue({
+          tables: ['users'],
+          views: [],
+          indexes: [],
+        });
+
+        await openDb('test-db-1');
+
+        const state = getState();
+        expect(state.activeDbId).toBe('test-db-1');
+        expect(state.isReadOnly).toBe(true);
+        expect(state.lockHolder).toBe('other');
+        expect(state.storageMode).toBe('opfs');
+      });
+
+      it('should open in read-only mode when lock acquisition fails', async () => {
+        mockLockManager.acquireLock.mockResolvedValue({
+          acquired: false,
+          holderId: 'tab-xyz',
+          holderStale: false,
+        });
+        mockWorkerClient.openDb.mockResolvedValue({ isWriter: false });
+        mockWorkerClient.getSchema.mockResolvedValue({
+          tables: ['data'],
+          views: [],
+          indexes: [],
+        });
+
+        await openDb('test-db-1');
+
+        // Should open with readOnly=true because lock was not acquired
+        expect(mockWorkerClient.openDb).toHaveBeenCalledWith('test-db-1', { readOnly: true });
+
+        const state = getState();
+        expect(state.isReadOnly).toBe(true);
+        expect(state.lockHolder).toBe('other');
       });
     });
 
-    it('should set isReadOnly=true when lock not acquired', async () => {
-      mockLockManager.acquireLock.mockResolvedValue({
-        acquired: false,
-        holderId: 'other-tab',
-        holderStale: false,
-      });
-      mockWorkerClient.openDb.mockResolvedValue({ isWriter: false });
-      mockWorkerClient.getSchema.mockResolvedValue({
-        tables: ['users'],
-        views: [],
-        indexes: [],
+    describe('IDB storage mode (multi-tab safe, no Web Locks needed)', () => {
+      beforeEach(() => {
+        // Set IDB storage mode - multi-tab safe, no lock needed
+        mockWorkerClient.getDbSize.mockResolvedValue({
+          sizeBytes: 1024,
+          storageMode: 'idb',
+        });
       });
 
-      await openDb('test-db-1');
+      it('should skip lock acquisition for IDB databases', async () => {
+        mockWorkerClient.openDb.mockResolvedValue({ isWriter: true });
+        mockWorkerClient.getSchema.mockResolvedValue({
+          tables: ['users'],
+          views: [],
+          indexes: [],
+        });
 
-      const state = getState();
-      expect(state.activeDbId).toBe('test-db-1');
-      expect(state.isReadOnly).toBe(true);
-      expect(state.lockHolder).toBe('other');
+        await openDb('idb-database');
+
+        // IDB databases should NOT call acquireLock
+        expect(mockLockManager.acquireLock).not.toHaveBeenCalled();
+        // Should open with readOnly=false (IDB is always writable)
+        expect(mockWorkerClient.openDb).toHaveBeenCalledWith('idb-database', { readOnly: false });
+      });
+
+      it('should always have isWriter=true for IDB databases', async () => {
+        mockWorkerClient.openDb.mockResolvedValue({ isWriter: true });
+        mockWorkerClient.getSchema.mockResolvedValue({
+          tables: ['products'],
+          views: [],
+          indexes: [],
+        });
+
+        await openDb('idb-database');
+
+        const state = getState();
+        expect(state.activeDbId).toBe('idb-database');
+        expect(state.isReadOnly).toBe(false);
+        expect(state.lockHolder).toBe('self');
+        expect(state.storageMode).toBe('idb');
+      });
+
+      it('should set correct state for IDB database even without lock manager', async () => {
+        mockWorkerClient.openDb.mockResolvedValue({ isWriter: true });
+        mockWorkerClient.getSchema.mockResolvedValue({
+          tables: ['orders'],
+          views: ['recent_orders'],
+          indexes: ['idx_date'],
+        });
+
+        await openDb('fallback-idb');
+
+        const state = getState();
+        expect(state.activeDbId).toBe('fallback-idb');
+        expect(state.isReadOnly).toBe(false);
+        expect(state.lockHolder).toBe('self');
+        expect(state.storageMode).toBe('idb');
+        expect(state.schema).toEqual({
+          tables: ['orders'],
+          views: ['recent_orders'],
+          indexes: ['idx_date'],
+        });
+      });
+    });
+
+    describe('storage mode detection fallback', () => {
+      it('should assume OPFS when getDbSize fails (safer default)', async () => {
+        // getDbSize fails - should fall back to OPFS (safer)
+        mockWorkerClient.getDbSize.mockRejectedValue(new Error('Size check failed'));
+        mockLockManager.acquireLock.mockResolvedValue({
+          acquired: true,
+          holderId: null,
+          holderStale: false,
+        });
+        mockWorkerClient.openDb.mockResolvedValue({ isWriter: true });
+        mockWorkerClient.getSchema.mockResolvedValue({
+          tables: [],
+          views: [],
+          indexes: [],
+        });
+
+        await openDb('unknown-db');
+
+        // Should still try to acquire lock (OPFS fallback)
+        expect(mockLockManager.acquireLock).toHaveBeenCalledWith('unknown-db');
+      });
     });
   });
 
   describe('closeDb', () => {
-    it('should clear state and release lock when lock holder is self', async () => {
-      // Set up initial state with active database
-      const store = useDatabaseStore.getState();
-      store.setActiveDb('test-db-1');
-      store.setLockHolder('self');
-      store.setSchema(mockSchema);
+    describe('OPFS storage mode', () => {
+      it('should release lock when closing OPFS database with lock held', async () => {
+        // Set up initial state with active OPFS database
+        const store = useDatabaseStore.getState();
+        store.setActiveDb('opfs-db');
+        store.setLockHolder('self');
+        store.setStorageMode('opfs');
+        store.setSchema(mockSchema);
 
-      mockWorkerClient.closeDb.mockResolvedValue(undefined);
-      mockLockManager.releaseLock.mockResolvedValue(undefined);
+        mockWorkerClient.closeDb.mockResolvedValue(undefined);
+        mockLockManager.releaseLock.mockResolvedValue(undefined);
 
-      await closeDb();
+        await closeDb();
 
-      expect(mockLockManager.releaseLock).toHaveBeenCalledWith('test-db-1');
-      expect(mockWorkerClient.closeDb).toHaveBeenCalledTimes(1);
+        // OPFS databases should release lock
+        expect(mockLockManager.releaseLock).toHaveBeenCalledWith('opfs-db');
+        expect(mockWorkerClient.closeDb).toHaveBeenCalledTimes(1);
 
-      const state = getState();
-      expect(state.activeDbId).toBeNull();
-      expect(state.schema).toBeNull();
-      expect(state.isReadOnly).toBe(false);
-      expect(state.lockHolder).toBeNull();
+        const state = getState();
+        expect(state.activeDbId).toBeNull();
+        expect(state.schema).toBeNull();
+        expect(state.isReadOnly).toBe(false);
+        expect(state.lockHolder).toBeNull();
+      });
+
+      it('should not release lock when lock holder is other (OPFS)', async () => {
+        const store = useDatabaseStore.getState();
+        store.setActiveDb('opfs-db');
+        store.setLockHolder('other');
+        store.setStorageMode('opfs');
+
+        mockWorkerClient.closeDb.mockResolvedValue(undefined);
+
+        await closeDb();
+
+        // Lock was held by other tab, so don't release it
+        expect(mockLockManager.releaseLock).not.toHaveBeenCalled();
+        expect(mockWorkerClient.closeDb).toHaveBeenCalledTimes(1);
+      });
     });
 
-    it('should not release lock when lock holder is other', async () => {
-      // Set up initial state with active database but lock held by other
-      const store = useDatabaseStore.getState();
-      store.setActiveDb('test-db-1');
-      store.setLockHolder('other');
+    describe('IDB storage mode', () => {
+      it('should NOT release lock when closing IDB database (multi-tab safe)', async () => {
+        // Set up initial state with active IDB database
+        const store = useDatabaseStore.getState();
+        store.setActiveDb('idb-db');
+        store.setLockHolder('self');
+        store.setStorageMode('idb');
+        store.setSchema(mockSchema);
 
-      mockWorkerClient.closeDb.mockResolvedValue(undefined);
+        mockWorkerClient.closeDb.mockResolvedValue(undefined);
+        mockLockManager.releaseLock.mockResolvedValue(undefined);
 
-      await closeDb();
+        await closeDb();
 
-      expect(mockLockManager.releaseLock).not.toHaveBeenCalled();
-      expect(mockWorkerClient.closeDb).toHaveBeenCalledTimes(1);
+        // IDB databases should NOT release lock (they don't use Web Locks)
+        expect(mockLockManager.releaseLock).not.toHaveBeenCalled();
+        // But should still close the database
+        expect(mockWorkerClient.closeDb).toHaveBeenCalledTimes(1);
+
+        const state = getState();
+        expect(state.activeDbId).toBeNull();
+        expect(state.schema).toBeNull();
+        expect(state.isReadOnly).toBe(false);
+        expect(state.lockHolder).toBeNull();
+      });
+
+      it('should clear state even when storage mode is IDB', async () => {
+        const store = useDatabaseStore.getState();
+        store.setActiveDb('idb-db');
+        store.setLockHolder('self');
+        store.setStorageMode('idb');
+        store.setSchema({
+          tables: ['users', 'orders'],
+          views: ['active_users'],
+          indexes: ['idx_email'],
+        });
+
+        mockWorkerClient.closeDb.mockResolvedValue(undefined);
+
+        await closeDb();
+
+        const state = getState();
+        expect(state.activeDbId).toBeNull();
+        expect(state.schema).toBeNull();
+        expect(state.lockHolder).toBeNull();
+        expect(state.isReadOnly).toBe(false);
+      });
     });
 
     it('should do nothing when no active database', async () => {
@@ -895,6 +1074,7 @@ describe('Database Actions', () => {
       store.setDatabases([mockDatabase1]);
       store.setActiveDb('test-db-1');
       store.setLockHolder('self');
+      store.setStorageMode('opfs'); // OPFS databases use Web Locks (IDB databases don't)
 
       mockWorkerClient.closeDb.mockResolvedValue(undefined);
       mockLockManager.releaseLock.mockResolvedValue(undefined);
@@ -902,7 +1082,7 @@ describe('Database Actions', () => {
 
       await deleteDb('test-db-1');
 
-      // Should have closed first
+      // Should have closed first (with lock release for OPFS)
       expect(mockWorkerClient.closeDb).toHaveBeenCalledTimes(1);
       expect(mockLockManager.releaseLock).toHaveBeenCalledWith('test-db-1');
       expect(mockWorkerClient.deleteDb).toHaveBeenCalledWith('test-db-1');
