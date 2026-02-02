@@ -43,6 +43,7 @@ import {
   refreshSizeWarning,
 } from './store';
 import { getWorkerClient, WorkerClient } from './core/worker/client';
+import { DEBUG } from './shared/utils/debug';
 import { useGlobalShortcutHandlers } from './shared/hooks/useKeyboardShortcuts';
 import { useUnsavedPrompt, type DirtyState } from './shared/hooks/useUnsavedPrompt';
 import { loadHistory, addToHistory } from './core/sql/history';
@@ -190,6 +191,11 @@ function App() {
 
         // Wait for worker to be ready
         await client.ping();
+
+        // Send debug mode to worker
+        if (DEBUG) {
+          await client.request({ type: 'setDebugMode', enabled: true });
+        }
 
         if (!isActive) return;
 

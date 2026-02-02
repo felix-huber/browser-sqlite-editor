@@ -14,6 +14,7 @@ import {
   getStorageEstimate,
   type StorageError,
 } from './quota-errors';
+import { setWorkerDebugMode, workerDebugLog } from '../shared/utils/debug';
 import {
   handleQueryRequest,
   handleExecRequest,
@@ -115,6 +116,7 @@ type WorkerMessageEvent = MessageEvent<TaggedRequest>;
  * Post a typed response back to the main thread with correlation ID
  */
 function postResponse(response: WorkerResponse, requestId?: number): void {
+  workerDebugLog('[Worker] Sending response:', response.type, 'id:', requestId);
   if (requestId === undefined) {
     self.postMessage(response);
     return;
@@ -186,7 +188,14 @@ export async function withStorageProtection<T>(
 async function handleMessage(event: WorkerMessageEvent): Promise<void> {
   const { id, request } = event.data;
 
+  workerDebugLog('[Worker] Received message:', request.type, 'id:', id);
+
   switch (request.type) {
+    case 'setDebugMode':
+      setWorkerDebugMode(request.enabled);
+      postResponse({ type: 'success' }, id);
+      break;
+
     case 'ping':
       postResponse({ type: 'pong' }, id);
       break;
@@ -347,6 +356,7 @@ self.addEventListener('message', (event: WorkerMessageEvent) => {
   messageQueue = messageQueue
     .then(() => handleMessage(event))
     .catch((err) => {
+      console.error('[Worker] Error handling message:', err);
       // Check for read-only errors and provide clear message
       if (isReadOnlyError(err)) {
         const { message, code } = normalizeReadOnlyError(err);

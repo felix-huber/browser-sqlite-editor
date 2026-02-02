@@ -22,6 +22,7 @@ import {
   type RegistryData,
   type StorageAdapter,
 } from '../db-registry';
+import * as debugModule from '../../shared/utils/debug';
 
 // =============================================================================
 // Mock Storage Adapter Factory
@@ -545,7 +546,7 @@ describe('DatabaseRegistry - Self-Healing', () => {
 
       const adapter = createMockAdapter(mockState);
       const registry = new DatabaseRegistry(adapter);
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const debugSpy = vi.spyOn(debugModule, 'workerDebugLog').mockImplementation(() => {});
       const result = await registry.init();
 
       // Should rename the older file (MyDB.sqlite) to have (conflict-N) suffix
@@ -556,12 +557,12 @@ describe('DatabaseRegistry - Self-Healing', () => {
       expect(result.discovered.length).toBe(2);
       expect(result.caseCollisionsResolved).toBe(1);
 
-      // Should log the resolution
-      expect(consoleSpy).toHaveBeenCalledWith(
+      // Should log the resolution (via workerDebugLog)
+      expect(debugSpy).toHaveBeenCalledWith(
         expect.stringContaining('Case collision resolved')
       );
 
-      consoleSpy.mockRestore();
+      debugSpy.mockRestore();
     });
 
     it('should use lexicographically first filename as tie-breaker when timestamps equal', async () => {
@@ -1741,7 +1742,7 @@ describe('DatabaseRegistry - Legacy Layout Migration', () => {
 
       const adapter = createMigrationMockAdapter(migrationMockState);
       const registry = new DatabaseRegistry(adapter);
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const debugSpy = vi.spyOn(debugModule, 'workerDebugLog').mockImplementation(() => {});
 
       const result = await registry.init();
 
@@ -1750,12 +1751,12 @@ describe('DatabaseRegistry - Legacy Layout Migration', () => {
       expect(result.migratedFiles).toContain('another.sqlite');
       expect(result.migratedFiles).toHaveLength(2);
 
-      // Should log migration
-      expect(consoleSpy).toHaveBeenCalledWith(
+      // Should log migration (via workerDebugLog)
+      expect(debugSpy).toHaveBeenCalledWith(
         expect.stringContaining('Legacy layout detected')
       );
 
-      consoleSpy.mockRestore();
+      debugSpy.mockRestore();
     });
 
     it('should migrate legacy registry.json when new registry does not exist', async () => {

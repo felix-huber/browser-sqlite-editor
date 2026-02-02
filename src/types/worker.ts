@@ -15,6 +15,7 @@ import type { DatabaseRegistry } from './store';
  * All possible request types sent from main thread to worker
  */
 export type WorkerRequest =
+  | { type: 'setDebugMode'; enabled: boolean }
   | { type: 'ping' }
   | { type: 'open'; dbName: string; readOnly?: boolean }
   | { type: 'close' }

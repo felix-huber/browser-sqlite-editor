@@ -18,6 +18,7 @@
 
 import type { StorageMode } from '../types';
 import { checkOPFSAvailability, IDB_VFS_NAME } from '../core/engine/opfs-vfs';
+import { workerDebugLog } from '../shared/utils/debug';
 
 // =============================================================================
 // Constants
@@ -1255,6 +1256,7 @@ export class DatabaseRegistry {
   private data: RegistryData = { databases: [] };
   private storageMode: StorageMode = 'idb';
   private initialized = false;
+  private initPromise: Promise<HealingResult> | null = null;
   private adapter: StorageAdapter;
 
   constructor(adapter?: StorageAdapter) {
@@ -1267,14 +1269,52 @@ export class DatabaseRegistry {
    * - Detects storage mode (OPFS or IDB)
    * - Loads registry from storage
    * - Runs self-healing
+   *
+   * Safe to call multiple times - subsequent calls return the existing promise
+   * if initialization is in progress, or complete immediately if already done.
    */
   async init(): Promise<HealingResult> {
+    // Already initialized - return empty result
+    if (this.initialized) {
+      return {
+        orphansRemoved: [],
+        discovered: [],
+        wasCorrupted: false,
+        caseCollisionsResolved: 0,
+        orphanedSidecarsRemoved: [],
+        orphanedJournalsRemoved: [],
+        migratedFiles: [],
+        migratedRegistry: false,
+      };
+    }
+
+    // Initialization in progress - return existing promise
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+
+    // Start initialization
+    this.initPromise = this._doInit();
+
+    try {
+      const result = await this.initPromise;
+      this.initialized = true;
+      return result;
+    } catch (err) {
+      // Reset promise so next call can retry
+      this.initPromise = null;
+      throw err;
+    }
+  }
+
+  /**
+   * Internal initialization logic
+   */
+  private async _doInit(): Promise<HealingResult> {
     const opfsAvailable = await this.adapter.isOpfsAvailable();
     this.storageMode = opfsAvailable ? 'opfs' : 'idb';
 
-    const healingResult = await this.loadAndHeal();
-    this.initialized = true;
-    return healingResult;
+    return this.loadAndHeal();
   }
 
   /**
@@ -1346,7 +1386,7 @@ export class DatabaseRegistry {
         validEntries.push(entry);
       } else {
         result.orphansRemoved.push(entry.id);
-        console.log(
+        workerDebugLog(
           `[DatabaseRegistry] Orphan DB detected: id="${entry.id}", name="${entry.name}" (no corresponding file found)`
         );
       }
@@ -1415,18 +1455,18 @@ export class DatabaseRegistry {
   private async migrateLegacyLayout(result: HealingResult): Promise<void> {
     // Check if adapter supports migration
     if (!this.adapter.checkLegacyLayout || !this.adapter.listLegacyFiles || !this.adapter.copyLegacyFile) {
-      console.log('[DatabaseRegistry] Migration: adapter does not support migration');
+      workerDebugLog('[DatabaseRegistry] Migration: adapter does not support migration');
       return;
     }
 
     // Check if legacy directory exists
     const legacyExists = await this.adapter.checkLegacyLayout();
-    console.log('[DatabaseRegistry] Migration: legacy layout exists =', legacyExists);
+    workerDebugLog('[DatabaseRegistry] Migration: legacy layout exists =', legacyExists);
     if (!legacyExists) {
       return;
     }
 
-    console.log('[DatabaseRegistry] Legacy layout detected at /sqlite-editor/, starting migration...');
+    workerDebugLog('[DatabaseRegistry] Legacy layout detected at /sqlite-editor/, starting migration...');
 
     // Get list of files in legacy directory
     const legacyFiles = await this.adapter.listLegacyFiles();
@@ -1444,7 +1484,7 @@ export class DatabaseRegistry {
       try {
         await this.adapter.copyLegacyFile(filename);
         result.migratedFiles.push(filename);
-        console.log(`[DatabaseRegistry] Migrated: ${filename}`);
+        workerDebugLog(`[DatabaseRegistry] Migrated: ${filename}`);
       } catch (err) {
         console.warn(`[DatabaseRegistry] Failed to migrate "${filename}":`, err);
       }
@@ -1459,7 +1499,7 @@ export class DatabaseRegistry {
           if (legacyRegistry && Array.isArray(legacyRegistry.databases)) {
             await this.adapter.writeRegistry(this.storageMode, legacyRegistry);
             result.migratedRegistry = true;
-            console.log('[DatabaseRegistry] Migrated registry.json');
+            workerDebugLog('[DatabaseRegistry] Migrated registry.json');
           }
         }
       } catch (err) {
@@ -1468,7 +1508,7 @@ export class DatabaseRegistry {
     }
 
     if (result.migratedFiles.length > 0 || result.migratedRegistry) {
-      console.log(
+      workerDebugLog(
         `[DatabaseRegistry] Migration complete: ${result.migratedFiles.length} files, ` +
         `registry: ${result.migratedRegistry ? 'yes' : 'no'}`
       );
@@ -1546,7 +1586,7 @@ export class DatabaseRegistry {
           usedFilenames.add(conflictName.toLowerCase());
           result.caseCollisionsResolved++;
 
-          console.log(
+          workerDebugLog(
             `[DatabaseRegistry] Case collision resolved: kept "${winner.filename}" (mtime: ${winner.mtime}), ` +
             `renamed "${loser.filename}" → "${conflictName}"`
           );
@@ -1874,7 +1914,7 @@ export class DatabaseRegistry {
           try {
             await this.adapter.deleteRawFile(filename);
             result.orphansRemoved.push(filename);
-            console.log(
+            workerDebugLog(
               `[DatabaseRegistry] Self-heal: deleted orphaned database file "${filename}"`
             );
           } catch (err) {
@@ -1895,7 +1935,7 @@ export class DatabaseRegistry {
           try {
             await this.adapter.deleteRawFile(filename);
             result.orphanedSidecarsRemoved.push(filename);
-            console.log(
+            workerDebugLog(
               `[DatabaseRegistry] Self-heal: deleted orphaned sidecar "${filename}"`
             );
           } catch (err) {
@@ -1918,7 +1958,7 @@ export class DatabaseRegistry {
             try {
               await this.adapter.deleteRawFile(filename);
               result.orphanedJournalsRemoved.push(filename);
-              console.log(
+              workerDebugLog(
                 `[DatabaseRegistry] Self-heal: deleted orphaned journal "${filename}"`
               );
             } catch (err) {

@@ -11,6 +11,7 @@
 
 import { getEngine } from '../core/engine/db-engine';
 import { OPFS_VFS_NAME, ensureAppDirectories } from '../core/engine/opfs-vfs';
+import { workerDebugLog } from '../shared/utils/debug';
 
 // =============================================================================
 // Types
@@ -50,28 +51,37 @@ export async function openDatabase(
   vfsName: string | undefined,
   options: OpenDatabaseOptions = {}
 ): Promise<void> {
+  workerDebugLog('[openDatabase] Starting for path:', path, 'VFS:', vfsName);
   const engine = getEngine();
 
   // Initialize engine if needed
   if (!engine.isReady()) {
+    workerDebugLog('[openDatabase] Engine not ready, initializing...');
     await engine.initialize();
+    workerDebugLog('[openDatabase] Engine initialized');
   }
 
   // For OPFS mode, ensure directories exist before opening
   // This is critical after resetApp which deletes the OPFS directories
   if (vfsName === OPFS_VFS_NAME) {
+    workerDebugLog('[openDatabase] Ensuring OPFS directories...');
     await ensureAppDirectories();
+    workerDebugLog('[openDatabase] OPFS directories ensured');
   }
 
   // Open the database
+  workerDebugLog('[openDatabase] Opening engine.open...');
   await engine.open(path, vfsName, {
     readOnly: options.readOnly ?? false,
     createIfMissing: options.createIfMissing ?? false,
   });
+  workerDebugLog('[openDatabase] engine.open completed');
 
   // For OPFS connections, enforce journal_mode=DELETE
   if (vfsName === OPFS_VFS_NAME) {
+    workerDebugLog('[openDatabase] Enforcing journal mode DELETE...');
     await enforceJournalModeDelete();
+    workerDebugLog('[openDatabase] Journal mode set');
   }
   // IDB mode: journal_mode is irrelevant (snapshots serialize entire DB)
   // No VFS specified: legacy behavior, no journal_mode enforcement

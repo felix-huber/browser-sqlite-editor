@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { debugLog } from '../utils/debug'
 
 interface SWUpdateState {
   /** Whether an update is available */
@@ -39,10 +40,10 @@ export function useSWUpdate(): SWUpdateState {
           },
           onOfflineReady() {
             // App is ready for offline use - could show a notification
-            console.log('[SW] App ready for offline use')
+            debugLog('[SW] App ready for offline use')
           },
           onRegistered(registration) {
-            console.log('[SW] Service worker registered:', registration)
+            debugLog('[SW] Service worker registered:', registration)
           },
           onRegisterError(error) {
             console.error('[SW] Service worker registration failed:', error)

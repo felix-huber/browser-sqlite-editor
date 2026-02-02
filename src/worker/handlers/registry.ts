@@ -10,6 +10,7 @@ import { resolveDbPath } from '../storage';
 import { getIdbDbSize } from '../idb-storage';
 import { openDatabase } from '../sqlite-engine';
 import { resetSessionTracker } from './query';
+import { workerDebugLog } from '../../shared/utils/debug';
 
 export type PostResponse = (response: WorkerResponse, requestId?: number) => void;
 
@@ -19,14 +20,14 @@ export async function handleOpenRequest(
   postResponse: PostResponse
 ): Promise<void> {
   try {
-    console.log('[handleOpenRequest] Starting for db:', request.dbName);
+    workerDebugLog('[handleOpenRequest] Starting for db:', request.dbName);
     // Reset transaction tracker when opening a new database
     resetSessionTracker();
-    console.log('[handleOpenRequest] Session tracker reset');
+    workerDebugLog('[handleOpenRequest] Session tracker reset');
 
-    console.log('[handleOpenRequest] Resolving db path...');
+    workerDebugLog('[handleOpenRequest] Resolving db path...');
     const { path, vfsName } = await resolveDbPath(request.dbName);
-    console.log('[handleOpenRequest] Path resolved:', path, 'VFS:', vfsName);
+    workerDebugLog('[handleOpenRequest] Path resolved:', path, 'VFS:', vfsName);
 
     const readOnly = request.readOnly ?? false;
     // For OPFS mode, always pass createIfMissing: true because:
@@ -36,9 +37,9 @@ export async function handleOpenRequest(
     // - SQLITE_OPEN_CREATE makes the VFS check the actual OPFS filesystem
     // - This is safe even if the file exists (SQLite just opens it normally)
     const createIfMissing = vfsName === OPFS_VFS_NAME;
-    console.log('[handleOpenRequest] Opening database...');
+    workerDebugLog('[handleOpenRequest] Opening database...');
     await openDatabase(path, vfsName, { readOnly, createIfMissing });
-    console.log('[handleOpenRequest] Database opened successfully');
+    workerDebugLog('[handleOpenRequest] Database opened successfully');
     // IDB databases are multi-tab safe, so they don't need lock detection.
     // Only OPFS databases need the single-writer lock because OPFS uses
     // exclusive createSyncAccessHandle locks that can't be shared across tabs.
@@ -109,9 +110,9 @@ export async function handleCreateDbRequest(
     // Imported databases go to OPFS (via streamFileToOpfs), new databases use IDB.
     const idbVfsName = 'idb-batch-atomic';
 
-    console.log('[handleCreateDbRequest] Creating via IDB VFS:', request.name);
+    workerDebugLog('[handleCreateDbRequest] Creating via IDB VFS:', request.name);
     await openDatabase(request.name, idbVfsName, { createIfMissing: true });
-    console.log('[handleCreateDbRequest] Database created successfully');
+    workerDebugLog('[handleCreateDbRequest] Database created successfully');
 
     const registry = getRegistry();
     if (!registry.isInitialized()) {

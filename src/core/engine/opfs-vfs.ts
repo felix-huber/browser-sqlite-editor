@@ -11,6 +11,7 @@ import { OPFSCoopSyncVFS } from '@journeyapps/wa-sqlite/src/examples/OPFSCoopSyn
 import { IDBBatchAtomicVFS } from '@journeyapps/wa-sqlite/src/examples/IDBBatchAtomicVFS.js';
 
 import type { StorageMode } from '../../types';
+import { workerDebugLog } from '../../shared/utils/debug';
 
 // =============================================================================
 // Web Worker type augmentation for OPFS sync access handles
@@ -80,6 +81,25 @@ export interface OPFSAvailability {
 // OPFS Availability Detection
 // =============================================================================
 
+/** Timeout for OPFS availability check in milliseconds */
+const OPFS_CHECK_TIMEOUT_MS = 5000;
+
+/**
+ * Helper to add a timeout to a promise
+ */
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string
+): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs)
+    ),
+  ]);
+}
+
 /**
  * Check if OPFS is available in the current context
  *
@@ -114,26 +134,50 @@ export async function checkOPFSAvailability(): Promise<OPFSAvailability> {
     };
   }
 
-  // Try to actually access OPFS
+  // Try to actually access OPFS with a timeout to prevent hanging
   try {
-    const root = await navigator.storage.getDirectory();
+    const root = await withTimeout(
+      navigator.storage.getDirectory(),
+      OPFS_CHECK_TIMEOUT_MS,
+      'OPFS getDirectory timed out'
+    );
 
     // Verify we can create a directory (write access)
     const testDirName = `.opfs-test-${Date.now()}`;
-    const testDir = await root.getDirectoryHandle(testDirName, { create: true });
+    const testDir = await withTimeout(
+      root.getDirectoryHandle(testDirName, { create: true }),
+      OPFS_CHECK_TIMEOUT_MS,
+      'OPFS directory creation timed out'
+    );
 
     // Verify we can create a file with sync access handle
     const testFileName = 'test.tmp';
-    const testFile = await testDir.getFileHandle(testFileName, { create: true });
+    const testFile = await withTimeout(
+      testDir.getFileHandle(testFileName, { create: true }),
+      OPFS_CHECK_TIMEOUT_MS,
+      'OPFS file creation timed out'
+    );
 
     // This is the critical check - sync access handles are only available in Workers
     try {
       const fileWithSync = testFile as FileSystemFileHandleWithSync;
-      const accessHandle = await fileWithSync.createSyncAccessHandle();
+      const accessHandle = await withTimeout(
+        fileWithSync.createSyncAccessHandle(),
+        OPFS_CHECK_TIMEOUT_MS,
+        'OPFS sync access handle creation timed out'
+      );
       accessHandle.close();
     } catch (syncErr) {
-      // Clean up test directory
-      await root.removeEntry(testDirName, { recursive: true });
+      // Clean up test directory (best effort, don't wait too long)
+      try {
+        await withTimeout(
+          root.removeEntry(testDirName, { recursive: true }),
+          1000,
+          'cleanup timeout'
+        );
+      } catch {
+        // Ignore cleanup errors
+      }
 
       return {
         available: false,
@@ -141,8 +185,16 @@ export async function checkOPFSAvailability(): Promise<OPFSAvailability> {
       };
     }
 
-    // Clean up test directory
-    await root.removeEntry(testDirName, { recursive: true });
+    // Clean up test directory (best effort, don't wait too long)
+    try {
+      await withTimeout(
+        root.removeEntry(testDirName, { recursive: true }),
+        1000,
+        'cleanup timeout'
+      );
+    } catch {
+      // Ignore cleanup errors - the test directory will be orphaned but harmless
+    }
 
     return { available: true };
   } catch (err) {
@@ -305,7 +357,7 @@ export async function initializeVFS(
       );
     }
   } else {
-    console.info('OPFS not available:', opfsCheck.reason);
+    workerDebugLog('OPFS not available:', opfsCheck.reason);
   }
 
   // Fall back to IndexedDB VFS
@@ -393,6 +445,75 @@ export async function readOPFSDatabase(dbName: string): Promise<Uint8Array | nul
     return new Uint8Array(buffer);
   } catch {
     return null;
+  }
+}
+
+/**
+ * Create an empty database file in OPFS if it doesn't exist
+ *
+ * This is needed for new database creation because the OPFSCoopSyncVFS
+ * cannot create files that don't exist - it can only open existing files.
+ *
+ * Per wa-sqlite documentation, we also create the companion -journal file
+ * to help the VFS properly initialize the database.
+ *
+ * @param dbName Database filename
+ * @returns true if file was created, false if it already existed
+ */
+export async function createEmptyOPFSFile(dbName: string): Promise<boolean> {
+  workerDebugLog('[createEmptyOPFSFile] Starting for:', dbName);
+
+  try {
+    const dbDir = await ensureAppDirectories();
+    workerDebugLog('[createEmptyOPFSFile] Got directory handle');
+
+    // Check if file already exists with content
+    try {
+      const existingHandle = await dbDir.getFileHandle(dbName);
+      const file = await existingHandle.getFile();
+      if (file.size > 0) {
+        workerDebugLog('[createEmptyOPFSFile] File already exists with content:', dbName, 'size:', file.size);
+        return false;
+      }
+      workerDebugLog('[createEmptyOPFSFile] File exists but is empty');
+    } catch {
+      workerDebugLog('[createEmptyOPFSFile] File does not exist, will create');
+    }
+
+    // Create empty database file (0 bytes) - let SQLite/VFS initialize it
+    const fileHandle = await dbDir.getFileHandle(dbName, { create: true });
+    workerDebugLog('[createEmptyOPFSFile] Database file handle obtained');
+
+    // Touch the file to ensure it exists (create empty)
+    const fileWithSync = fileHandle as FileSystemFileHandleWithSync;
+    const accessHandle = await fileWithSync.createSyncAccessHandle();
+    accessHandle.truncate(0);
+    accessHandle.flush();
+    accessHandle.close();
+    workerDebugLog('[createEmptyOPFSFile] Database file created (empty)');
+
+    // Also create empty -journal companion file (helps OPFSCoopSyncVFS)
+    const journalName = dbName + '-journal';
+    try {
+      const journalHandle = await dbDir.getFileHandle(journalName, { create: true });
+      const journalWithSync = journalHandle as FileSystemFileHandleWithSync;
+      const journalAccess = await journalWithSync.createSyncAccessHandle();
+      journalAccess.truncate(0);
+      journalAccess.flush();
+      journalAccess.close();
+      workerDebugLog('[createEmptyOPFSFile] Journal file created');
+    } catch (err) {
+      workerDebugLog('[createEmptyOPFSFile] Journal file creation failed:', err);
+      // Continue anyway - journal file is optional
+    }
+
+    // Delay to ensure handles are fully released
+    await new Promise(resolve => setTimeout(resolve, 100));
+    workerDebugLog('[createEmptyOPFSFile] Done');
+    return true;
+  } catch (err) {
+    workerDebugLog('[createEmptyOPFSFile] Error:', err);
+    throw err;
   }
 }
 
