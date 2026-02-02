@@ -6,6 +6,7 @@ import {
   openTable,
   runSql,
   waitForReady,
+  ensureWelcomeScreen,
 } from './helpers/app';
 
 /**
@@ -555,22 +556,26 @@ test.describe('Grid Editing Tests', () => {
 test.describe('Grid Edit Integration Tests', () => {
   test('app loads and shows main content', async ({ page }) => {
     await page.goto('/');
+    await ensureWelcomeScreen(page);
     await expect(page).toHaveTitle(/SQLite Editor/);
     await expect(page.getByTestId('welcome-screen')).toBeVisible();
   });
 
   test('new database button is visible', async ({ page }) => {
     await page.goto('/');
+    await ensureWelcomeScreen(page);
     await expect(page.getByTestId('new-database-button')).toBeVisible();
   });
 
   test('open database button is visible', async ({ page }) => {
     await page.goto('/');
+    await ensureWelcomeScreen(page);
     await expect(page.getByTestId('import-database-button')).toBeVisible();
   });
 
   test('status bar shows ready state', async ({ page }) => {
     await page.goto('/');
+    await ensureWelcomeScreen(page);
     await waitForReady(page);
   });
 });

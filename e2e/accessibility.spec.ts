@@ -13,12 +13,13 @@
 
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { ensureWelcomeScreen } from './helpers/app';
 
 test.describe('Accessibility', () => {
   test.describe('Welcome Screen', () => {
     test('should have no accessibility violations on initial load', async ({ page }) => {
       await page.goto('/');
-      await page.waitForSelector('[data-testid="welcome-screen"]', { timeout: 10000 });
+      await ensureWelcomeScreen(page);
 
       const accessibilityScanResults = await new AxeBuilder({ page })
         .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
@@ -29,7 +30,7 @@ test.describe('Accessibility', () => {
 
     test('should have visible focus indicators on buttons', async ({ page }) => {
       await page.goto('/');
-      await page.waitForSelector('[data-testid="welcome-screen"]', { timeout: 10000 });
+      await ensureWelcomeScreen(page);
 
       // Tab to first focusable element
       await page.keyboard.press('Tab');
@@ -51,7 +52,7 @@ test.describe('Accessibility', () => {
     test.beforeEach(async ({ page }) => {
       // Load app and create test database
       await page.goto('/');
-      await page.waitForSelector('[data-testid="welcome-screen"]', { timeout: 10000 });
+      await ensureWelcomeScreen(page);
 
       // Create a new database via keyboard
       const createDbButton = page.locator('[data-testid="new-database-button"]');
@@ -101,7 +102,7 @@ test.describe('Accessibility', () => {
   test.describe('Sidebar Accessibility', () => {
     test('sidebar tree should have proper ARIA attributes', async ({ page }) => {
       await page.goto('/');
-      await page.waitForSelector('[data-testid="sidebar"]', { timeout: 10000 });
+      await ensureWelcomeScreen(page);
 
       // Check tree has role="tree"
       const tree = page.locator('[role="tree"]');
@@ -114,7 +115,7 @@ test.describe('Accessibility', () => {
 
     test('tree items should have aria-expanded', async ({ page }) => {
       await page.goto('/');
-      await page.waitForSelector('[data-testid="sidebar"]', { timeout: 10000 });
+      await ensureWelcomeScreen(page);
 
       // Check tree items have aria-expanded
       const treeItems = page.locator('[role="treeitem"]');
@@ -127,7 +128,7 @@ test.describe('Accessibility', () => {
 
     test('sidebar search should be accessible', async ({ page }) => {
       await page.goto('/');
-      await page.waitForSelector('[data-testid="sidebar"]', { timeout: 10000 });
+      await ensureWelcomeScreen(page);
 
       const searchInput = page.locator('[data-testid="search-input"]');
       await expect(searchInput).toHaveAttribute('aria-label');
@@ -137,7 +138,7 @@ test.describe('Accessibility', () => {
   test.describe('Dialog Accessibility', () => {
     test('new database dialog should be accessible', async ({ page }) => {
       await page.goto('/');
-      await page.waitForSelector('[data-testid="welcome-screen"]', { timeout: 10000 });
+      await ensureWelcomeScreen(page);
 
       // Open new database dialog
       const createDbButton = page.locator('[data-testid="new-database-button"]');
@@ -167,7 +168,7 @@ test.describe('Accessibility', () => {
 
     test('dialog should trap focus', async ({ page }) => {
       await page.goto('/');
-      await page.waitForSelector('[data-testid="welcome-screen"]', { timeout: 10000 });
+      await ensureWelcomeScreen(page);
 
       // Open new database dialog
       const createDbButton = page.locator('[data-testid="new-database-button"]');
@@ -202,7 +203,7 @@ test.describe('Accessibility', () => {
   test.describe('Keyboard Navigation', () => {
     test('all interactive elements should be reachable via Tab', async ({ page }) => {
       await page.goto('/');
-      await page.waitForSelector('[data-testid="welcome-screen"]', { timeout: 10000 });
+      await ensureWelcomeScreen(page);
 
       // Get all interactive elements
       const interactiveElements = page.locator('button, a, input, select, textarea, [tabindex="0"]');
@@ -226,7 +227,7 @@ test.describe('Accessibility', () => {
 
     test('buttons should be activatable via Enter and Space', async ({ page }) => {
       await page.goto('/');
-      await page.waitForSelector('[data-testid="welcome-screen"]', { timeout: 10000 });
+      await ensureWelcomeScreen(page);
 
       // Find a button
       const button = page.locator('[data-testid="create-db-button"]');
@@ -258,6 +259,7 @@ test.describe('Accessibility', () => {
   test.describe('Screen Reader Announcements', () => {
     test('status bar should have aria-live region', async ({ page }) => {
       await page.goto('/');
+      await ensureWelcomeScreen(page);
 
       // Wait for status bar
       await page.waitForSelector('[data-testid="status-bar"]', { timeout: 10000 });
@@ -268,7 +270,7 @@ test.describe('Accessibility', () => {
 
     test('error messages should have role="alert"', async ({ page }) => {
       await page.goto('/');
-      await page.waitForSelector('[data-testid="welcome-screen"]', { timeout: 10000 });
+      await ensureWelcomeScreen(page);
 
       // Open new database dialog
       const createDbButton = page.locator('[data-testid="new-database-button"]');

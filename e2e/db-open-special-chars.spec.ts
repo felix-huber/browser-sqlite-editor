@@ -4,6 +4,7 @@ import {
   runSqlStatements,
   waitForReady,
   openDatabaseFromWelcome,
+  ensureWelcomeScreen,
 } from './helpers/app';
 
 /**
@@ -127,6 +128,7 @@ test.describe('Database Open with Special Characters', () => {
     await clearAllStorage(page);
     await page.reload();
     await expect(page).toHaveTitle(/SQLite Editor/);
+    await ensureWelcomeScreen(page);
   });
 
   /**
