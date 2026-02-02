@@ -4,6 +4,8 @@ import { VitePWA } from 'vite-plugin-pwa'
 import { visualizer } from 'rollup-plugin-visualizer'
 
 export default defineConfig({
+  // Base path for deployment to /sqlocal/ subdirectory
+  base: '/sqlocal/',
   // Cross-origin isolation headers for OPFS sync access handles
   // These are required for FileSystemSyncAccessHandle to work
   server: {
@@ -89,7 +91,7 @@ export default defineConfig({
             },
           },
         ],
-        navigateFallback: '/index.html',
+        navigateFallback: '/sqlocal/index.html',
         navigateFallbackDenylist: [/^\/api/],
         skipWaiting: false, // Prompt user first
         clientsClaim: true, // Control clients after activation
