@@ -293,26 +293,15 @@ describe('OpenDatabaseButton', () => {
   });
 
   describe('Accessibility', () => {
-    it('has proper aria-label with keyboard shortcut', () => {
-      // Mock Mac platform
-      const originalPlatform = Object.getOwnPropertyDescriptor(
-        navigator,
-        'platform'
-      );
-      Object.defineProperty(navigator, 'platform', {
-        value: 'MacIntel',
-        configurable: true,
-      });
-
+    it('has accessible name from visible text content', () => {
       render(<OpenDatabaseButton {...defaultProps} />);
 
       const button = screen.getByTestId('open-database-button');
-      expect(button).toHaveAttribute('aria-label', 'Open Database (⌘O)');
-
-      // Restore
-      if (originalPlatform) {
-        Object.defineProperty(navigator, 'platform', originalPlatform);
-      }
+      // Accessible name comes from visible text, not aria-label
+      // This avoids label-content-name-mismatch accessibility violation
+      expect(button).toHaveTextContent('Open Database');
+      // Shortcut info is in title for tooltip, not in accessible name
+      expect(button).not.toHaveAttribute('aria-label');
     });
 
     it('has tooltip via title attribute', () => {
