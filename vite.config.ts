@@ -31,6 +31,7 @@ export default defineConfig({
     },
   },
   worker: {
+    format: 'es', // Required: App.tsx creates worker with { type: 'module' }
     rollupOptions: {
       output: {
         entryFileNames: 'assets/worker-[name]-[hash].js',
