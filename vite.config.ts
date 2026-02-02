@@ -3,7 +3,12 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { visualizer } from 'rollup-plugin-visualizer'
 
+// Support subdirectory deployments via VITE_BASE environment variable
+// Usage: VITE_BASE=/sqlocal/ npm run build
+const base = process.env.VITE_BASE || '/'
+
 export default defineConfig({
+  base,
   // Cross-origin isolation headers for OPFS sync access handles
   // These are required for FileSystemSyncAccessHandle to work
   server: {
@@ -89,7 +94,7 @@ export default defineConfig({
             },
           },
         ],
-        navigateFallback: '/index.html',
+        navigateFallback: `${base}index.html`,
         navigateFallbackDenylist: [/^\/api/],
         skipWaiting: false, // Prompt user first
         clientsClaim: true, // Control clients after activation
