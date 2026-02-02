@@ -34,6 +34,44 @@ const LazyCodeMirrorEditor = lazy(
 )
 
 /**
+ * Detect potentially expensive cross join patterns in SQL.
+ * Returns a warning message if detected, null otherwise.
+ *
+ * Detects:
+ * 1. Explicit CROSS JOIN
+ * 2. Comma-separated tables in FROM without WHERE (old-style cross join)
+ *
+ * Note: Detecting JOIN without ON/USING is tricky due to alias patterns,
+ * so we focus on the most common and reliable patterns.
+ */
+function detectCrossJoinWarning(sql: string): string | null {
+  // Normalize: remove comments and string literals to avoid false positives
+  const normalized = sql
+    .replace(/--[^\n]*/g, '') // Remove line comments
+    .replace(/\/\*[\s\S]*?\*\//g, '') // Remove block comments
+    .replace(/'[^']*'/g, "''") // Replace string literals with empty strings
+    .replace(/"[^"]*"/g, '""') // Replace quoted identifiers
+    .toUpperCase()
+
+  // Pattern 1: Explicit CROSS JOIN
+  if (/\bCROSS\s+JOIN\b/.test(normalized)) {
+    return 'This query contains a CROSS JOIN which may produce a very large result set (Cartesian product).'
+  }
+
+  // Pattern 2: Comma-separated tables in FROM without WHERE
+  // Look for FROM table1, table2 pattern (old-style implicit join)
+  const fromPattern = /\bFROM\s+\w+(\s+(AS\s+)?\w+)?\s*,\s*\w+/
+  if (fromPattern.test(normalized)) {
+    // Check if there's a WHERE clause
+    if (!/\bWHERE\b/.test(normalized)) {
+      return 'This query has comma-separated tables in FROM without a WHERE clause, which produces a Cartesian product.'
+    }
+  }
+
+  return null
+}
+
+/**
  * Check if a SQL statement is read-only.
  * Returns true for SELECT and read-only PRAGMAs.
  */
@@ -289,7 +327,8 @@ export function SqlEditorPanel({
   const [results, setResults] = useState<StatementResult[]>([])
   const [executionTime, setExecutionTime] = useState<number | null>(null)
   const [readOnlyWarning, setReadOnlyWarning] = useState<string | null>(null)
-  const [transactionWarnings, setTransactionWarnings] = useState<Array<{ type: string; message: string }>>([]);
+  const [transactionWarnings, setTransactionWarnings] = useState<Array<{ type: string; message: string }>>([])
+  const [crossJoinWarning, setCrossJoinWarning] = useState<string | null>(null)
 
   const editorContainerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<CodeMirrorEditorHandle>(null)
@@ -325,6 +364,10 @@ export function SqlEditorPanel({
       setResults([])
       return
     }
+
+    // Check for potentially expensive cross join patterns (non-blocking warning)
+    const crossJoinMsg = detectCrossJoinWarning(queryText)
+    setCrossJoinWarning(crossJoinMsg)
 
     setIsExecuting(true)
     setErrors([])
@@ -418,6 +461,7 @@ export function SqlEditorPanel({
     setErrors([])
     setResults([])
     setReadOnlyWarning(null)
+    setCrossJoinWarning(null)
     editorRef.current?.clearErrors()
   }, [])
 
@@ -592,6 +636,30 @@ export function SqlEditorPanel({
                 <div key={i}>{w.message}</div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Cross join warning */}
+        {crossJoinWarning && (
+          <div
+            className="flex items-start gap-2 px-3 py-2 bg-amber-50 border-b border-amber-200"
+            role="alert"
+            data-testid="crossjoin-warning"
+          >
+            <svg
+              className="w-5 h-5 text-amber-600 shrink-0 mt-0.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
+            </svg>
+            <div className="text-sm text-amber-800">{crossJoinWarning}</div>
           </div>
         )}
 

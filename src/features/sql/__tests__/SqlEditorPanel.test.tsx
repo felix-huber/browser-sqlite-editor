@@ -490,4 +490,93 @@ describe('SqlEditorPanel', () => {
       expect(screen.getByTestId('column-count')).toHaveTextContent('2 columns')
     })
   })
+
+  describe('cross join warning', () => {
+    it('shows warning for explicit CROSS JOIN', async () => {
+      const user = userEvent.setup()
+      render(<SqlEditorPanel onExecute={mockExecute} initialValue="SELECT * FROM users CROSS JOIN orders" />)
+
+      const runButton = screen.getByTestId('run-button')
+      await user.click(runButton)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('crossjoin-warning')).toBeInTheDocument()
+        expect(screen.getByTestId('crossjoin-warning')).toHaveTextContent('CROSS JOIN')
+      })
+
+      // Query should still execute
+      expect(mockExecute).toHaveBeenCalled()
+    })
+
+    it('shows warning for comma-separated tables without WHERE', async () => {
+      const user = userEvent.setup()
+      render(<SqlEditorPanel onExecute={mockExecute} initialValue="SELECT * FROM users, orders" />)
+
+      const runButton = screen.getByTestId('run-button')
+      await user.click(runButton)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('crossjoin-warning')).toBeInTheDocument()
+        expect(screen.getByTestId('crossjoin-warning')).toHaveTextContent('comma-separated tables')
+      })
+
+      // Query should still execute
+      expect(mockExecute).toHaveBeenCalled()
+    })
+
+    it('does not show warning for comma-separated tables with WHERE', async () => {
+      const user = userEvent.setup()
+      render(<SqlEditorPanel onExecute={mockExecute} initialValue="SELECT * FROM users, orders WHERE users.id = orders.user_id" />)
+
+      const runButton = screen.getByTestId('run-button')
+      await user.click(runButton)
+
+      await waitFor(() => {
+        expect(mockExecute).toHaveBeenCalled()
+      })
+
+      expect(screen.queryByTestId('crossjoin-warning')).not.toBeInTheDocument()
+    })
+
+    it('does not show warning for proper JOIN with ON clause', async () => {
+      const user = userEvent.setup()
+      render(<SqlEditorPanel onExecute={mockExecute} initialValue="SELECT * FROM users JOIN orders ON users.id = orders.user_id" />)
+
+      const runButton = screen.getByTestId('run-button')
+      await user.click(runButton)
+
+      await waitFor(() => {
+        expect(mockExecute).toHaveBeenCalled()
+      })
+
+      expect(screen.queryByTestId('crossjoin-warning')).not.toBeInTheDocument()
+    })
+
+    it('clears cross join warning when selecting from history', async () => {
+      const user = userEvent.setup()
+      const history: QueryHistoryItem[] = [
+        { sql: 'SELECT 1', executedAt: '2024-01-01T12:00:00Z' },
+      ]
+
+      render(<SqlEditorPanel onExecute={mockExecute} history={history} initialValue="SELECT * FROM a CROSS JOIN b" />)
+
+      // First execute to get the warning
+      const runButton = screen.getByTestId('run-button')
+      await user.click(runButton)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('crossjoin-warning')).toBeInTheDocument()
+      })
+
+      // Now select from history to clear it
+      const historyButton = screen.getByTestId('history-button')
+      await user.click(historyButton)
+
+      const historyItem = screen.getByTestId('history-item-0')
+      await user.click(historyItem)
+
+      // Warning should be cleared
+      expect(screen.queryByTestId('crossjoin-warning')).not.toBeInTheDocument()
+    })
+  })
 })
