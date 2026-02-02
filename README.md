@@ -4,6 +4,8 @@ Offline SQLite editor in your browser. Visual table designer, ERD diagrams, SQL 
 
 **100% browser-based, powered by WASM. Private. Open source.**
 
+**Try it now:** If you just want to use the editor, a hosted version is available at [https://botifyr.com/sqlocal-browser-sqlite-editor/](https://botifyr.com/sqlocal-browser-sqlite-editor/)
+
 [![Build](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/build.yml/badge.svg)](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/build.yml)
 [![Test](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/test.yml/badge.svg)](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/test.yml)
 [![Lint](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/lint.yml/badge.svg)](https://github.com/felix-huber/browser-sqlite-editor/actions/workflows/lint.yml)

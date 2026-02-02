@@ -43,6 +43,20 @@ async function setupQueryDb(page: Page) {
   await expect(page.getByTestId('query-builder-view')).toBeVisible();
 }
 
+/**
+ * Navigate to a different tab, handling the unsaved changes prompt if it appears
+ */
+async function navigateToTab(page: Page, tabTestId: string) {
+  await page.getByTestId(tabTestId).click();
+
+  // Check if unsaved prompt appears and dismiss it
+  const discardButton = page.getByTestId('unsaved-prompt-discard');
+  const isPromptVisible = await discardButton.isVisible({ timeout: 500 }).catch(() => false);
+  if (isPromptVisible) {
+    await discardButton.click();
+  }
+}
+
 async function dragTable(page: Page, tableName: string) {
   const tableItem = page.getByTestId(`table-item-${tableName}`);
   await expect(tableItem).toBeVisible();
@@ -1050,12 +1064,12 @@ test.describe('Query Builder State Persistence', () => {
     expect(sqlPreviewBefore).toContain('users');
     expect(sqlPreviewBefore).toContain('orders');
 
-    // 5. Navigate to Table view
-    await page.getByTestId('tab-table').click();
+    // 5. Navigate to Table view (handle unsaved prompt if it appears)
+    await navigateToTab(page, 'tab-table');
     await expect(page.getByTestId('tab-table')).toHaveClass(/bg-white/);
 
     // 6. Navigate back to Query Builder
-    await page.getByTestId('tab-query-builder').click();
+    await navigateToTab(page, 'tab-query-builder');
     await expect(page.getByTestId('query-builder-view')).toBeVisible();
 
     // 7. Wait for state to be restored
@@ -1089,12 +1103,12 @@ test.describe('Query Builder State Persistence', () => {
     // 3. Verify WHERE clause in SQL preview
     await expect(page.getByTestId('sql-preview-text')).toContainText('WHERE');
 
-    // 4. Navigate to ERD view
-    await page.getByTestId('tab-erd').click();
+    // 4. Navigate to ERD view (handle unsaved prompt if it appears)
+    await navigateToTab(page, 'tab-erd');
     await expect(page.getByTestId('erd-view')).toBeVisible();
 
     // 5. Navigate back to Query Builder
-    await page.getByTestId('tab-query-builder').click();
+    await navigateToTab(page, 'tab-query-builder');
     await expect(page.getByTestId('query-builder-view')).toBeVisible();
 
     // 6. Wait for state to be restored
@@ -1124,12 +1138,12 @@ test.describe('Query Builder State Persistence', () => {
     await expect(page.getByTestId('sql-preview-text')).toContainText('ORDER BY');
     await expect(page.getByTestId('sql-preview-text')).toContainText('LIMIT 25');
 
-    // 5. Navigate to SQL view
-    await page.getByTestId('tab-sql').click();
-    await expect(page.getByTestId('sql-editor-panel')).toBeVisible();
+    // 5. Navigate to SQL view (handle unsaved prompt if it appears)
+    await navigateToTab(page, 'tab-sql');
+    await expect(page.getByTestId('sql-editor-panel')).toBeVisible({ timeout: 5000 });
 
     // 6. Navigate back to Query Builder
-    await page.getByTestId('tab-query-builder').click();
+    await navigateToTab(page, 'tab-query-builder');
     await expect(page.getByTestId('query-builder-view')).toBeVisible();
 
     // 7. Wait for state to be restored
@@ -1151,8 +1165,8 @@ test.describe('Query Builder State Persistence', () => {
     await expect(page.getByTestId('join-count')).toContainText('1');
 
     // 2. Navigate to SQL tab (so we're not on Query Builder when closing)
-    await page.getByTestId('tab-sql').click();
-    await expect(page.getByTestId('sql-editor-panel')).toBeVisible();
+    await navigateToTab(page, 'tab-sql');
+    await expect(page.getByTestId('sql-editor-panel')).toBeVisible({ timeout: 5000 });
 
     // 3. Close the database
     await page.locator('button', { hasText: 'Close DB' }).click();
@@ -1160,8 +1174,8 @@ test.describe('Query Builder State Persistence', () => {
     // 4. Verify we're back to welcome screen
     await expect(page.getByTestId('welcome-screen')).toBeVisible();
 
-    // 5. Re-open the same database
-    await page.getByText(DB_NAME).click();
+    // 5. Re-open the same database (use specific testid to avoid duplicate matches)
+    await page.getByTestId(`recent-db-${DB_NAME}`).click();
     await waitForReady(page);
 
     // 6. Navigate to Query Builder
@@ -1185,11 +1199,11 @@ test.describe('Query Builder State Persistence', () => {
     await expect(page.getByTestId('sql-preview-text')).toContainText('"name"');
     await expect(page.getByTestId('sql-preview-text')).toContainText('"age"');
 
-    // 4. Navigate to Designer view
-    await page.getByTestId('tab-designer').click();
+    // 4. Navigate to Designer view (handle unsaved prompt if it appears)
+    await navigateToTab(page, 'tab-designer');
 
     // 5. Navigate back to Query Builder
-    await page.getByTestId('tab-query-builder').click();
+    await navigateToTab(page, 'tab-query-builder');
     await expect(page.getByTestId('query-builder-view')).toBeVisible();
 
     // 6. Wait for state to be restored

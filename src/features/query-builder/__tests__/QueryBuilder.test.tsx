@@ -413,7 +413,7 @@ describe('QueryBuilder', () => {
         await flushMicrotasks()
       })
 
-      const initialCallCount = onTablesChange.mock.calls.length
+      const _initialCallCount = onTablesChange.mock.calls.length
 
       // Create new callback references (simulating parent re-render)
       const newOnTablesChange = vi.fn()
@@ -512,6 +512,286 @@ describe('QueryBuilder', () => {
 
       // No joins yet, so still shouldn't be called
       // (Initial call is empty edges array from state change, not joins change)
+    })
+  })
+
+  // =============================================================================
+  // State Persistence Tests - Testing initialNodes and initialJoins props
+  // =============================================================================
+  // These tests verify the state persistence feature added in commit bd1c94a:
+  // 1. Nodes with selectedColumns should be restored from initialNodes
+  // 2. Join edges should be restored from initialJoins when tableColumns loads
+  // 3. selectedColumns should NOT be cleared when tableColumns loads asynchronously
+
+  describe('State persistence (initialNodes and initialJoins)', () => {
+    const mockTableColumns: Record<string, { name: string; type: string; isPrimaryKey?: boolean }[]> = {
+      users: [
+        { name: 'id', type: 'INTEGER', isPrimaryKey: true },
+        { name: 'name', type: 'TEXT' },
+        { name: 'email', type: 'TEXT' },
+      ],
+      orders: [
+        { name: 'id', type: 'INTEGER', isPrimaryKey: true },
+        { name: 'user_id', type: 'INTEGER' },
+        { name: 'total', type: 'REAL' },
+      ],
+    }
+
+    /**
+     * Test that initialNodes are used to populate the canvas on mount.
+     * This is the core of state restoration when returning to Query Builder.
+     */
+    it('renders with initialNodes when provided', () => {
+      const initialNodes = [
+        {
+          id: 'table-users-123',
+          type: 'tableBox' as const,
+          position: { x: 100, y: 100 },
+          data: {
+            tableName: 'users',
+            alias: 't1',
+            columns: [],
+            selectedColumns: ['id', 'name'],
+          },
+        },
+      ]
+
+      render(
+        <QueryBuilder
+          tables={mockTables}
+          tableColumns={mockTableColumns}
+          initialNodes={initialNodes}
+        />
+      )
+
+      // The canvas should show 1 table
+      expect(screen.getByText('1 / 10 tables')).toBeInTheDocument()
+      // The 'users' table should be marked as on canvas (not draggable)
+      const usersItem = screen.getByTestId('table-item-users')
+      expect(usersItem).toHaveAttribute('aria-disabled', 'true')
+    })
+
+    /**
+     * Test that selectedColumns from initialNodes are preserved when tableColumns
+     * loads asynchronously (empty object initially, then populated).
+     *
+     * BUG FIX: Before the fix, the useEffect that updates node columns would
+     * clear selectedColumns when tableColumns was an empty object {},
+     * because `tableColumns[tableName] ?? []` would return [] and the filter
+     * would result in an empty selectedColumns array.
+     *
+     * AFTER FIX: When columns aren't loaded yet (undefined or empty),
+     * we skip the selectedColumns filtering to preserve the restored state.
+     */
+    it('preserves selectedColumns when tableColumns loads asynchronously', async () => {
+      const initialNodes = [
+        {
+          id: 'table-users-456',
+          type: 'tableBox' as const,
+          position: { x: 100, y: 100 },
+          data: {
+            tableName: 'users',
+            alias: 't1',
+            columns: [], // Initially empty (will be populated from tableColumns)
+            selectedColumns: ['id', 'email'], // Selected columns from saved state
+          },
+        },
+      ]
+
+      const onStateChange = vi.fn()
+
+      // First render with empty tableColumns (simulating async load)
+      const { rerender } = render(
+        <QueryBuilder
+          tables={mockTables}
+          tableColumns={{}} // Empty initially
+          initialNodes={initialNodes}
+          onStateChange={onStateChange}
+        />
+      )
+
+      // Wait for effects to settle
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+
+      // Now simulate tableColumns loading
+      rerender(
+        <QueryBuilder
+          tables={mockTables}
+          tableColumns={mockTableColumns}
+          initialNodes={initialNodes}
+          onStateChange={onStateChange}
+        />
+      )
+
+      // Wait for effects to settle
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+
+      // Check that onStateChange was called with preserved selectedColumns
+      expect(onStateChange).toHaveBeenCalled()
+      const lastCall = onStateChange.mock.calls[onStateChange.mock.calls.length - 1]
+      const [nodes] = lastCall
+
+      // selectedColumns should still contain 'id' and 'email' (both are valid columns)
+      expect(nodes).toHaveLength(1)
+      expect(nodes[0].data.selectedColumns).toContain('id')
+      expect(nodes[0].data.selectedColumns).toContain('email')
+    })
+
+    /**
+     * Test that invalid columns are filtered out when tableColumns loads.
+     * If selectedColumns contains columns that don't exist in the table schema,
+     * they should be removed.
+     */
+    it('filters out invalid columns from selectedColumns when tableColumns loads', async () => {
+      const initialNodes = [
+        {
+          id: 'table-users-789',
+          type: 'tableBox' as const,
+          position: { x: 100, y: 100 },
+          data: {
+            tableName: 'users',
+            alias: 't1',
+            columns: [],
+            selectedColumns: ['id', 'name', 'nonexistent_column', 'another_invalid'], // 2 valid, 2 invalid
+          },
+        },
+      ]
+
+      const onStateChange = vi.fn()
+
+      render(
+        <QueryBuilder
+          tables={mockTables}
+          tableColumns={mockTableColumns}
+          initialNodes={initialNodes}
+          onStateChange={onStateChange}
+        />
+      )
+
+      // Wait for effects to settle
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+
+      // Check that onStateChange was called with filtered selectedColumns
+      expect(onStateChange).toHaveBeenCalled()
+      const lastCall = onStateChange.mock.calls[onStateChange.mock.calls.length - 1]
+      const [nodes] = lastCall
+
+      // Only valid columns should remain
+      expect(nodes[0].data.selectedColumns).toContain('id')
+      expect(nodes[0].data.selectedColumns).toContain('name')
+      expect(nodes[0].data.selectedColumns).not.toContain('nonexistent_column')
+      expect(nodes[0].data.selectedColumns).not.toContain('another_invalid')
+      expect(nodes[0].data.selectedColumns).toHaveLength(2)
+    })
+
+    /**
+     * Test that selectedColumns are NOT cleared when tableColumns is an empty object.
+     * This tests the specific bug fix: before, `tableColumns[tableName] ?? []`
+     * would return [] (empty array) which would cause all selectedColumns to be filtered out.
+     */
+    it('does NOT clear selectedColumns when tableColumns is empty object', async () => {
+      const initialNodes = [
+        {
+          id: 'table-customers-001',
+          type: 'tableBox' as const,
+          position: { x: 50, y: 50 },
+          data: {
+            tableName: 'customers',
+            alias: 't1',
+            columns: [],
+            selectedColumns: ['name', 'phone', 'address'],
+          },
+        },
+      ]
+
+      const onStateChange = vi.fn()
+
+      render(
+        <QueryBuilder
+          tables={['customers', ...mockTables]}
+          tableColumns={{}} // Empty object - columns not loaded yet
+          initialNodes={initialNodes}
+          onStateChange={onStateChange}
+        />
+      )
+
+      // Wait for effects to settle
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+
+      // selectedColumns should still be preserved (not cleared)
+      expect(onStateChange).toHaveBeenCalled()
+      const lastCall = onStateChange.mock.calls[onStateChange.mock.calls.length - 1]
+      const [nodes] = lastCall
+
+      // All selected columns should still be there since we can't validate them yet
+      expect(nodes[0].data.selectedColumns).toEqual(['name', 'phone', 'address'])
+    })
+
+    /**
+     * Test that multiple nodes each preserve their selectedColumns independently.
+     */
+    it('preserves selectedColumns for multiple nodes independently', async () => {
+      const initialNodes = [
+        {
+          id: 'table-users-multi-1',
+          type: 'tableBox' as const,
+          position: { x: 100, y: 100 },
+          data: {
+            tableName: 'users',
+            alias: 't1',
+            columns: [],
+            selectedColumns: ['id', 'name'],
+          },
+        },
+        {
+          id: 'table-orders-multi-2',
+          type: 'tableBox' as const,
+          position: { x: 400, y: 100 },
+          data: {
+            tableName: 'orders',
+            alias: 't2',
+            columns: [],
+            selectedColumns: ['id', 'total'],
+          },
+        },
+      ]
+
+      const onStateChange = vi.fn()
+
+      render(
+        <QueryBuilder
+          tables={mockTables}
+          tableColumns={mockTableColumns}
+          initialNodes={initialNodes}
+          onStateChange={onStateChange}
+        />
+      )
+
+      // Wait for effects
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+
+      expect(onStateChange).toHaveBeenCalled()
+      const lastCall = onStateChange.mock.calls[onStateChange.mock.calls.length - 1]
+      const [nodes] = lastCall
+
+      // Each node should have its own selectedColumns preserved
+      const usersNode = nodes.find((n: { data: { tableName: string } }) => n.data.tableName === 'users')
+      const ordersNode = nodes.find((n: { data: { tableName: string } }) => n.data.tableName === 'orders')
+
+      expect(usersNode.data.selectedColumns).toContain('id')
+      expect(usersNode.data.selectedColumns).toContain('name')
+      expect(ordersNode.data.selectedColumns).toContain('id')
+      expect(ordersNode.data.selectedColumns).toContain('total')
     })
   })
 })

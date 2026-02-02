@@ -619,6 +619,9 @@ export async function openDb(id: string): Promise<void> {
   store.setStorageMode(storageMode);
   store.setReadOnly(isReadOnly);
   store.setLockHolder(lockHolder);
+  // Clear Query Builder state when switching databases
+  // (state is database-specific and must be reset)
+  store.setQueryBuilderState(null);
 
   // Load schema
   const schema = await _deps.workerClient.getSchema();

@@ -100,7 +100,7 @@ describe('DatabaseEngine - Singleton', () => {
   });
 
   it('should reset singleton to uninitialized state', () => {
-    const engine1 = getEngine();
+    getEngine(); // Get initial engine (unused - just to ensure singleton exists)
     resetEngine();
     const engine2 = getEngine();
 

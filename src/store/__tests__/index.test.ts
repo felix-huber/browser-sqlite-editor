@@ -1191,3 +1191,539 @@ describe('Database Actions', () => {
     });
   });
 });
+
+// =============================================================================
+// Query Builder State Persistence Tests
+// =============================================================================
+
+describe('Query Builder State Persistence', () => {
+  describe('setQueryBuilderState', () => {
+    beforeEach(() => {
+      useDatabaseStore.getState().reset();
+    });
+
+    it('should store QueryBuilderState with all fields', () => {
+      const { result } = renderHook(() => useDatabaseStore());
+
+      const queryBuilderState = {
+        nodes: [
+          {
+            id: 'table-users-123',
+            type: 'tableBox' as const,
+            position: { x: 100, y: 100 },
+            data: {
+              tableName: 'users',
+              alias: 't1',
+              columns: [
+                { name: 'id', type: 'INTEGER', isPrimaryKey: true },
+                { name: 'name', type: 'TEXT' },
+              ],
+              selectedColumns: ['id', 'name'],
+            },
+          },
+        ],
+        joins: [
+          {
+            id: 'join-1',
+            sourceTable: 'users',
+            sourceColumn: 'id',
+            targetTable: 'orders',
+            targetColumn: 'user_id',
+            joinType: 'INNER' as const,
+          },
+        ],
+        whereConditions: [
+          {
+            id: 'where-1',
+            column: 't1.id',
+            operator: '>' as const,
+            value: '10',
+          },
+        ],
+        whereLogic: 'AND' as const,
+        sortConditions: [
+          { column: 't1.name', direction: 'ASC' as const },
+        ],
+        limit: 100,
+      };
+
+      act(() => {
+        result.current.setQueryBuilderState(queryBuilderState);
+      });
+
+      expect(result.current.queryBuilderState).toEqual(queryBuilderState);
+    });
+
+    it('should allow setting queryBuilderState to null', () => {
+      const { result } = renderHook(() => useDatabaseStore());
+
+      // First set some state
+      act(() => {
+        result.current.setQueryBuilderState({
+          nodes: [],
+          joins: [],
+          whereConditions: [],
+          whereLogic: 'AND',
+          sortConditions: [],
+          limit: null,
+        });
+      });
+
+      expect(result.current.queryBuilderState).not.toBeNull();
+
+      // Then clear it
+      act(() => {
+        result.current.setQueryBuilderState(null);
+      });
+
+      expect(result.current.queryBuilderState).toBeNull();
+    });
+
+    it('should handle empty state correctly', () => {
+      const { result } = renderHook(() => useDatabaseStore());
+
+      const emptyState = {
+        nodes: [],
+        joins: [],
+        whereConditions: [],
+        whereLogic: 'AND' as const,
+        sortConditions: [],
+        limit: null,
+      };
+
+      act(() => {
+        result.current.setQueryBuilderState(emptyState);
+      });
+
+      expect(result.current.queryBuilderState).toEqual(emptyState);
+      expect(result.current.queryBuilderState?.nodes).toEqual([]);
+      expect(result.current.queryBuilderState?.joins).toEqual([]);
+      expect(result.current.queryBuilderState?.whereConditions).toEqual([]);
+      expect(result.current.queryBuilderState?.sortConditions).toEqual([]);
+      expect(result.current.queryBuilderState?.limit).toBeNull();
+    });
+
+    it('should handle state with only nodes (no joins/conditions)', () => {
+      const { result } = renderHook(() => useDatabaseStore());
+
+      const stateWithOnlyNodes = {
+        nodes: [
+          {
+            id: 'table-products-456',
+            type: 'tableBox' as const,
+            position: { x: 200, y: 200 },
+            data: {
+              tableName: 'products',
+              alias: 't1',
+              columns: [
+                { name: 'sku', type: 'TEXT' },
+                { name: 'price', type: 'REAL' },
+              ],
+              selectedColumns: ['sku'],
+            },
+          },
+        ],
+        joins: [],
+        whereConditions: [],
+        whereLogic: 'AND' as const,
+        sortConditions: [],
+        limit: null,
+      };
+
+      act(() => {
+        result.current.setQueryBuilderState(stateWithOnlyNodes);
+      });
+
+      expect(result.current.queryBuilderState?.nodes).toHaveLength(1);
+      expect(result.current.queryBuilderState?.nodes[0].data.tableName).toBe('products');
+    });
+
+    it('should preserve complex WHERE conditions', () => {
+      const { result } = renderHook(() => useDatabaseStore());
+
+      const stateWithWhereConditions = {
+        nodes: [],
+        joins: [],
+        whereConditions: [
+          { id: 'w1', column: 't1.status', operator: '=' as const, value: 'active' },
+          { id: 'w2', column: 't1.price', operator: '>=' as const, value: '100' },
+          { id: 'w3', column: 't1.name', operator: 'LIKE' as const, value: '%test%' },
+        ],
+        whereLogic: 'OR' as const,
+        sortConditions: [],
+        limit: null,
+      };
+
+      act(() => {
+        result.current.setQueryBuilderState(stateWithWhereConditions);
+      });
+
+      expect(result.current.queryBuilderState?.whereConditions).toHaveLength(3);
+      expect(result.current.queryBuilderState?.whereLogic).toBe('OR');
+    });
+
+    it('should preserve ORDER BY sort conditions', () => {
+      const { result } = renderHook(() => useDatabaseStore());
+
+      const stateWithSortConditions = {
+        nodes: [],
+        joins: [],
+        whereConditions: [],
+        whereLogic: 'AND' as const,
+        sortConditions: [
+          { column: 't1.created_at', direction: 'DESC' as const },
+          { column: 't1.name', direction: 'ASC' as const },
+        ],
+        limit: 50,
+      };
+
+      act(() => {
+        result.current.setQueryBuilderState(stateWithSortConditions);
+      });
+
+      expect(result.current.queryBuilderState?.sortConditions).toHaveLength(2);
+      expect(result.current.queryBuilderState?.sortConditions[0].direction).toBe('DESC');
+      expect(result.current.queryBuilderState?.limit).toBe(50);
+    });
+
+    it('should handle multiple JOIN configurations', () => {
+      const { result } = renderHook(() => useDatabaseStore());
+
+      const stateWithMultipleJoins = {
+        nodes: [],
+        joins: [
+          {
+            id: 'join-1',
+            sourceTable: 'orders',
+            sourceColumn: 'customer_id',
+            targetTable: 'customers',
+            targetColumn: 'id',
+            joinType: 'INNER' as const,
+          },
+          {
+            id: 'join-2',
+            sourceTable: 'orders',
+            sourceColumn: 'product_id',
+            targetTable: 'products',
+            targetColumn: 'id',
+            joinType: 'LEFT' as const,
+          },
+          {
+            id: 'join-3',
+            sourceTable: 'products',
+            sourceColumn: 'category_id',
+            targetTable: 'categories',
+            targetColumn: 'id',
+            joinType: 'LEFT' as const,
+          },
+        ],
+        whereConditions: [],
+        whereLogic: 'AND' as const,
+        sortConditions: [],
+        limit: null,
+      };
+
+      act(() => {
+        result.current.setQueryBuilderState(stateWithMultipleJoins);
+      });
+
+      expect(result.current.queryBuilderState?.joins).toHaveLength(3);
+      expect(result.current.queryBuilderState?.joins[0].joinType).toBe('INNER');
+      expect(result.current.queryBuilderState?.joins[1].joinType).toBe('LEFT');
+    });
+  });
+
+  describe('useQueryBuilderState selector', () => {
+    beforeEach(() => {
+      useDatabaseStore.getState().reset();
+    });
+
+    it('should return null when no state is set', () => {
+      const { result: storeResult } = renderHook(() => useDatabaseStore());
+
+      // Use the selector from the store
+      expect(storeResult.current.queryBuilderState).toBeNull();
+    });
+
+    it('should return current state when set', () => {
+      const { result } = renderHook(() => useDatabaseStore());
+
+      const testState = {
+        nodes: [],
+        joins: [],
+        whereConditions: [],
+        whereLogic: 'AND' as const,
+        sortConditions: [],
+        limit: 25,
+      };
+
+      act(() => {
+        result.current.setQueryBuilderState(testState);
+      });
+
+      expect(result.current.queryBuilderState).toEqual(testState);
+    });
+  });
+
+  describe('reset clears queryBuilderState', () => {
+    it('should clear queryBuilderState when store is reset', () => {
+      const { result } = renderHook(() => useDatabaseStore());
+
+      // Set some state first
+      act(() => {
+        result.current.setQueryBuilderState({
+          nodes: [
+            {
+              id: 'node-1',
+              type: 'tableBox' as const,
+              position: { x: 0, y: 0 },
+              data: {
+                tableName: 'test',
+                alias: 't1',
+                columns: [],
+                selectedColumns: [],
+              },
+            },
+          ],
+          joins: [],
+          whereConditions: [],
+          whereLogic: 'AND',
+          sortConditions: [],
+          limit: 100,
+        });
+      });
+
+      expect(result.current.queryBuilderState).not.toBeNull();
+
+      // Reset the store
+      act(() => {
+        result.current.reset();
+      });
+
+      expect(result.current.queryBuilderState).toBeNull();
+    });
+  });
+
+  describe('closeDb clears queryBuilderState', () => {
+    // Mock dependencies
+    const mockWorkerClient = {
+      getRegistry: vi.fn(),
+      openDb: vi.fn(),
+      closeDb: vi.fn(),
+      createDb: vi.fn(),
+      deleteDb: vi.fn(),
+      renameDb: vi.fn(),
+      getSchema: vi.fn(),
+      getDbSize: vi.fn(),
+    };
+
+    const mockLockManager = {
+      acquireLock: vi.fn(),
+      releaseLock: vi.fn(),
+    };
+
+    beforeEach(() => {
+      useDatabaseStore.getState().reset();
+      vi.resetAllMocks();
+      setActionDeps({
+        workerClient: mockWorkerClient as never,
+        lockManager: mockLockManager as never,
+      });
+    });
+
+    afterEach(() => {
+      resetActionDeps();
+    });
+
+    it('should clear queryBuilderState when database is closed', async () => {
+      const store = useDatabaseStore.getState();
+
+      // Set up initial state with active database and query builder state
+      store.setActiveDb('test-db');
+      store.setLockHolder('self');
+      store.setStorageMode('opfs');
+      store.setQueryBuilderState({
+        nodes: [
+          {
+            id: 'node-1',
+            type: 'tableBox' as const,
+            position: { x: 100, y: 100 },
+            data: {
+              tableName: 'users',
+              alias: 't1',
+              columns: [],
+              selectedColumns: ['id', 'name'],
+            },
+          },
+        ],
+        joins: [],
+        whereConditions: [{ id: 'w1', column: 't1.id', operator: '>' as const, value: '5' }],
+        whereLogic: 'AND',
+        sortConditions: [],
+        limit: 50,
+      });
+
+      expect(getState().queryBuilderState).not.toBeNull();
+      expect(getState().queryBuilderState?.nodes).toHaveLength(1);
+
+      mockWorkerClient.closeDb.mockResolvedValue(undefined);
+      mockLockManager.releaseLock.mockResolvedValue(undefined);
+
+      await closeDb();
+
+      // Query builder state should be cleared
+      expect(getState().queryBuilderState).toBeNull();
+      expect(getState().activeDbId).toBeNull();
+    });
+
+    it('should clear queryBuilderState even for IDB databases', async () => {
+      const store = useDatabaseStore.getState();
+
+      // Set up IDB database (no lock release needed)
+      store.setActiveDb('idb-test-db');
+      store.setLockHolder('self');
+      store.setStorageMode('idb');
+      store.setQueryBuilderState({
+        nodes: [],
+        joins: [],
+        whereConditions: [],
+        whereLogic: 'AND',
+        sortConditions: [{ column: 't1.date', direction: 'DESC' as const }],
+        limit: null,
+      });
+
+      mockWorkerClient.closeDb.mockResolvedValue(undefined);
+
+      await closeDb();
+
+      expect(getState().queryBuilderState).toBeNull();
+      // IDB doesn't release lock
+      expect(mockLockManager.releaseLock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('QueryBuilderState serialization edge cases', () => {
+    beforeEach(() => {
+      useDatabaseStore.getState().reset();
+    });
+
+    it('should handle nodes with callback functions stripped (for serialization)', () => {
+      const { result } = renderHook(() => useDatabaseStore());
+
+      // When saving to store, callback functions should be stripped
+      // (they can't be serialized and will be re-attached on restore)
+      const stateWithCallbacks = {
+        nodes: [
+          {
+            id: 'node-1',
+            type: 'tableBox' as const,
+            position: { x: 0, y: 0 },
+            data: {
+              tableName: 'test',
+              alias: 't1',
+              columns: [{ name: 'id', type: 'INTEGER', isPrimaryKey: true }],
+              selectedColumns: ['id'],
+              // Note: onSelectionChange and onRemove would be undefined after serialization
+              onSelectionChange: undefined,
+              onRemove: undefined,
+            },
+          },
+        ],
+        joins: [],
+        whereConditions: [],
+        whereLogic: 'AND' as const,
+        sortConditions: [],
+        limit: null,
+      };
+
+      act(() => {
+        result.current.setQueryBuilderState(stateWithCallbacks);
+      });
+
+      expect(result.current.queryBuilderState?.nodes[0].data.onSelectionChange).toBeUndefined();
+      expect(result.current.queryBuilderState?.nodes[0].data.onRemove).toBeUndefined();
+      // But other data should be preserved
+      expect(result.current.queryBuilderState?.nodes[0].data.selectedColumns).toEqual(['id']);
+    });
+
+    it('should handle node positions for canvas restoration', () => {
+      const { result } = renderHook(() => useDatabaseStore());
+
+      const stateWithPositions = {
+        nodes: [
+          {
+            id: 'node-1',
+            type: 'tableBox' as const,
+            position: { x: 150.5, y: 200.75 },
+            data: {
+              tableName: 'users',
+              alias: 't1',
+              columns: [],
+              selectedColumns: [],
+            },
+          },
+          {
+            id: 'node-2',
+            type: 'tableBox' as const,
+            position: { x: 450, y: 100 },
+            data: {
+              tableName: 'orders',
+              alias: 't2',
+              columns: [],
+              selectedColumns: [],
+            },
+          },
+        ],
+        joins: [],
+        whereConditions: [],
+        whereLogic: 'AND' as const,
+        sortConditions: [],
+        limit: null,
+      };
+
+      act(() => {
+        result.current.setQueryBuilderState(stateWithPositions);
+      });
+
+      expect(result.current.queryBuilderState?.nodes[0].position).toEqual({ x: 150.5, y: 200.75 });
+      expect(result.current.queryBuilderState?.nodes[1].position).toEqual({ x: 450, y: 100 });
+    });
+
+    it('should preserve selectedColumns arrays across state updates', () => {
+      const { result } = renderHook(() => useDatabaseStore());
+
+      const initialState = {
+        nodes: [
+          {
+            id: 'node-1',
+            type: 'tableBox' as const,
+            position: { x: 0, y: 0 },
+            data: {
+              tableName: 'products',
+              alias: 't1',
+              columns: [
+                { name: 'id', type: 'INTEGER', isPrimaryKey: true },
+                { name: 'name', type: 'TEXT' },
+                { name: 'price', type: 'REAL' },
+                { name: 'category', type: 'TEXT' },
+              ],
+              selectedColumns: ['id', 'name', 'price'],
+            },
+          },
+        ],
+        joins: [],
+        whereConditions: [],
+        whereLogic: 'AND' as const,
+        sortConditions: [],
+        limit: null,
+      };
+
+      act(() => {
+        result.current.setQueryBuilderState(initialState);
+      });
+
+      expect(result.current.queryBuilderState?.nodes[0].data.selectedColumns).toEqual(['id', 'name', 'price']);
+      expect(result.current.queryBuilderState?.nodes[0].data.selectedColumns).toHaveLength(3);
+    });
+  });
+});

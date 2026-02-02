@@ -312,7 +312,20 @@ export function QueryBuilder({
     if (!tableColumns) return
     setNodes((nds) =>
       nds.map((node) => {
-        const columns = tableColumns[node.data.tableName] ?? []
+        const columns = tableColumns[node.data.tableName]
+        // Skip updating if columns aren't loaded yet for this table
+        // This preserves selectedColumns from restored state
+        if (!columns || columns.length === 0) {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              onSelectionChange: handleSelectionChange,
+              onRemove: handleRemoveTable,
+            },
+          }
+        }
+        // Filter selected columns to only include valid columns
         const selected = node.data.selectedColumns.filter((col) =>
           columns.some((c) => c.name === col)
         )
