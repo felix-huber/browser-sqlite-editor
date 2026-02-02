@@ -46,7 +46,82 @@ async function setupQueryDb(page: Page) {
 async function dragTable(page: Page, tableName: string) {
   const tableItem = page.getByTestId(`table-item-${tableName}`);
   await expect(tableItem).toBeVisible();
-  await tableItem.dragTo(page.getByTestId('query-builder-canvas'), { force: true });
+
+  const canvas = page.getByTestId('query-builder-canvas');
+  await expect(canvas).toBeVisible();
+
+  // Get bounding boxes for realistic event coordinates
+  const itemBox = await tableItem.boundingBox();
+  const canvasBox = await canvas.boundingBox();
+
+  if (!itemBox || !canvasBox) {
+    throw new Error('Could not get bounding boxes for drag operation');
+  }
+
+  // Calculate positions
+  const startX = itemBox.x + itemBox.width / 2;
+  const startY = itemBox.y + itemBox.height / 2;
+  const endX = canvasBox.x + canvasBox.width / 2;
+  const endY = canvasBox.y + canvasBox.height / 2;
+
+  // Simulate HTML5 drag and drop using dispatchEvent with carefully constructed events
+  // This is a workaround for Playwright's dragTo not properly handling HTML5 drag/drop
+  const didDrop = await page.evaluate(
+    ({ tName, sx, sy, ex, ey }) => {
+      try {
+        // Find elements
+        const sourceEl = document.querySelector(`[data-testid="table-item-${tName}"]`);
+        const targetEl = document.querySelector('[data-testid="query-builder-canvas"]');
+
+        if (!sourceEl || !targetEl) {
+          console.error('Elements not found for drag');
+          return false;
+        }
+
+        // Create a proper DataTransfer object
+        const dt = new DataTransfer();
+        dt.setData('application/query-builder-table', tName);
+
+        // Create events with the dataTransfer properly attached
+        // Using Object.defineProperty because dataTransfer is readonly
+        const createEvent = (type: string, target: Element, x: number, y: number) => {
+          const event = new DragEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            clientX: x,
+            clientY: y,
+            view: window,
+          });
+          Object.defineProperty(event, 'dataTransfer', { value: dt, writable: false });
+          return event;
+        };
+
+        // Dispatch dragstart on source
+        sourceEl.dispatchEvent(createEvent('dragstart', sourceEl, sx, sy));
+
+        // Dispatch dragenter, dragover, drop on target
+        targetEl.dispatchEvent(createEvent('dragenter', targetEl, ex, ey));
+        targetEl.dispatchEvent(createEvent('dragover', targetEl, ex, ey));
+        targetEl.dispatchEvent(createEvent('drop', targetEl, ex, ey));
+
+        // Dispatch dragend on source
+        sourceEl.dispatchEvent(createEvent('dragend', sourceEl, sx, sy));
+
+        return true;
+      } catch (err) {
+        console.error('Error in drag simulation:', err);
+        return false;
+      }
+    },
+    { tName: tableName, sx: startX, sy: startY, ex: endX, ey: endY }
+  );
+
+  if (!didDrop) {
+    throw new Error('Drag simulation failed');
+  }
+
+  // Wait for React to process the drop and render the new node
+  await page.waitForTimeout(300);
 }
 
 function getTableBox(page: Page, tableName: string) {
@@ -944,6 +1019,190 @@ test.describe('Query Builder JOIN Functionality', () => {
 // =============================================================================
 // Sakila Database JOIN Tests (Real-world schema)
 // =============================================================================
+
+// =============================================================================
+// State Persistence Tests
+// =============================================================================
+
+test.describe('Query Builder State Persistence', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupQueryDb(page);
+    // Wait for table list to be populated
+    await expect(page.getByTestId('table-item-users')).toBeVisible({ timeout: 15000 });
+  });
+
+  test('preserves tables and joins when navigating away and back', async ({ page }) => {
+    // 1. Add tables to canvas
+    await dragTable(page, 'users');
+    await dragTable(page, 'orders');
+
+    // 2. Create a join between tables
+    await connectJoin(page);
+    await expect(page.getByTestId('join-count')).toContainText('1');
+
+    // 3. Select some columns
+    const usersBox = getTableBox(page, 'users');
+    await usersBox.locator('[data-testid="column-checkbox-1"]').click({ force: true }); // name
+
+    // 4. Get the SQL preview before navigating away
+    const sqlPreviewBefore = await page.getByTestId('sql-preview-text').textContent();
+    expect(sqlPreviewBefore).toContain('JOIN');
+    expect(sqlPreviewBefore).toContain('users');
+    expect(sqlPreviewBefore).toContain('orders');
+
+    // 5. Navigate to Table view
+    await page.getByTestId('tab-table').click();
+    await expect(page.getByTestId('tab-table')).toHaveClass(/bg-white/);
+
+    // 6. Navigate back to Query Builder
+    await page.getByTestId('tab-query-builder').click();
+    await expect(page.getByTestId('query-builder-view')).toBeVisible();
+
+    // 7. Wait for state to be restored
+    await page.waitForTimeout(500);
+
+    // 8. Verify tables are still there
+    await expect(getTableBox(page, 'users')).toBeVisible();
+    await expect(getTableBox(page, 'orders')).toBeVisible();
+
+    // 9. Verify join is still there
+    await expect(page.getByTestId('join-count')).toContainText('1');
+
+    // 10. Verify SQL preview shows the same query
+    const sqlPreviewAfter = await page.getByTestId('sql-preview-text').textContent();
+    expect(sqlPreviewAfter).toContain('JOIN');
+    expect(sqlPreviewAfter).toContain('users');
+    expect(sqlPreviewAfter).toContain('orders');
+  });
+
+  test('preserves WHERE conditions when navigating away and back', async ({ page }) => {
+    // 1. Add a table
+    await dragTable(page, 'users');
+
+    // 2. Add a WHERE condition
+    await page.getByTestId('add-condition-button').click();
+    const columnSelect = page.locator('[data-testid^="condition-column-"]').first();
+    await columnSelect.selectOption({ index: 1 });
+    const valueInput = page.locator('[data-testid^="condition-value-"]').first();
+    await valueInput.fill('TestValue');
+
+    // 3. Verify WHERE clause in SQL preview
+    await expect(page.getByTestId('sql-preview-text')).toContainText('WHERE');
+
+    // 4. Navigate to ERD view
+    await page.getByTestId('tab-erd').click();
+    await expect(page.getByTestId('erd-view')).toBeVisible();
+
+    // 5. Navigate back to Query Builder
+    await page.getByTestId('tab-query-builder').click();
+    await expect(page.getByTestId('query-builder-view')).toBeVisible();
+
+    // 6. Wait for state to be restored
+    await page.waitForTimeout(500);
+
+    // 7. Verify table is still there
+    await expect(getTableBox(page, 'users')).toBeVisible();
+
+    // 8. Verify WHERE condition is still there (check SQL preview)
+    await expect(page.getByTestId('sql-preview-text')).toContainText('WHERE');
+  });
+
+  test('preserves ORDER BY and LIMIT when navigating away and back', async ({ page }) => {
+    // 1. Add a table
+    await dragTable(page, 'users');
+
+    // 2. Add ORDER BY
+    await page.getByTestId('add-sort-button').click();
+    const sortSelect = page.locator('[data-testid^="sort-column-select-"]').first();
+    await sortSelect.selectOption({ index: 1 });
+
+    // 3. Add LIMIT
+    await page.getByTestId('limit-toggle').click();
+    await page.getByTestId('limit-input').fill('25');
+
+    // 4. Verify ORDER BY and LIMIT in SQL preview
+    await expect(page.getByTestId('sql-preview-text')).toContainText('ORDER BY');
+    await expect(page.getByTestId('sql-preview-text')).toContainText('LIMIT 25');
+
+    // 5. Navigate to SQL view
+    await page.getByTestId('tab-sql').click();
+    await expect(page.getByTestId('sql-editor-panel')).toBeVisible();
+
+    // 6. Navigate back to Query Builder
+    await page.getByTestId('tab-query-builder').click();
+    await expect(page.getByTestId('query-builder-view')).toBeVisible();
+
+    // 7. Wait for state to be restored
+    await page.waitForTimeout(500);
+
+    // 8. Verify table is still there
+    await expect(getTableBox(page, 'users')).toBeVisible();
+
+    // 9. Verify ORDER BY and LIMIT are still in SQL preview
+    await expect(page.getByTestId('sql-preview-text')).toContainText('ORDER BY');
+    await expect(page.getByTestId('sql-preview-text')).toContainText('LIMIT 25');
+  });
+
+  test('clears state when database is closed', async ({ page }) => {
+    // 1. Add tables and create joins
+    await dragTable(page, 'users');
+    await dragTable(page, 'orders');
+    await connectJoin(page);
+    await expect(page.getByTestId('join-count')).toContainText('1');
+
+    // 2. Navigate to SQL tab (so we're not on Query Builder when closing)
+    await page.getByTestId('tab-sql').click();
+    await expect(page.getByTestId('sql-editor-panel')).toBeVisible();
+
+    // 3. Close the database
+    await page.locator('button', { hasText: 'Close DB' }).click();
+
+    // 4. Verify we're back to welcome screen
+    await expect(page.getByTestId('welcome-screen')).toBeVisible();
+
+    // 5. Re-open the same database
+    await page.getByText(DB_NAME).click();
+    await waitForReady(page);
+
+    // 6. Navigate to Query Builder
+    await page.getByTestId('tab-query-builder').click();
+    await expect(page.getByTestId('query-builder-view')).toBeVisible();
+
+    // 7. Verify the canvas is empty (state was cleared)
+    await expect(page.locator('[data-testid="table-box"]')).toHaveCount(0);
+  });
+
+  test('preserves selected columns when navigating away and back', async ({ page }) => {
+    // 1. Add a table
+    await dragTable(page, 'users');
+
+    // 2. Select specific columns
+    const usersBox = getTableBox(page, 'users');
+    await usersBox.locator('[data-testid="column-checkbox-1"]').click({ force: true }); // name
+    await usersBox.locator('[data-testid="column-checkbox-2"]').click({ force: true }); // age
+
+    // 3. Verify columns appear in SQL
+    await expect(page.getByTestId('sql-preview-text')).toContainText('"name"');
+    await expect(page.getByTestId('sql-preview-text')).toContainText('"age"');
+
+    // 4. Navigate to Designer view
+    await page.getByTestId('tab-designer').click();
+
+    // 5. Navigate back to Query Builder
+    await page.getByTestId('tab-query-builder').click();
+    await expect(page.getByTestId('query-builder-view')).toBeVisible();
+
+    // 6. Wait for state to be restored
+    await page.waitForTimeout(500);
+
+    // 7. Verify table is still there
+    await expect(getTableBox(page, 'users')).toBeVisible();
+
+    // 8. Verify selected columns are still in SQL preview
+    await expect(page.getByTestId('sql-preview-text')).toContainText('"name"');
+    await expect(page.getByTestId('sql-preview-text')).toContainText('"age"');
+  });
+});
 
 test.describe('Query Builder with Sakila Database', () => {
   test.beforeEach(async ({ page }) => {

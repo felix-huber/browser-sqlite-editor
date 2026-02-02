@@ -22,8 +22,9 @@ import {
   type AvailableColumn,
 } from './';
 import { getWorkerClient } from '../../core/worker/client';
-import { openDb, useActiveDb, useTables } from '../../store';
+import { openDb, useActiveDb, useTables, useQueryBuilderState, setQueryBuilderState } from '../../store';
 import { quoteIdentifier } from '../../core/db/ddl';
+import type { QueryBuilderState } from '../../store';
 import { useResizable } from '../../shared/hooks/useResizable';
 import { ResizeHandle } from '../../shared/components/ResizeHandle';
 import type { TableInfo } from '../../types';
@@ -52,19 +53,21 @@ export function QueryBuilderView({
   const client = useMemo(() => getWorkerClient(), []);
   const activeDb = useActiveDb();
   const tables = useTables();
+  const savedState = useQueryBuilderState();
   const [tableColumns, setTableColumns] = useState<Record<string, TableBoxColumnData[]>>({});
   const [tableInfoMap, setTableInfoMap] = useState<Record<string, TableInfo>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [nodes, setNodes] = useState<TableBoxNodeType[]>([]);
-  const [joins, setJoins] = useState<JoinConfig[]>([]);
-  const [whereConditions, setWhereConditions] = useState<WhereCondition[]>([]);
-  const [whereLogic, setWhereLogic] = useState<'AND' | 'OR'>('AND');
-  const [sortConditions, setSortConditions] = useState<SortCondition[]>([]);
-  const [limit, setLimit] = useState<number | null>(null);
+  // Initialize state from saved store or empty defaults
+  const [nodes, setNodes] = useState<TableBoxNodeType[]>(() => savedState?.nodes ?? []);
+  const [joins, setJoins] = useState<JoinConfig[]>(() => savedState?.joins ?? []);
+  const [whereConditions, setWhereConditions] = useState<WhereCondition[]>(() => savedState?.whereConditions ?? []);
+  const [whereLogic, setWhereLogic] = useState<'AND' | 'OR'>(() => savedState?.whereLogic ?? 'AND');
+  const [sortConditions, setSortConditions] = useState<SortCondition[]>(() => savedState?.sortConditions ?? []);
+  const [limit, setLimit] = useState<number | null>(() => savedState?.limit ?? null);
   const [isDirty, setIsDirty] = useState(false);
-  const hasInitializedRef = useRef(false);
+  const hasInitializedRef = useRef(savedState !== null);
 
   // Resizable SQL preview panel
   const {
@@ -83,6 +86,44 @@ export function QueryBuilderView({
   useEffect(() => {
     onDirtyChange?.(isDirty);
   }, [isDirty, onDirtyChange]);
+
+  // Track if we had saved state initially to know when to clear
+  const hadSavedStateRef = useRef(savedState !== null);
+
+  // Persist Query Builder state to store whenever it changes
+  useEffect(() => {
+    // Only save if we have some state (at least one node or condition)
+    const hasState = nodes.length > 0 || whereConditions.length > 0 || sortConditions.length > 0 || limit !== null;
+
+    if (hasState) {
+      // Strip callback functions from nodes before saving (they'll be re-attached on restore)
+      const serializableNodes = nodes.map(node => ({
+        ...node,
+        data: {
+          ...node.data,
+          onSelectionChange: undefined,
+          onRemove: undefined,
+        },
+      }));
+
+      const stateToSave: QueryBuilderState = {
+        nodes: serializableNodes,
+        joins,
+        whereConditions,
+        whereLogic,
+        sortConditions,
+        limit,
+      };
+      setQueryBuilderState(stateToSave);
+      hadSavedStateRef.current = true;
+    } else if (hadSavedStateRef.current) {
+      // Clear state if everything is empty and there was previously saved state
+      setQueryBuilderState(null);
+      hadSavedStateRef.current = false;
+    }
+    // Note: Intentionally not including savedState in deps to avoid infinite loop
+    // The ref tracks whether we need to clear on empty state
+  }, [nodes, joins, whereConditions, whereLogic, sortConditions, limit]);
 
   const markDirty = useCallback(() => {
     setIsDirty(true);
@@ -311,6 +352,8 @@ export function QueryBuilderView({
           <QueryBuilder
             tables={tables}
             tableColumns={tableColumns}
+            initialNodes={savedState?.nodes}
+            initialJoins={savedState?.joins}
             onTablesChange={() => markDirty()}
             onJoinsChange={handleJoinsChange}
             onStateChange={handleStateChange}

@@ -19,6 +19,10 @@ import type {
   LockHolder,
   PersistenceStatus,
 } from '../types';
+import type { JoinConfig } from '../features/query-builder/QueryBuilder';
+import type { TableBoxNodeType } from '../features/query-builder/TableBox';
+import type { WhereCondition } from '../features/query-builder/WhereBuilder';
+import type { SortCondition } from '../features/query-builder/OrderByBuilder';
 import { getWorkerClient, type WorkerClient } from '../core/worker/client';
 import { getLockManager, type WebLockManager } from '../worker/web-locks';
 import { migrateHistory, deleteHistory } from '../core/sql/history';
@@ -61,6 +65,24 @@ export interface SizeWarningState {
 }
 
 /**
+ * Query Builder state for session persistence
+ */
+export interface QueryBuilderState {
+  /** Table nodes on the canvas */
+  nodes: TableBoxNodeType[];
+  /** Join configurations */
+  joins: JoinConfig[];
+  /** WHERE conditions */
+  whereConditions: WhereCondition[];
+  /** Logic operator for WHERE conditions */
+  whereLogic: 'AND' | 'OR';
+  /** Sort conditions for ORDER BY */
+  sortConditions: SortCondition[];
+  /** LIMIT value (null for no limit) */
+  limit: number | null;
+}
+
+/**
  * Store state for database and lock management
  */
 export interface DatabaseStoreState {
@@ -92,6 +114,8 @@ export interface DatabaseStoreState {
   dbsExceedingThreshold: Set<string>;
   /** Set of DB IDs already warned this session (to prevent re-warning) */
   warnedDbsThisSession: Set<string>;
+  /** Query Builder state for the active database (persists during navigation) */
+  queryBuilderState: QueryBuilderState | null;
 }
 
 /**
@@ -126,6 +150,8 @@ export interface DatabaseStoreActions {
   removeDbExceedingThreshold: (dbId: string) => void;
   /** Mark a DB as warned this session */
   markDbWarned: (dbId: string, storageMode: StorageMode) => void;
+  /** Set Query Builder state */
+  setQueryBuilderState: (state: QueryBuilderState | null) => void;
   /** Reset the store to initial state */
   reset: () => void;
 }
@@ -157,6 +183,7 @@ const initialState: DatabaseStoreState = {
   sizeWarning: null,
   dbsExceedingThreshold: new Set<string>(),
   warnedDbsThisSession: new Set<string>(),
+  queryBuilderState: null,
 };
 
 // =============================================================================
@@ -223,12 +250,16 @@ export const useDatabaseStore = create<DatabaseStore>((set) => ({
       return { warnedDbsThisSession: newSet };
     }),
 
+  setQueryBuilderState: (queryBuilderState) => set({ queryBuilderState }),
+
   reset: () =>
     set({
       ...initialState,
       // Create fresh Set instances to avoid mutations
       dbsExceedingThreshold: new Set<string>(),
       warnedDbsThisSession: new Set<string>(),
+      // Clear Query Builder state on reset
+      queryBuilderState: null,
     }),
 }));
 
@@ -366,6 +397,27 @@ export function useSizeWarning(): SizeWarningState | null {
  */
 export function useDbsExceedingThreshold(): Set<string> {
   return useDatabaseStore((state) => state.dbsExceedingThreshold);
+}
+
+/**
+ * Get the Query Builder state (for state persistence)
+ */
+export function useQueryBuilderState(): QueryBuilderState | null {
+  return useDatabaseStore((state) => state.queryBuilderState);
+}
+
+/**
+ * Set the Query Builder state (non-hook version for use outside components)
+ */
+export function setQueryBuilderState(state: QueryBuilderState | null): void {
+  useDatabaseStore.getState().setQueryBuilderState(state);
+}
+
+/**
+ * Clear Query Builder state
+ */
+export function clearQueryBuilderState(): void {
+  useDatabaseStore.getState().setQueryBuilderState(null);
 }
 
 // =============================================================================
@@ -614,6 +666,8 @@ export async function closeDb(): Promise<void> {
   store.setSchema(null);
   store.setReadOnly(false);
   store.setLockHolder(null);
+  // Clear Query Builder state when database is closed
+  store.setQueryBuilderState(null);
 }
 
 /**

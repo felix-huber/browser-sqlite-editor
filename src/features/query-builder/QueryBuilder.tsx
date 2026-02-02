@@ -51,6 +51,10 @@ interface QueryBuilderProps {
   tables: string[]
   /** Column metadata for tables (table name -> columns) */
   tableColumns?: Record<string, TableBoxColumnData[]>
+  /** Initial nodes to restore (for state persistence) */
+  initialNodes?: TableBoxNodeType[]
+  /** Initial joins to restore (for state persistence) */
+  initialJoins?: JoinConfig[]
   /** Callback when tables on canvas change */
   onTablesChange?: (tableNames: string[]) => void
   /** Callback when joins change */
@@ -65,11 +69,13 @@ interface QueryBuilderProps {
 export function QueryBuilder({
   tables,
   tableColumns,
+  initialNodes,
+  initialJoins,
   onTablesChange,
   onJoinsChange,
   onStateChange,
 }: QueryBuilderProps) {
-  const [nodes, setNodes, onNodesChange] = useNodesState<TableBoxNodeType>([])
+  const [nodes, setNodes, onNodesChange] = useNodesState<TableBoxNodeType>(initialNodes ?? [])
   const [edges, setEdges, onEdgesChange] = useEdgesState<JoinEdgeType>([])
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -298,6 +304,9 @@ export function QueryBuilder({
     [nodes.length, tablesOnCanvas, setNodes, tableColumns, handleSelectionChange, handleRemoveTable]
   )
 
+  // Track whether initial state has been restored
+  const initialStateRestoredRef = useRef(false)
+
   // Update node columns when tableColumns change
   useEffect(() => {
     if (!tableColumns) return
@@ -427,6 +436,53 @@ export function QueryBuilder({
     },
     [edges, setEdges, extractColumnFromHandle, notifyJoinsChange, handleJoinTypeChange, handleDeleteEdge]
   )
+
+  // Restore edges from initialJoins (only once when tableColumns loads)
+  useEffect(() => {
+    // Only restore once, and only when we have tableColumns and initialJoins
+    if (initialStateRestoredRef.current || !tableColumns || !initialJoins || initialJoins.length === 0) {
+      return
+    }
+
+    // Need nodes to be present to create edges
+    if (nodes.length === 0) {
+      return
+    }
+
+    // Create a map of table name to node ID
+    const tableToNodeId = new Map<string, string>()
+    for (const node of nodes) {
+      tableToNodeId.set(node.data.tableName, node.id)
+    }
+
+    // Convert JoinConfig[] to JoinEdgeType[]
+    const restoredEdges: JoinEdgeType[] = initialJoins.map((join) => {
+      const sourceNodeId = tableToNodeId.get(join.sourceTable) ?? ''
+      const targetNodeId = tableToNodeId.get(join.targetTable) ?? ''
+
+      return {
+        id: join.id,
+        source: sourceNodeId,
+        target: targetNodeId,
+        sourceHandle: `${join.sourceColumn}-source`,
+        targetHandle: `${join.targetColumn}-target`,
+        type: 'joinEdge' as const,
+        data: {
+          joinType: join.joinType,
+          sourceColumn: join.sourceColumn,
+          targetColumn: join.targetColumn,
+          onJoinTypeChange: handleJoinTypeChange,
+          onDelete: handleDeleteEdge,
+        },
+      }
+    }).filter(edge => edge.source && edge.target) // Only include edges where both nodes exist
+
+    if (restoredEdges.length > 0) {
+      setEdges(restoredEdges)
+    }
+
+    initialStateRestoredRef.current = true
+  }, [tableColumns, initialJoins, nodes, setEdges, handleJoinTypeChange, handleDeleteEdge])
 
   return (
     <div className="h-full w-full flex" data-testid="query-builder">
