@@ -106,6 +106,26 @@ async function getRegistry(
 }
 
 /**
+ * Force reload registry from storage.
+ * Call this after modifying storage directly to sync the app's in-memory state.
+ */
+async function reloadRegistry(page: Page): Promise<boolean> {
+  return page.evaluate(async () => {
+    const testApi = (
+      window as Window & {
+        __sqliteEditorTest?: { reloadRegistry?: () => Promise<void> };
+      }
+    ).__sqliteEditorTest;
+
+    if (testApi?.reloadRegistry) {
+      await testApi.reloadRegistry();
+      return true;
+    }
+    return false;
+  });
+}
+
+/**
  * List files in OPFS databases directory
  */
 async function listOpfsFiles(page: Page): Promise<string[]> {
@@ -247,6 +267,9 @@ async function renameDatabaseDirect(
             .toLowerCase() + '.sqlite';
         };
 
+        // Check if this is an IDB-stored database
+        const isIdbDatabase = entry.storageType === 'idb';
+
         // Write back to the appropriate storage
         if (useOpfs) {
           const root = await navigator.storage.getDirectory();
@@ -256,44 +279,118 @@ async function renameDatabaseDirect(
           await writable.write(JSON.stringify(registryData, null, 2));
           await writable.close();
 
-          // Also rename the database file in OPFS
-          try {
-            const dbDir = await appDir.getDirectoryHandle('databases');
-            const oldFilename = toFilename(oldN);
-            const newFilename = toFilename(newN);
-
-            // Read old file
-            const oldFileHandle = await dbDir.getFileHandle(oldFilename);
-            const oldFile = await oldFileHandle.getFile();
-            const oldData = await oldFile.arrayBuffer();
-
-            // Create new file
-            const newFileHandle = await dbDir.getFileHandle(newFilename, { create: true });
-            const newWritable = await newFileHandle.createWritable();
-            await newWritable.write(oldData);
-            await newWritable.close();
-
-            // Delete old file
-            await dbDir.removeEntry(oldFilename);
-
-            // Also rename sidecar if it exists
+          // Rename the database file based on storage type
+          if (isIdbDatabase) {
+            // For IDB databases, rename in the idb-batch-atomic VFS store
             try {
-              const oldSidecar = oldFilename.replace(/\.sqlite$/, '.erd.json');
-              const newSidecar = newFilename.replace(/\.sqlite$/, '.erd.json');
-              const oldSidecarHandle = await dbDir.getFileHandle(oldSidecar);
-              const sidecarFile = await oldSidecarHandle.getFile();
-              const sidecarData = await sidecarFile.arrayBuffer();
-              const newSidecarHandle = await dbDir.getFileHandle(newSidecar, { create: true });
-              const sidecarWritable = await newSidecarHandle.createWritable();
-              await sidecarWritable.write(sidecarData);
-              await sidecarWritable.close();
-              await dbDir.removeEntry(oldSidecar);
-            } catch {
-              // Sidecar might not exist, that's ok
+              const idbVfs = await new Promise<IDBDatabase>((resolve, reject) => {
+                const req = indexedDB.open('idb-batch-atomic', 6);
+                req.onerror = () => reject(req.error);
+                req.onsuccess = () => resolve(req.result);
+                req.onupgradeneeded = () => {
+                  const db = req.result;
+                  if (!db.objectStoreNames.contains('metadata')) {
+                    db.createObjectStore('metadata', { keyPath: 'name' });
+                  }
+                  if (!db.objectStoreNames.contains('blocks')) {
+                    db.createObjectStore('blocks', { keyPath: ['path', 'offset', 'version'] });
+                  }
+                };
+              });
+
+              const oldPath = `/${oldN}`;
+              const newPath = `/${newN}`;
+
+              const tx = idbVfs.transaction(['metadata', 'blocks'], 'readwrite');
+              const metadata = tx.objectStore('metadata');
+              const blocks = tx.objectStore('blocks');
+
+              // Get and rename metadata entry
+              const oldMeta = await new Promise<{ name: string; fileSize: number; version: number } | undefined>((resolve, reject) => {
+                const req = metadata.get(oldPath);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+              });
+
+              if (oldMeta) {
+                await new Promise<void>((resolve, reject) => {
+                  const req = metadata.put({ ...oldMeta, name: newPath });
+                  req.onsuccess = () => resolve();
+                  req.onerror = () => reject(req.error);
+                });
+                await new Promise<void>((resolve, reject) => {
+                  const req = metadata.delete(oldPath);
+                  req.onsuccess = () => resolve();
+                  req.onerror = () => reject(req.error);
+                });
+
+                // Rename all blocks for this database
+                await new Promise<void>((resolve, reject) => {
+                  const range = IDBKeyRange.bound([oldPath, -Infinity], [oldPath, Infinity]);
+                  const cursorReq = blocks.openCursor(range);
+                  cursorReq.onerror = () => reject(cursorReq.error);
+                  cursorReq.onsuccess = () => {
+                    const cursor = cursorReq.result;
+                    if (!cursor) {
+                      resolve();
+                      return;
+                    }
+                    const value = cursor.value as { path: string; offset: number; version: number; data: Uint8Array };
+                    blocks.put({ ...value, path: newPath });
+                    cursor.delete();
+                    cursor.continue();
+                  };
+                });
+              }
+
+              await new Promise<void>((resolve, reject) => {
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+              });
+              idbVfs.close();
+            } catch (idbErr) {
+              console.warn('IDB VFS rename failed:', idbErr);
             }
-          } catch (fileErr) {
-            // File rename failed - this might happen if the file is locked
-            console.warn('File rename failed:', fileErr);
+          } else {
+            // For OPFS databases, rename the .sqlite file
+            try {
+              const dbDir = await appDir.getDirectoryHandle('databases');
+              const oldFilename = toFilename(oldN);
+              const newFilename = toFilename(newN);
+
+              // Read old file
+              const oldFileHandle = await dbDir.getFileHandle(oldFilename);
+              const oldFile = await oldFileHandle.getFile();
+              const oldData = await oldFile.arrayBuffer();
+
+              // Create new file
+              const newFileHandle = await dbDir.getFileHandle(newFilename, { create: true });
+              const newWritable = await newFileHandle.createWritable();
+              await newWritable.write(oldData);
+              await newWritable.close();
+
+              // Delete old file
+              await dbDir.removeEntry(oldFilename);
+
+              // Also rename sidecar if it exists
+              try {
+                const oldSidecar = oldFilename.replace(/\.sqlite$/, '.erd.json');
+                const newSidecar = newFilename.replace(/\.sqlite$/, '.erd.json');
+                const oldSidecarHandle = await dbDir.getFileHandle(oldSidecar);
+                const sidecarFile = await oldSidecarHandle.getFile();
+                const sidecarData = await sidecarFile.arrayBuffer();
+                const newSidecarHandle = await dbDir.getFileHandle(newSidecar, { create: true });
+                const sidecarWritable = await newSidecarHandle.createWritable();
+                await sidecarWritable.write(sidecarData);
+                await sidecarWritable.close();
+                await dbDir.removeEntry(oldSidecar);
+              } catch {
+                // Sidecar might not exist, that's ok
+              }
+            } catch (fileErr) {
+              // File rename failed - this might happen if the file is locked
+              console.warn('File rename failed:', fileErr);
+            }
           }
         } else {
           const registryDb = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -394,6 +491,9 @@ async function deleteDatabaseDirect(
         return { success: false, error: `Database "${name}" not found` };
       }
 
+      const entry = registryData.databases[index];
+      const isIdbDatabase = entry.storageType === 'idb';
+
       registryData.databases.splice(index, 1);
 
       // Write back to the appropriate storage
@@ -405,28 +505,77 @@ async function deleteDatabaseDirect(
         await writable.write(JSON.stringify(registryData, null, 2));
         await writable.close();
 
-        // Also delete the database files from OPFS
-        try {
-          const dbDir = await appDir.getDirectoryHandle('databases');
-          // Helper to convert name to filename (same logic as app)
-          // NOTE: Must match toFilename() in src/worker/db-registry.ts
-          const toFilename = (n: string): string =>
-            n.replace(/[<>:"/\\|?*()]/g, '_').replace(/\s+/g, '_').toLowerCase();
-          const filename = toFilename(name) + '.sqlite';
-          const erdFilename = toFilename(name) + '.erd.json';
+        // Delete the database files based on storage type
+        if (isIdbDatabase) {
+          // For IDB databases, delete from the idb-batch-atomic VFS store
+          try {
+            const idbVfs = await new Promise<IDBDatabase>((resolve, reject) => {
+              const req = indexedDB.open('idb-batch-atomic', 6);
+              req.onerror = () => reject(req.error);
+              req.onsuccess = () => resolve(req.result);
+              req.onupgradeneeded = () => {
+                const db = req.result;
+                if (!db.objectStoreNames.contains('metadata')) {
+                  db.createObjectStore('metadata', { keyPath: 'name' });
+                }
+                if (!db.objectStoreNames.contains('blocks')) {
+                  db.createObjectStore('blocks', { keyPath: ['path', 'offset', 'version'] });
+                }
+              };
+            });
 
-          try {
-            await dbDir.removeEntry(filename);
-          } catch {
-            // File might not exist
+            const dbPath = `/${name}`;
+            const tx = idbVfs.transaction(['metadata', 'blocks'], 'readwrite');
+            const metadata = tx.objectStore('metadata');
+            const blocks = tx.objectStore('blocks');
+
+            // Delete metadata entry
+            await new Promise<void>((resolve, reject) => {
+              const req = metadata.delete(dbPath);
+              req.onsuccess = () => resolve();
+              req.onerror = () => reject(req.error);
+            });
+
+            // Delete all blocks for this database
+            await new Promise<void>((resolve, reject) => {
+              const range = IDBKeyRange.bound([dbPath, -Infinity], [dbPath, Infinity]);
+              const req = blocks.delete(range);
+              req.onsuccess = () => resolve();
+              req.onerror = () => reject(req.error);
+            });
+
+            await new Promise<void>((resolve, reject) => {
+              tx.oncomplete = () => resolve();
+              tx.onerror = () => reject(tx.error);
+            });
+            idbVfs.close();
+          } catch (idbErr) {
+            console.warn('IDB VFS delete failed:', idbErr);
           }
+        } else {
+          // For OPFS databases, delete the .sqlite file
           try {
-            await dbDir.removeEntry(erdFilename);
+            const dbDir = await appDir.getDirectoryHandle('databases');
+            // Helper to convert name to filename (same logic as app)
+            // NOTE: Must match toFilename() in src/worker/db-registry.ts
+            const toFilename = (n: string): string =>
+              n.replace(/[<>:"/\\|?*()]/g, '_').replace(/\s+/g, '_').toLowerCase();
+            const filename = toFilename(name) + '.sqlite';
+            const erdFilename = toFilename(name) + '.erd.json';
+
+            try {
+              await dbDir.removeEntry(filename);
+            } catch {
+              // File might not exist
+            }
+            try {
+              await dbDir.removeEntry(erdFilename);
+            } catch {
+              // ERD file might not exist
+            }
           } catch {
-            // ERD file might not exist
+            // databases dir might not exist
           }
-        } catch {
-          // databases dir might not exist
         }
       } else {
         const registryDb = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -514,22 +663,25 @@ test.describe('Database Lifecycle E2E (US-013)', () => {
       await page.goto('about:blank');
       await page.waitForTimeout(500); // Brief pause to ensure handles are released
 
-      // Step 6: Navigate back to the app (but don't wait for worker to load DBs yet)
+      // Step 6: Navigate back to the app and wait for it to fully initialize
       await page.goto('/');
+      await expect(page).toHaveTitle(/SQLite Editor/);
+      await waitForReady(page);
 
-      // Step 7: Perform rename immediately, before the worker re-locks files
-      // We do this in a short window after page load but before worker initializes
+      // Step 7: Perform rename directly in storage
+      // Note: This modifies the persistent storage but the app's in-memory state is stale
       const renameResult = await renameDatabaseDirect(page, originalName, newName);
       expect(renameResult.success).toBe(true);
       if (renameResult.error) {
         console.log('Rename error details:', renameResult.error);
       }
 
-      // Step 8: Now wait for app to fully initialize from updated storage
-      await expect(page).toHaveTitle(/SQLite Editor/);
-      await waitForReady(page);
+      // Step 8: Force the app to reload registry from storage
+      // This is necessary because we modified storage directly, bypassing the app's APIs
+      const reloaded = await reloadRegistry(page);
+      expect(reloaded).toBe(true); // Verify reloadRegistry API is available
 
-      // Step 9: Verify registry has new name, not old name (via test API after app loads from storage)
+      // Step 9: Verify registry has new name, not old name (via test API after reload)
       const registry = await getRegistry(page);
       expect(registry?.databases.some((db) => db.name === newName)).toBe(true);
       expect(registry?.databases.some((db) => db.name === originalName)).toBe(false);
@@ -580,42 +732,41 @@ test.describe('Database Lifecycle E2E (US-013)', () => {
       // Step 4: Check OPFS availability
       const opfsAvailable = await isOpfsAvailable(page);
 
-      // Step 5: If OPFS available, verify files exist before delete
-      if (opfsAvailable) {
-        const filesBefore = await listOpfsFiles(page);
-        // Should have at least the .sqlite file
-        expect(filesBefore.some((f) => f.endsWith('.sqlite'))).toBe(true);
-      }
+      // Note: createAndOpenDatabase() creates databases in IDB (not OPFS) by design.
+      // New databases use IDB VFS; only imported databases use OPFS.
+      // So we don't check for OPFS files here - the database is in IDB storage.
 
-      // Step 6: Verify database is in registry
+      // Step 5: Verify database is in registry
       const registryBefore = await getRegistry(page);
       expect(registryBefore?.databases.some((db) => db.name === dbName)).toBe(true);
 
-      // Step 7: Verify query history exists (from running SQL)
+      // Step 6: Verify query history exists (from running SQL)
       const historyBefore = await getQueryHistory(page, dbName);
       expect(historyBefore.length).toBeGreaterThan(0);
 
-      // Step 8: Navigate away to fully release all file handles before deleting
+      // Step 7: Navigate away to fully release all file handles before deleting
       // Going to about:blank ensures no worker is running and all OPFS handles are released
       await page.goto('about:blank');
       await page.waitForTimeout(500); // Brief pause to ensure handles are released
 
-      // Step 9: Navigate back to the app (but don't wait for worker to load DBs yet)
+      // Step 8: Navigate back to the app and wait for it to fully initialize
       await page.goto('/');
-
-      // Step 10: Perform delete immediately, before the worker re-locks files
-      const deleteResult = await deleteDatabaseDirect(page, dbName);
-      expect(deleteResult.success).toBe(true);
-
-      // Step 11: Now wait for app to fully initialize from updated storage
       await expect(page).toHaveTitle(/SQLite Editor/);
       await waitForReady(page);
 
-      // Step 12: Verify database is removed from registry (via test API after app loads from storage)
+      // Step 9: Perform delete directly in storage
+      const deleteResult = await deleteDatabaseDirect(page, dbName);
+      expect(deleteResult.success).toBe(true);
+
+      // Step 10: Force the app to reload registry from storage
+      await reloadRegistry(page);
+
+      // Step 11: Verify database is removed from registry (via test API after reload)
       const registryAfter = await getRegistry(page);
       expect(registryAfter?.databases.some((db) => db.name === dbName)).toBe(false);
 
-      // Step 13: If OPFS available, verify files are removed
+      // Step 12: If OPFS available, verify no orphaned OPFS files exist for this database
+      // (Note: The database was in IDB, so there shouldn't be any OPFS files anyway)
       if (opfsAvailable) {
         const filesAfter = await listOpfsFiles(page);
 

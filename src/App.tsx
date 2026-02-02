@@ -77,6 +77,8 @@ type TestApi = {
   resetStore: () => void;
   /** Check if a database is currently open */
   hasActiveDatabase: () => boolean;
+  /** Force reload registry from storage (for tests that modify storage directly) */
+  reloadRegistry: () => Promise<void>;
 };
 
 function App() {
@@ -279,6 +281,22 @@ function App() {
       },
       hasActiveDatabase: () => {
         return useDatabaseStore.getState().activeDbId !== null;
+      },
+      reloadRegistry: async () => {
+        const ready = workerReadyRef.current;
+        if (ready) {
+          try {
+            await ready;
+          } catch {
+            return;
+          }
+        }
+        const client = workerClientRef.current;
+        if (!client) return;
+        // Force worker to reload registry from storage
+        await client.forceReinitRegistry();
+        // Then reload the store from the worker
+        await loadRegistry();
       },
     };
 

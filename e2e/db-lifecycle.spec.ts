@@ -51,11 +51,19 @@ async function clearAllStorage(page: Page): Promise<void> {
 
     await deleteIdb('sqlite-editor-registry');
     await deleteIdb('idb-sqlite');
+    await deleteIdb('idb-batch-atomic'); // VFS storage
 
     // Clear OPFS if available
     try {
       if (navigator.storage?.getDirectory) {
         const root = await navigator.storage.getDirectory();
+        // Clear new layout
+        try {
+          await root.removeEntry('wasm-sqlite-editor', { recursive: true });
+        } catch {
+          // Directory might not exist
+        }
+        // Clear legacy layout
         try {
           await root.removeEntry('sqlite-editor', { recursive: true });
         } catch {
@@ -171,6 +179,26 @@ async function createTestDatabase(page: Page, name: string): Promise<string> {
 }
 
 /**
+ * Force reload registry from storage.
+ * Call this after modifying storage directly to sync the app's in-memory state.
+ */
+async function reloadRegistry(page: Page): Promise<boolean> {
+  return page.evaluate(async () => {
+    const testApi = (
+      window as Window & {
+        __sqliteEditorTest?: { reloadRegistry?: () => Promise<void> };
+      }
+    ).__sqliteEditorTest;
+
+    if (testApi?.reloadRegistry) {
+      await testApi.reloadRegistry();
+      return true;
+    }
+    return false;
+  });
+}
+
+/**
  * Read registry from IDB
  */
 async function readRegistry(page: Page): Promise<RegistryState | null> {
@@ -219,6 +247,20 @@ async function readRegistry(page: Page): Promise<RegistryState | null> {
       }
 
       if (navigator.storage?.getDirectory) {
+        // Try new layout first
+        try {
+          const root = await navigator.storage.getDirectory();
+          const appDir = await root.getDirectoryHandle('wasm-sqlite-editor');
+          const file = await appDir.getFileHandle('registry.json');
+          const blob = await file.getFile();
+          const text = await blob.text();
+          return JSON.parse(text) as RegistryState;
+        } catch (err) {
+          if (!(err instanceof DOMException && err.name === 'NotFoundError')) {
+            // Ignore OPFS errors and try legacy layout
+          }
+        }
+        // Try legacy layout
         try {
           const root = await navigator.storage.getDirectory();
           const dir = await root.getDirectoryHandle('sqlite-editor');
@@ -576,7 +618,7 @@ async function isOpfsAvailable(page: Page): Promise<boolean> {
 }
 
 /**
- * List files in OPFS sqlite-editor directory
+ * List files in OPFS databases directory (new layout: /wasm-sqlite-editor/databases/)
  */
 async function _listOpfsFiles(page: Page): Promise<string[]> {
   return page.evaluate(async (): Promise<string[]> => {
@@ -585,15 +627,16 @@ async function _listOpfsFiles(page: Page): Promise<string[]> {
         return [];
       }
       const root = await navigator.storage.getDirectory();
-      let dir: FileSystemDirectoryHandle;
+      let dbDir: FileSystemDirectoryHandle;
       try {
-        dir = await root.getDirectoryHandle('sqlite-editor');
+        const appDir = await root.getDirectoryHandle('wasm-sqlite-editor');
+        dbDir = await appDir.getDirectoryHandle('databases');
       } catch {
         return [];
       }
 
       const files: string[] = [];
-      const entries = (dir as unknown as AsyncIterable<[string, FileSystemHandle]>)[Symbol.asyncIterator]();
+      const entries = (dbDir as unknown as AsyncIterable<[string, FileSystemHandle]>)[Symbol.asyncIterator]();
       for await (const [name, handle] of { [Symbol.asyncIterator]: () => entries }) {
         if (handle.kind === 'file' && name.endsWith('.sqlite')) {
           files.push(name);
@@ -669,9 +712,10 @@ async function createOpfsDatabase(page: Page, name: string): Promise<string> {
 
     registryDb.close();
 
-    // Create the file in OPFS
+    // Create the file in OPFS (new layout: /wasm-sqlite-editor/databases/)
     const root = await navigator.storage.getDirectory();
-    const sqliteEditorDir = await root.getDirectoryHandle('sqlite-editor', { create: true });
+    const appDir = await root.getDirectoryHandle('wasm-sqlite-editor', { create: true });
+    const dbDir = await appDir.getDirectoryHandle('databases', { create: true });
 
     // Derive filename from name (must match toFilename() in src/worker/db-registry.ts)
     const filename = dbName
@@ -679,7 +723,7 @@ async function createOpfsDatabase(page: Page, name: string): Promise<string> {
       .replace(/\s+/g, '_')
       .toLowerCase() + '.sqlite';
 
-    const fileHandle = await sqliteEditorDir.getFileHandle(filename, { create: true });
+    const fileHandle = await dbDir.getFileHandle(filename, { create: true });
     const writable = await fileHandle.createWritable();
 
     // Write SQLite header
@@ -749,9 +793,10 @@ async function deleteOpfsDatabase(page: Page, name: string): Promise<{ success: 
 
       registryDb.close();
 
-      // Step 2: Delete from OPFS
+      // Step 2: Delete from OPFS (new layout: /wasm-sqlite-editor/databases/)
       const root = await navigator.storage.getDirectory();
-      const sqliteEditorDir = await root.getDirectoryHandle('sqlite-editor');
+      const appDir = await root.getDirectoryHandle('wasm-sqlite-editor');
+      const dbDir = await appDir.getDirectoryHandle('databases');
 
       // Derive filename from name (must match toFilename() in src/worker/db-registry.ts)
       const filename = dbName
@@ -760,7 +805,7 @@ async function deleteOpfsDatabase(page: Page, name: string): Promise<{ success: 
         .toLowerCase() + '.sqlite';
 
       try {
-        await sqliteEditorDir.removeEntry(filename);
+        await dbDir.removeEntry(filename);
       } catch {
         // File might not exist
       }
@@ -773,7 +818,7 @@ async function deleteOpfsDatabase(page: Page, name: string): Promise<{ success: 
 }
 
 /**
- * Check if a file exists in OPFS
+ * Check if a file exists in OPFS (new layout: /wasm-sqlite-editor/databases/)
  */
 async function opfsFileExists(page: Page, filename: string): Promise<boolean> {
   return page.evaluate(async (fname: string): Promise<boolean> => {
@@ -782,8 +827,9 @@ async function opfsFileExists(page: Page, filename: string): Promise<boolean> {
         return false;
       }
       const root = await navigator.storage.getDirectory();
-      const sqliteEditorDir = await root.getDirectoryHandle('sqlite-editor');
-      await sqliteEditorDir.getFileHandle(fname);
+      const appDir = await root.getDirectoryHandle('wasm-sqlite-editor');
+      const dbDir = await appDir.getDirectoryHandle('databases');
+      await dbDir.getFileHandle(fname);
       return true;
     } catch {
       return false;
@@ -793,12 +839,14 @@ async function opfsFileExists(page: Page, filename: string): Promise<boolean> {
 
 /**
  * Create an orphan file in OPFS (file exists but no registry entry)
+ * Uses the new layout: /wasm-sqlite-editor/databases/
  */
 async function createOrphanOpfsFile(page: Page, filename: string): Promise<void> {
   await page.evaluate(async (fname: string): Promise<void> => {
     const root = await navigator.storage.getDirectory();
-    const sqliteEditorDir = await root.getDirectoryHandle('sqlite-editor', { create: true });
-    const fileHandle = await sqliteEditorDir.getFileHandle(fname, { create: true });
+    const appDir = await root.getDirectoryHandle('wasm-sqlite-editor', { create: true });
+    const dbDir = await appDir.getDirectoryHandle('databases', { create: true });
+    const fileHandle = await dbDir.getFileHandle(fname, { create: true });
     const writable = await fileHandle.createWritable();
 
     // Write SQLite header
@@ -892,6 +940,9 @@ test.describe('Database Lifecycle Tests', () => {
       const id = await createTestDatabase(page, 'test');
       expect(id).toBeTruthy();
 
+      // Force app to reload registry after direct storage modification
+      await reloadRegistry(page);
+
       // Verify it exists
       const registryBefore = await readRegistry(page);
       expect(registryBefore?.databases.some((db) => db.name === 'test')).toBe(true);
@@ -902,6 +953,9 @@ test.describe('Database Lifecycle Tests', () => {
       // Step 2: Rename to "test-renamed"
       const renameResult = await renameDatabase(page, 'test', 'test-renamed');
       expect(renameResult.success).toBe(true);
+
+      // Force app to reload registry after direct storage modification
+      await reloadRegistry(page);
 
       // Verify rename in registry
       const registryAfterRename = await readRegistry(page);
@@ -933,6 +987,9 @@ test.describe('Database Lifecycle Tests', () => {
       await createTestDatabase(page, 'db-alpha');
       await createTestDatabase(page, 'db-beta');
 
+      // Force app to reload registry after direct storage modification
+      await reloadRegistry(page);
+
       // Verify both exist
       const registryBefore = await readRegistry(page);
       expect(registryBefore?.databases).toHaveLength(2);
@@ -941,6 +998,9 @@ test.describe('Database Lifecycle Tests', () => {
       const renameResult = await renameDatabase(page, 'db-alpha', 'db-beta');
       expect(renameResult.success).toBe(false);
       expect(renameResult.error).toContain('already exists');
+
+      // Force app to reload registry after direct storage modification
+      await reloadRegistry(page);
 
       // Verify original names are unchanged
       const registryAfter = await readRegistry(page);
@@ -971,6 +1031,9 @@ test.describe('Database Lifecycle Tests', () => {
       // Create database
       await createTestDatabase(page, 'to-delete');
 
+      // Force app to reload registry after direct storage modification
+      await reloadRegistry(page);
+
       // Verify it exists
       const registryBefore = await readRegistry(page);
       expect(registryBefore?.databases.some((db) => db.name === 'to-delete')).toBe(true);
@@ -978,6 +1041,9 @@ test.describe('Database Lifecycle Tests', () => {
       // Delete
       const deleteResult = await deleteDatabase(page, 'to-delete');
       expect(deleteResult.success).toBe(true);
+
+      // Force app to reload registry after direct storage modification
+      await reloadRegistry(page);
 
       // Verify removed from registry
       const registryAfter = await readRegistry(page);
@@ -1085,11 +1151,6 @@ test.describe('Database Lifecycle Tests', () => {
       // Create orphan registry entry (registry entry but no blob)
       await createOrphanRegistryEntry(page, 'orphan-entry');
 
-      // Verify both in registry before
-      const registryBefore = await readRegistry(page);
-      expect(registryBefore?.databases.some((db) => db.name === 'valid-db')).toBe(true);
-      expect(registryBefore?.databases.some((db) => db.name === 'orphan-entry')).toBe(true);
-
       // The orphan should have no corresponding IDB blob
       const orphanBlobExists = await databaseExistsInIdb(page, 'orphan-entry');
       expect(orphanBlobExists).toBe(false);
@@ -1098,8 +1159,15 @@ test.describe('Database Lifecycle Tests', () => {
       const validBlobExists = await databaseExistsInIdb(page, 'valid-db');
       expect(validBlobExists).toBe(true);
 
-      // Note: Self-healing happens on registry init - verify the pattern is correct
-      // The app's DatabaseRegistry class handles this automatically on init()
+      // Force app to reload registry - this triggers self-healing
+      // which should remove the orphan entry (registry entry without file)
+      await reloadRegistry(page);
+
+      // After reload, the orphan should be removed by self-healing
+      const registryAfter = await readRegistry(page);
+      expect(registryAfter?.databases.some((db) => db.name === 'valid-db')).toBe(true);
+      // Orphan should have been removed by self-healing
+      expect(registryAfter?.databases.some((db) => db.name === 'orphan-entry')).toBe(false);
     });
 
     test('multiple operations maintain consistency', async ({ page }) => {
@@ -1107,6 +1175,9 @@ test.describe('Database Lifecycle Tests', () => {
       await createTestDatabase(page, 'multi-1');
       await createTestDatabase(page, 'multi-2');
       await createTestDatabase(page, 'multi-3');
+
+      // Force app to reload registry after direct storage modification
+      await reloadRegistry(page);
 
       // Verify all exist
       let registry = await readRegistry(page);
@@ -1117,6 +1188,9 @@ test.describe('Database Lifecycle Tests', () => {
 
       // Delete one
       await deleteDatabase(page, 'multi-3');
+
+      // Force app to reload registry after direct storage modification
+      await reloadRegistry(page);
 
       // Verify consistency
       registry = await readRegistry(page);
@@ -1175,6 +1249,9 @@ test.describe('Database Lifecycle Tests', () => {
     test('rename to same name is no-op', async ({ page }) => {
       await createTestDatabase(page, 'same-name-test');
 
+      // Force app to reload registry after direct storage modification
+      await reloadRegistry(page);
+
       const registryBefore = await readRegistry(page);
       expect(registryBefore?.databases.some((db) => db.name === 'same-name-test')).toBe(true);
 
@@ -1182,6 +1259,9 @@ test.describe('Database Lifecycle Tests', () => {
       await renameDatabase(page, 'same-name-test', 'same-name-test');
       // Note: Our helper doesn't handle same-name gracefully, but the actual registry does
       // This test verifies the database still exists
+
+      // Force app to reload registry after direct storage modification
+      await reloadRegistry(page);
 
       const registryAfter = await readRegistry(page);
       expect(registryAfter?.databases.some((db) => db.name === 'same-name-test')).toBe(true);
@@ -1220,6 +1300,9 @@ test.describe('Database Lifecycle Tests', () => {
         await deleteDatabase(page, name);
       }
 
+      // Force app to reload registry after direct storage modifications
+      await reloadRegistry(page);
+
       // Verify all are deleted
       const registry = await readRegistry(page);
       const rapidDbs = registry?.databases.filter((db) => db.name.startsWith('rapid-')) ?? [];
@@ -1234,6 +1317,9 @@ test.describe('Database Lifecycle Tests', () => {
       // Create databases with different cases
       await createTestDatabase(page, 'CaseTest');
       await createTestDatabase(page, 'other-db');
+
+      // Force app to reload registry after direct storage modification
+      await reloadRegistry(page);
 
       // Try to rename other-db to casetest (lowercase) - should fail
       const result = await renameDatabase(page, 'other-db', 'casetest');

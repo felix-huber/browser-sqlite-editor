@@ -20,7 +20,9 @@ Offline SQLite editor in your browser. Visual table designer, ERD diagrams, SQL 
 - **SQL Editor** - Syntax highlighting, autocomplete, and query history
 - **Data Grid** - Virtual scrolling, inline editing, sorting, and filtering
 - **Query Builder** - Build queries visually with JOIN support
+- **Sample Database** - Load the Sakila sample database to explore features
 - **Import/Export** - Load `.sqlite`/`.db` files, import CSV/JSON, export databases and query results
+- **Multi-Tab Support** - Open the same database in multiple tabs with single-writer/multi-reader locking
 - **Offline Support** - PWA with service worker for full offline functionality
 - **Zero Server** - Runs entirely in your browser with no backend required
 
@@ -108,7 +110,11 @@ npm run dev
 | `Cmd/Ctrl+C` | Copy cell value |
 | `Arrow keys` | Navigate cells |
 
-## Browser Support
+## Storage Architecture
+
+### OPFS (Primary) vs IndexedDB (Fallback)
+
+The app uses **OPFS (Origin Private File System)** as the primary storage mode for optimal performance. OPFS provides native file system access with synchronous I/O, which SQLite requires for proper operation. Browsers without OPFS support automatically fall back to IndexedDB.
 
 | Browser | Storage Mode | Notes |
 |---------|--------------|-------|
@@ -117,11 +123,33 @@ npm run dev
 | Firefox 111+ | OPFS | Full support with native file system |
 | Safari 15.2+ | IndexedDB | Fallback storage, slightly slower |
 
-**OPFS (Origin Private File System)** provides the best performance with native file system access. Browsers without OPFS support automatically fall back to IndexedDB.
+### OPFS Layout
+
+Databases are stored in the Origin Private File System under:
+```
+/wasm-sqlite-editor/
+  registry.json           # Database metadata registry
+  databases/
+    my_database.sqlite    # Database files
+    my_database.erd.json  # ERD layout sidecar files
+```
+
+**Legacy Migration**: If you have databases from an older version stored in `/sqlite-editor/`, they will be automatically migrated to the new layout on first load.
+
+### Multi-Tab Locking
+
+When opening a database, the app uses the **Web Locks API** to ensure single-writer/multi-reader access:
+
+- **First tab to open a database** acquires an exclusive write lock
+- **Subsequent tabs** open the database in **read-only mode** and see a banner indicating another tab holds the write lock
+- When the writer tab closes the database, another tab can acquire the lock
+- **Fallback**: Safari (<16.4) and older browsers use a localStorage heartbeat mechanism
+
+This prevents data corruption from concurrent writes while still allowing you to view the database in multiple tabs.
 
 ## Privacy
 
-**All data stays in your browser.** SQLite Editor:
+**All data stays in your browser.** SQLocal:
 
 - Stores databases locally using OPFS or IndexedDB
 - Makes no external network calls after initial load

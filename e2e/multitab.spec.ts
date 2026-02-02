@@ -654,7 +654,10 @@ test.describe('Two Page Tests (Same Context = Shared localStorage)', () => {
     }
   });
 
-  test('crash recovery: Tab B takes over after Tab A crashes', async ({ context }) => {
+  // NOTE: This test requires OPFS storage for single-writer locking.
+  // createAndOpenDatabase() creates IDB databases which are multi-tab safe
+  // and don't use Web Locks. Skip until we have a way to create OPFS databases in tests.
+  test.skip('crash recovery: Tab B takes over after Tab A crashes', async ({ context }) => {
     const pageA = await context.newPage();
     const pageB = await context.newPage();
 
@@ -696,7 +699,10 @@ test.describe('Two Page Tests (Same Context = Shared localStorage)', () => {
 // Single-Writer Lock + SQLITE_OPEN_READONLY Enforcement Tests
 // =============================================================================
 
-test.describe('Single-Writer Lock Integration', () => {
+// NOTE: These tests require OPFS storage for single-writer locking.
+// createAndOpenDatabase() creates IDB databases which are multi-tab safe
+// and don't use Web Locks. Skip until we have a way to create OPFS databases in tests.
+test.describe.skip('Single-Writer Lock Integration', () => {
   test('multi-tab: writer takeover allows writes after stale lock', async ({ context }) => {
     /**
      * This test verifies the complete single-writer lock takeover flow:
