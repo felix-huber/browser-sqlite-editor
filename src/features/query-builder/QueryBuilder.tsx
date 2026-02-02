@@ -10,6 +10,7 @@ import {
   type Node,
   type OnConnect,
   type IsValidConnection,
+  type ReactFlowInstance,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { tableBoxNodeTypes, type TableBoxData, type TableBoxNodeType, type TableBoxColumnData } from './TableBox'
@@ -87,6 +88,12 @@ export function QueryBuilder({
   const [showLimitWarning, setShowLimitWarning] = useState(false)
   const [connectionError, setConnectionError] = useState<string | null>(null)
 
+  // ReactFlow instance for programmatic control
+  const reactFlowInstance = useRef<ReactFlowInstance<TableBoxNodeType, JoinEdgeType> | null>(null)
+
+  // Track previous node count to detect when nodes are added
+  const prevNodeCountRef = useRef(0)
+
   // Filter tables based on search query
   const filteredTables = useMemo(() => {
     if (!searchQuery.trim()) return tables
@@ -98,6 +105,26 @@ export function QueryBuilder({
   const tablesOnCanvas = useMemo(() => {
     return nodes.map((node) => node.data.tableName)
   }, [nodes])
+
+  // Auto-fit view when nodes are added (with a small delay for node to render)
+  useEffect(() => {
+    const currentCount = nodes.length
+    const prevCount = prevNodeCountRef.current
+    prevNodeCountRef.current = currentCount
+
+    // Only fitView when nodes are added (not removed or on mount with 0 nodes)
+    if (currentCount > prevCount && currentCount > 0 && reactFlowInstance.current) {
+      // Small delay to allow node to render before fitting
+      const timeoutId = setTimeout(() => {
+        reactFlowInstance.current?.fitView({
+          padding: 0.3,
+          maxZoom: 0.8, // Don't zoom in too close
+          duration: 200,
+        })
+      }, 50)
+      return () => clearTimeout(timeoutId)
+    }
+  }, [nodes.length])
 
   // Handle drag start from table list
   const handleDragStart = useCallback((event: DragEvent<HTMLDivElement>, tableName: string) => {
@@ -134,8 +161,11 @@ export function QueryBuilder({
   const handleClear = useCallback(() => {
     setNodes([])
     setEdges([])
-    onTablesChangeRef.current?.([])
-    onJoinsChangeRef.current?.([])
+    // Use queueMicrotask to defer parent callbacks and avoid "Cannot update while rendering" warning
+    queueMicrotask(() => {
+      onTablesChangeRef.current?.([])
+      onJoinsChangeRef.current?.([])
+    })
   }, [setNodes, setEdges])
 
   // Helper to extract column name from handle ID (e.g., "column_name-source" -> "column_name")
@@ -156,6 +186,7 @@ export function QueryBuilder({
   )
 
   // Notify parent of join changes
+  // Uses queueMicrotask to defer callback and avoid "Cannot update while rendering" warning
   const notifyJoinsChange = useCallback(
     (currentEdges: JoinEdgeType[]) => {
       if (!onJoinsChangeRef.current) return
@@ -169,7 +200,9 @@ export function QueryBuilder({
         joinType: edge.data?.joinType ?? 'INNER',
       }))
 
-      onJoinsChangeRef.current(joins)
+      queueMicrotask(() => {
+        onJoinsChangeRef.current?.(joins)
+      })
     },
     [getTableNameFromNode]
   )
@@ -182,7 +215,11 @@ export function QueryBuilder({
         const toRemove = nds.filter((node) => node.data.tableName === tableName)
         removedNodeIds = new Set(toRemove.map((node) => node.id))
         const updated = nds.filter((node) => node.data.tableName !== tableName)
-        onTablesChangeRef.current?.(updated.map((n) => n.data.tableName))
+        // Defer callback to avoid "Cannot update while rendering" warning
+        const tableNames = updated.map((n) => n.data.tableName)
+        queueMicrotask(() => {
+          onTablesChangeRef.current?.(tableNames)
+        })
         return updated
       })
 
@@ -191,6 +228,7 @@ export function QueryBuilder({
         const updated = eds.filter(
           (edge) => !removedNodeIds!.has(edge.source) && !removedNodeIds!.has(edge.target)
         )
+        // notifyJoinsChange already uses queueMicrotask internally
         notifyJoinsChange(updated)
         return updated
       })
@@ -249,7 +287,11 @@ export function QueryBuilder({
 
       setNodes((nds) => {
         const updated = [...nds, newNode]
-        onTablesChangeRef.current?.(updated.map((n) => n.data.tableName))
+        // Defer callback to avoid "Cannot update while rendering" warning
+        const tableNames = updated.map((n) => n.data.tableName)
+        queueMicrotask(() => {
+          onTablesChangeRef.current?.(tableNames)
+        })
         return updated
       })
     },
@@ -280,8 +322,11 @@ export function QueryBuilder({
   }, [tableColumns, setNodes, handleSelectionChange, handleRemoveTable])
 
   // Notify parent of state changes
+  // Use queueMicrotask to defer the callback and avoid "Cannot update component while rendering" warning
   useEffect(() => {
-    onStateChangeRef.current?.(nodes, edges)
+    queueMicrotask(() => {
+      onStateChangeRef.current?.(nodes, edges)
+    })
   }, [nodes, edges])
 
   // Validate connection - prevent self-join on same column
@@ -513,12 +558,15 @@ export function QueryBuilder({
             onEdgesChange={onEdgesChange}
             onConnect={handleConnect}
             isValidConnection={isValidConnection}
+            onInit={(instance) => {
+              reactFlowInstance.current = instance
+            }}
             connectOnClick
             fitView
-            fitViewOptions={{ padding: 0.2 }}
-            minZoom={0.5}
+            fitViewOptions={{ padding: 0.3, maxZoom: 0.8 }}
+            minZoom={0.25}
             maxZoom={2}
-            defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+            defaultViewport={{ x: 0, y: 0, zoom: 0.7 }}
             proOptions={{ hideAttribution: true }}
           >
             <Controls showZoom showFitView position="bottom-right" />

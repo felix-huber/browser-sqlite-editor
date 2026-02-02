@@ -507,4 +507,20 @@ describe('Welcome', () => {
       }
     });
   });
+
+  describe('Scrolling', () => {
+    it('welcome screen container has overflow-y-auto for scrolling', () => {
+      render(<Welcome {...defaultProps} />);
+
+      const welcomeScreen = screen.getByTestId('welcome-screen');
+      expect(welcomeScreen).toHaveClass('overflow-y-auto');
+    });
+
+    it('welcome screen container has min-h-0 for flex overflow', () => {
+      render(<Welcome {...defaultProps} />);
+
+      const welcomeScreen = screen.getByTestId('welcome-screen');
+      expect(welcomeScreen).toHaveClass('min-h-0');
+    });
+  });
 });

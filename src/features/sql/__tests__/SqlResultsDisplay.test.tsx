@@ -4,6 +4,7 @@ import {
   SqlResultsDisplay,
   classifyStatement,
   formatExecutionTime,
+  makeColumnsUnique,
   type StatementResult,
 } from '../SqlResultsDisplay';
 
@@ -62,6 +63,63 @@ describe('formatExecutionTime', () => {
   it('formats times over 1 second in seconds', () => {
     expect(formatExecutionTime(1000)).toBe('1.00s');
     expect(formatExecutionTime(2500)).toBe('2.50s');
+  });
+});
+
+describe('makeColumnsUnique', () => {
+  it('keeps unique columns unchanged', () => {
+    expect(makeColumnsUnique(['id', 'name', 'email'])).toEqual(['id', 'name', 'email']);
+  });
+
+  it('appends _2 suffix to first duplicate', () => {
+    expect(makeColumnsUnique(['id', 'name', 'id'])).toEqual(['id', 'name', 'id_2']);
+  });
+
+  it('increments suffix for multiple duplicates', () => {
+    expect(makeColumnsUnique(['a', 'a', 'a'])).toEqual(['a', 'a_2', 'a_3']);
+  });
+
+  it('handles multiple different duplicates', () => {
+    expect(makeColumnsUnique(['id', 'name', 'id', 'name', 'id'])).toEqual([
+      'id',
+      'name',
+      'id_2',
+      'name_2',
+      'id_3',
+    ]);
+  });
+
+  it('handles empty array', () => {
+    expect(makeColumnsUnique([])).toEqual([]);
+  });
+
+  it('handles single column', () => {
+    expect(makeColumnsUnique(['id'])).toEqual(['id']);
+  });
+
+  it('handles columns that already have suffix-like names', () => {
+    // If a column is literally named "id_2", it should still work
+    expect(makeColumnsUnique(['id', 'id_2', 'id'])).toEqual(['id', 'id_2', 'id_3']);
+  });
+
+  it('handles many duplicates correctly', () => {
+    expect(makeColumnsUnique(['x', 'x', 'x', 'x', 'x'])).toEqual([
+      'x',
+      'x_2',
+      'x_3',
+      'x_4',
+      'x_5',
+    ]);
+  });
+
+  it('handles typical JOIN scenario with table.column naming', () => {
+    // Common case: SELECT a.id, b.id FROM a JOIN b
+    expect(makeColumnsUnique(['id', 'name', 'id', 'title'])).toEqual([
+      'id',
+      'name',
+      'id_2',
+      'title',
+    ]);
   });
 });
 
@@ -475,6 +533,51 @@ describe('SqlResultsDisplay', () => {
       render(<SqlResultsDisplay results={[result]} height={300} />);
 
       expect(screen.getByTestId('row-count')).toHaveTextContent('3 rows+');
+    });
+  });
+
+  describe('Duplicate column names', () => {
+    it('renders results with duplicate column names from JOINs', () => {
+      // Simulates: SELECT a.id, a.name, b.id FROM users a JOIN orders b
+      const result: StatementResult = {
+        sql: 'SELECT a.id, a.name, b.id FROM users a JOIN orders b',
+        type: 'select',
+        result: {
+          columns: ['id', 'name', 'id'], // Duplicate 'id' from JOIN
+          columnTypes: ['INTEGER', 'TEXT', 'INTEGER'],
+          rows: [
+            [1, 'Alice', 100],
+            [2, 'Bob', 101],
+          ],
+        },
+        executionTime: 15,
+      };
+
+      render(<SqlResultsDisplay results={[result]} height={400} />);
+
+      expect(screen.getByTestId('sql-results-display')).toBeInTheDocument();
+      expect(screen.getByTestId('row-count')).toHaveTextContent('2 rows');
+      expect(screen.getByTestId('column-count')).toHaveTextContent('3 columns');
+    });
+
+    it('renders results with many duplicate columns', () => {
+      // Extreme case: all columns have the same name
+      const result: StatementResult = {
+        sql: 'SELECT 1 as col, 2 as col, 3 as col',
+        type: 'select',
+        result: {
+          columns: ['col', 'col', 'col'],
+          columnTypes: ['INTEGER', 'INTEGER', 'INTEGER'],
+          rows: [[1, 2, 3]],
+        },
+        executionTime: 5,
+      };
+
+      render(<SqlResultsDisplay results={[result]} height={400} />);
+
+      expect(screen.getByTestId('sql-results-display')).toBeInTheDocument();
+      expect(screen.getByTestId('row-count')).toHaveTextContent('1 row');
+      expect(screen.getByTestId('column-count')).toHaveTextContent('3 columns');
     });
   });
 });

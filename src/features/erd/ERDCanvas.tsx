@@ -641,7 +641,10 @@ export function ERDCanvas({
       if (onNodesChangeCallback) {
         // Get updated nodes after changes are applied
         setNodes((currentNodes) => {
-          onNodesChangeCallback(currentNodes as TableNode[])
+          // Defer callback to avoid "Cannot update while rendering" warning
+          queueMicrotask(() => {
+            onNodesChangeCallback(currentNodes as TableNode[])
+          })
           return currentNodes
         })
       }
@@ -655,7 +658,10 @@ export function ERDCanvas({
       onEdgesChange(changes)
       if (onEdgesChangeCallback) {
         setEdges((currentEdges) => {
-          onEdgesChangeCallback(currentEdges as RelationshipEdge[])
+          // Defer callback to avoid "Cannot update while rendering" warning
+          queueMicrotask(() => {
+            onEdgesChangeCallback(currentEdges as RelationshipEdge[])
+          })
           return currentEdges
         })
       }

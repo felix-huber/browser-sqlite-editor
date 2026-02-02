@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   quoteIdentifier,
   escapeLikePattern,
+  makeColumnsUnique,
 } from '../sql/helpers'
 
 describe('quoteIdentifier', () => {
@@ -176,6 +177,73 @@ describe('escapeLikePattern', () => {
 
     it('returns undefined when given undefined', () => {
       expect(escapeLikePattern(undefined as unknown as string)).toBe(undefined)
+    })
+  })
+})
+
+describe('makeColumnsUnique', () => {
+  describe('no duplicates', () => {
+    it('returns unchanged array when no duplicates', () => {
+      expect(makeColumnsUnique(['id', 'name', 'email'])).toEqual(['id', 'name', 'email'])
+    })
+
+    it('handles single column', () => {
+      expect(makeColumnsUnique(['id'])).toEqual(['id'])
+    })
+
+    it('handles empty array', () => {
+      expect(makeColumnsUnique([])).toEqual([])
+    })
+  })
+
+  describe('with duplicates', () => {
+    it('suffixes second occurrence of duplicate', () => {
+      expect(makeColumnsUnique(['id', 'name', 'id'])).toEqual(['id', 'name', 'id_2'])
+    })
+
+    it('suffixes multiple duplicates with incrementing numbers', () => {
+      expect(makeColumnsUnique(['id', 'id', 'id'])).toEqual(['id', 'id_2', 'id_3'])
+    })
+
+    it('handles multiple different duplicates', () => {
+      expect(makeColumnsUnique(['id', 'name', 'id', 'name', 'id'])).toEqual([
+        'id', 'name', 'id_2', 'name_2', 'id_3'
+      ])
+    })
+
+    it('handles duplicates at beginning', () => {
+      expect(makeColumnsUnique(['id', 'id', 'name'])).toEqual(['id', 'id_2', 'name'])
+    })
+
+    it('handles duplicates at end', () => {
+      expect(makeColumnsUnique(['name', 'id', 'id'])).toEqual(['name', 'id', 'id_2'])
+    })
+  })
+
+  describe('edge cases with existing suffixes', () => {
+    it('handles column that already has _2 suffix', () => {
+      // If input has id and id_2, and another id comes in, it should become id_3
+      expect(makeColumnsUnique(['id', 'id_2', 'id'])).toEqual(['id', 'id_2', 'id_3'])
+    })
+
+    it('finds next available suffix when _2 is taken', () => {
+      expect(makeColumnsUnique(['id', 'id', 'id_2'])).toEqual(['id', 'id_2', 'id_2_2'])
+    })
+  })
+
+  describe('JOIN query scenarios', () => {
+    it('handles typical JOIN with duplicate id columns', () => {
+      const joinColumns = ['id', 'name', 'user_id', 'id', 'title', 'created_at']
+      expect(makeColumnsUnique(joinColumns)).toEqual([
+        'id', 'name', 'user_id', 'id_2', 'title', 'created_at'
+      ])
+    })
+
+    it('handles three-table JOIN with duplicate columns', () => {
+      const joinColumns = ['id', 'name', 'id', 'title', 'id', 'status']
+      expect(makeColumnsUnique(joinColumns)).toEqual([
+        'id', 'name', 'id_2', 'title', 'id_3', 'status'
+      ])
     })
   })
 })

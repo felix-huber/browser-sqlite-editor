@@ -413,15 +413,16 @@ export async function executePaginatedQuery(
     // Get full metadata including generated column info
     const tableMeta = await getColumnMeta(engine, tableName);
     // Map to result columns (query may have subset or different order)
-    columns = result.columns.map((colName) => {
+    columns = result.columns.map((colName, colIndex) => {
       const meta = tableMeta.find((m) => m.name === colName);
       if (meta) {
         return meta;
       }
       // Column not in table (e.g., expression or alias)
+      // Use colIndex instead of indexOf to handle duplicate column names correctly
       return {
         name: colName,
-        type: result.columnTypes[result.columns.indexOf(colName)] || 'BLOB',
+        type: result.columnTypes[colIndex] || 'BLOB',
         isGenerated: false,
         generatedExpression: null,
       };

@@ -57,3 +57,35 @@ export {
   quoteIdentifier as quoteIdentifierIfNeeded,
 } from '../db/ddl'
 
+/**
+ * Ensure column names are unique by appending suffix when duplicates exist.
+ * E.g., ["id", "name", "id"] becomes ["id", "name", "id_2"]
+ * Handles edge case where columns already contain suffixed names like "id_2".
+ *
+ * This is essential for handling JOIN query results where multiple tables
+ * may have columns with the same name.
+ *
+ * @param columns - Array of column names (may contain duplicates)
+ * @returns Array of unique column names
+ */
+export function makeColumnsUnique(columns: string[]): string[] {
+  const usedNames = new Set<string>();
+  const result: string[] = [];
+
+  for (const col of columns) {
+    let uniqueName = col;
+    let suffix = 2;
+
+    // Keep incrementing suffix until we find a unique name
+    while (usedNames.has(uniqueName)) {
+      uniqueName = `${col}_${suffix}`;
+      suffix++;
+    }
+
+    usedNames.add(uniqueName);
+    result.push(uniqueName);
+  }
+
+  return result;
+}
+

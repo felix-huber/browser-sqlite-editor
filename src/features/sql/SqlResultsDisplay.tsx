@@ -17,8 +17,11 @@ import type { QueryResult, SqlError, TableInfo, ColumnInfo } from '../../types';
 import { DataGrid } from '../grid';
 import type { DataRow } from '../grid';
 import { formatExecutionTime } from '../../shared/format/time';
+import { makeColumnsUnique } from '../../core/sql/helpers';
 
 export { formatExecutionTime };
+// Re-export for consumers that were importing from here
+export { makeColumnsUnique };
 
 // =============================================================================
 // Types
@@ -103,13 +106,14 @@ function getTabLabel(result: StatementResult, index: number): string {
   return `Statement ${index + 1}`;
 }
 
+
 /**
  * Convert QueryResult rows to DataGrid DataRow format
  */
-function convertToDataRows(result: QueryResult): DataRow[] {
+function convertToDataRows(result: QueryResult, uniqueColumns: string[]): DataRow[] {
   return result.rows.map((row) => {
     const dataRow: DataRow = {};
-    result.columns.forEach((col, idx) => {
+    uniqueColumns.forEach((col, idx) => {
       dataRow[col] = row[idx];
     });
     return dataRow;
@@ -119,8 +123,8 @@ function convertToDataRows(result: QueryResult): DataRow[] {
 /**
  * Create a minimal TableInfo from QueryResult for DataGrid
  */
-function createTableInfoFromResult(result: QueryResult): TableInfo {
-  const columns: ColumnInfo[] = result.columns.map((name, idx) => ({
+function createTableInfoFromResult(result: QueryResult, uniqueColumns: string[]): TableInfo {
+  const columns: ColumnInfo[] = uniqueColumns.map((name, idx) => ({
     cid: idx,
     name,
     type: result.columnTypes[idx] || 'TEXT',
@@ -159,14 +163,20 @@ const SelectResultDisplay = memo(function SelectResultDisplay({
 }: SingleResultProps) {
   const queryResult = result.result;
 
-  // Memoize data conversion - must be called unconditionally (Rules of Hooks)
-  const data = useMemo(
-    () => (queryResult ? convertToDataRows(queryResult) : []),
+  // Memoize unique column names to handle duplicate column names from JOINs
+  const uniqueColumns = useMemo(
+    () => (queryResult ? makeColumnsUnique(queryResult.columns) : []),
     [queryResult]
   );
+
+  // Memoize data conversion - must be called unconditionally (Rules of Hooks)
+  const data = useMemo(
+    () => (queryResult ? convertToDataRows(queryResult, uniqueColumns) : []),
+    [queryResult, uniqueColumns]
+  );
   const tableInfo = useMemo(
-    () => (queryResult ? createTableInfoFromResult(queryResult) : null),
-    [queryResult]
+    () => (queryResult ? createTableInfoFromResult(queryResult, uniqueColumns) : null),
+    [queryResult, uniqueColumns]
   );
 
   // Handle no query result
