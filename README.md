@@ -171,6 +171,73 @@ npm run size
 - **React Flow** for ERD visualization
 - **Vite** + PWA plugin
 
+## Self-Hosting / Local Development
+
+### Cross-Origin Headers Required
+
+The app uses OPFS (Origin Private File System) with synchronous file access for optimal WASM SQLite performance. This requires **cross-origin isolation**, which is enabled by serving the app with these HTTP headers:
+
+```
+Cross-Origin-Embedder-Policy: require-corp
+Cross-Origin-Opener-Policy: same-origin
+```
+
+Without these headers, the app will fall back to IndexedDB storage (slower but functional).
+
+### Running the Production Build Locally
+
+**Option 1: Use the built-in preview server (recommended)**
+
+```bash
+npm run build
+npm run preview
+```
+
+The Vite preview server is pre-configured with the required headers.
+
+**Option 2: Nginx configuration**
+
+```nginx
+server {
+    listen 8080;
+    root /path/to/dist;
+    index index.html;
+
+    add_header Cross-Origin-Embedder-Policy "require-corp" always;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+**Option 3: Python with custom headers**
+
+```python
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+
+class COOPCOEPHandler(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header('Cross-Origin-Embedder-Policy', 'require-corp')
+        self.send_header('Cross-Origin-Opener-Policy', 'same-origin')
+        super().end_headers()
+
+HTTPServer(('localhost', 8080), COOPCOEPHandler).serve_forever()
+```
+
+### Subdirectory Deployment
+
+To deploy the app under a subdirectory (e.g., `https://example.com/myapp/`), set the `VITE_BASE` environment variable during build:
+
+```bash
+VITE_BASE=/myapp/ npm run build
+```
+
+### Why These Headers Are Needed
+
+OPFS provides synchronous file access APIs (`FileSystemSyncAccessHandle`) which are only available in cross-origin isolated contexts. The WASM SQLite engine uses these APIs for direct, high-performance file I/O. Cross-origin isolation is enabled when both COOP and COEP headers are set correctly, which restricts the page from loading cross-origin resources unless they explicitly opt-in via CORS.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
