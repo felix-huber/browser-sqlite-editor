@@ -248,6 +248,7 @@ export function ContextMenu({
             <div
               className="my-1 border-t border-navy-200"
               role="separator"
+              aria-orientation="horizontal"
               data-testid={`${testIdPrefix}-divider-${item.id}`}
             />
           )}
