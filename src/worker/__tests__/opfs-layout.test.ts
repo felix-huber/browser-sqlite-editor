@@ -47,7 +47,9 @@ function createMockAdapter(state: MockStorageState): StorageAdapter {
     writeRegistry: vi.fn(async (_mode, data: RegistryData) => {
       state.registryData = data;
     }),
-    listFiles: vi.fn(async () => state.fileList),
+    // Only return files for OPFS mode since these tests test OPFS layout
+    // IDB mode returns empty to prevent double-discovery
+    listFiles: vi.fn(async (mode: 'opfs' | 'idb') => mode === 'opfs' ? state.fileList : []),
     renameFile: vi.fn(async (_mode, oldName: string, newName: string) => {
       if (state.throwOnRename) {
         throw new Error('Simulated rename failure');
