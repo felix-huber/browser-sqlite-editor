@@ -24,7 +24,16 @@ import {
 import { getWorkerClient } from '../../core/worker/client';
 import { openDb, useActiveDb, useTables } from '../../store';
 import { quoteIdentifier } from '../../core/db/ddl';
+import { useResizable } from '../../shared/hooks/useResizable';
+import { ResizeHandle } from '../../shared/components/ResizeHandle';
 import type { TableInfo } from '../../types';
+
+/** Default height for SQL preview panel */
+const SQL_PREVIEW_DEFAULT_HEIGHT = 320;
+/** Minimum height for SQL preview panel */
+const SQL_PREVIEW_MIN_HEIGHT = 150;
+/** Maximum height for SQL preview panel */
+const SQL_PREVIEW_MAX_HEIGHT = 600;
 
 export interface QueryBuilderViewProps {
   /** Whether database is read-only */
@@ -56,6 +65,20 @@ export function QueryBuilderView({
   const [limit, setLimit] = useState<number | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const hasInitializedRef = useRef(false);
+
+  // Resizable SQL preview panel
+  const {
+    size: sqlPreviewHeight,
+    isDragging: isSqlPreviewDragging,
+    handleMouseDown: handleSqlPreviewResizeStart,
+  } = useResizable({
+    storageKey: 'query-builder-sql-preview-height',
+    initialSize: SQL_PREVIEW_DEFAULT_HEIGHT,
+    minSize: SQL_PREVIEW_MIN_HEIGHT,
+    maxSize: SQL_PREVIEW_MAX_HEIGHT,
+    direction: 'vertical',
+    handlePosition: 'start', // Dragging up increases height
+  });
 
   useEffect(() => {
     onDirtyChange?.(isDirty);
@@ -318,7 +341,16 @@ export function QueryBuilderView({
         </div>
       </div>
 
-      <div className="border-t border-navy-200 bg-white">
+      {/* Resize handle for SQL preview panel */}
+      <ResizeHandle
+        direction="vertical"
+        onMouseDown={handleSqlPreviewResizeStart}
+        isDragging={isSqlPreviewDragging}
+        className="border-t border-navy-200"
+        data-testid="sql-preview-resize-handle"
+      />
+
+      <div className="bg-white" style={{ height: sqlPreviewHeight, flexShrink: 0 }}>
         {!sqlResult.isValid && (
           <div className="px-4 py-2 text-sm text-amber-700 bg-amber-50 border-b border-amber-200" data-testid="query-builder-warning">
             {sqlResult.validationMessage ?? 'Add tables and columns to generate SQL'}
@@ -332,7 +364,7 @@ export function QueryBuilderView({
           onCancel={() => client.cancel()}
           isReadOnly={isReadOnly}
           isGenerating={loading}
-          height={320}
+          height="100%"
         />
       </div>
     </div>

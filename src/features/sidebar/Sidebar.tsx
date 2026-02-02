@@ -9,11 +9,21 @@
  * - Active state highlighting
  * - Lazy schema loading on expand
  * - Match highlighting in search results
+ * - Resizable width with localStorage persistence
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useDatabases, useDatabaseStore } from '../../store';
 import { DBTree } from './DBTree';
+import { useResizable } from '../../shared/hooks/useResizable';
+import { ResizeHandle } from '../../shared/components/ResizeHandle';
+
+/** Default sidebar width */
+const SIDEBAR_DEFAULT_WIDTH = 240;
+/** Minimum sidebar width */
+const SIDEBAR_MIN_WIDTH = 180;
+/** Maximum sidebar width */
+const SIDEBAR_MAX_WIDTH = 400;
 
 const areSetsEqual = (left: Set<string>, right: Set<string>): boolean => {
   if (left.size !== right.size) {
@@ -54,6 +64,20 @@ export function Sidebar({
   const [expandedDbs, setExpandedDbs] = useState<Set<string>>(new Set());
   const searchInputRef = useRef<HTMLInputElement>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Resizable sidebar width
+  const {
+    size: sidebarWidth,
+    isDragging: isSidebarDragging,
+    handleMouseDown: handleSidebarResizeStart,
+  } = useResizable({
+    storageKey: 'sidebar-width',
+    initialSize: SIDEBAR_DEFAULT_WIDTH,
+    minSize: SIDEBAR_MIN_WIDTH,
+    maxSize: SIDEBAR_MAX_WIDTH,
+    direction: 'horizontal',
+    handlePosition: 'end', // Handle is on the right edge
+  });
 
   // Debounce search filter (150ms delay, min 2 chars)
   useEffect(() => {
@@ -178,9 +202,11 @@ export function Sidebar({
 
   return (
     <aside
-      className="w-60 bg-white border-r border-navy-200 flex flex-col shrink-0"
+      className="bg-white border-r border-navy-200 flex shrink-0"
+      style={{ width: sidebarWidth }}
       data-testid="sidebar"
     >
+      <div className="flex-1 flex flex-col min-w-0">
       {/* Search */}
       <div className="p-3 border-b border-navy-200">
         <div className="relative">
@@ -269,6 +295,15 @@ export function Sidebar({
           </ul>
         )}
       </nav>
+      </div>
+
+      {/* Resize handle */}
+      <ResizeHandle
+        direction="horizontal"
+        onMouseDown={handleSidebarResizeStart}
+        isDragging={isSidebarDragging}
+        data-testid="sidebar-resize-handle"
+      />
     </aside>
   );
 }
