@@ -12,6 +12,41 @@ export const test = base.extend<{
 }>({
   clearStorage: [async ({ page: _page }, use) => {
     await _page.goto('/', { waitUntil: 'domcontentloaded' });
+
+    // Step 1: Wait for test API to be available, then close any open database
+    // This releases file handles and allows storage cleanup to succeed
+    try {
+      await _page.waitForFunction(() => {
+        const api = (window as Window & { __sqliteEditorTest?: { hasActiveDatabase?: () => boolean } }).__sqliteEditorTest;
+        return !!api?.hasActiveDatabase;
+      }, { timeout: 10000 });
+
+      await _page.evaluate(async () => {
+        const api = (window as Window & {
+          __sqliteEditorTest?: {
+            hasActiveDatabase?: () => boolean;
+            closeDatabase?: () => Promise<void>;
+            resetStore?: () => void;
+          }
+        }).__sqliteEditorTest;
+
+        if (api) {
+          // Close any open database first (releases file handles)
+          if (api.hasActiveDatabase?.()) {
+            await api.closeDatabase?.();
+          }
+          // Reset the store to clear any stale state
+          api.resetStore?.();
+        }
+      });
+    } catch {
+      // If test API isn't available yet, proceed with storage cleanup anyway
+    }
+
+    // Give the UI a moment to react to store reset
+    await _page.waitForTimeout(100);
+
+    // Step 2: Clear all storage
     await _page.evaluate(async () => {
       localStorage.clear();
 
@@ -69,9 +104,12 @@ export const test = base.extend<{
         }
       }
     });
-    // Reload after clearing storage and wait for WASM worker to be fully ready.
+
+    // Step 3: Reload after clearing storage to get a completely fresh app state
+    // This ensures the React app reinitializes with no activeDbId
     await _page.goto('/', { waitUntil: 'domcontentloaded' });
-    // Ensure OPFS directories exist (they were deleted above)
+
+    // Step 4: Ensure OPFS directories exist (they were deleted above)
     await _page.evaluate(async () => {
       if (navigator.storage?.getDirectory) {
         try {
@@ -83,7 +121,8 @@ export const test = base.extend<{
         }
       }
     });
-    // Wait for the WASM worker to initialize and be ready to accept commands
+
+    // Step 5: Wait for the WASM worker to initialize and be ready to accept commands
     await _page.waitForFunction(async () => {
       const api = (window as Window & { __sqliteEditorTest?: { getRegistry?: () => Promise<unknown> } }).__sqliteEditorTest;
       if (!api?.getRegistry) return false;
@@ -94,6 +133,12 @@ export const test = base.extend<{
         return false;
       }
     }, { timeout: 30000 });
+
+    // Step 6: Verify we're on the welcome screen (no database is open)
+    // This is the key assertion for test isolation
+    const welcomeScreen = _page.locator('[data-testid="welcome-screen"]');
+    await expect(welcomeScreen).toBeVisible({ timeout: 10000 });
+
     await use();
   }, { auto: true }],
 });

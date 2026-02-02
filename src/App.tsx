@@ -71,6 +71,12 @@ type TestApi = {
   simulateSizeWarning: (dbId: string, sizeBytes: number, storageMode: 'opfs' | 'idb') => void;
   /** Clear the current size warning */
   clearSizeWarning: () => void;
+  /** Close the currently open database (for test isolation) */
+  closeDatabase: () => Promise<void>;
+  /** Reset the store to initial state (for test isolation) */
+  resetStore: () => void;
+  /** Check if a database is currently open */
+  hasActiveDatabase: () => boolean;
 };
 
 function App() {
@@ -263,6 +269,16 @@ function App() {
         import('./store').then(({ clearSizeWarning }) => {
           clearSizeWarning();
         });
+      },
+      closeDatabase: async () => {
+        const { closeDb } = await import('./store');
+        await closeDb();
+      },
+      resetStore: () => {
+        useDatabaseStore.getState().reset();
+      },
+      hasActiveDatabase: () => {
+        return useDatabaseStore.getState().activeDbId !== null;
       },
     };
 

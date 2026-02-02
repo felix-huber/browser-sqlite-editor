@@ -17,6 +17,39 @@ export async function dismissUnsavedPromptIfVisible(page: Page, timeout = 2000) 
   }
 }
 
+/**
+ * Close any open database and return to welcome screen.
+ * This is useful to ensure test isolation when starting a test that expects
+ * the welcome screen to be visible.
+ */
+export async function ensureWelcomeScreen(page: Page, timeout = 10000) {
+  // Check if welcome screen is already visible
+  const welcomeScreen = page.locator('[data-testid="welcome-screen"]');
+  if (await welcomeScreen.isVisible().catch(() => false)) {
+    return; // Already on welcome screen
+  }
+
+  // Check if a database is open (SQL tab visible indicates a database is open)
+  const sqlTab = page.getByTestId('tab-sql');
+  if (await sqlTab.isVisible().catch(() => false)) {
+    // A database is open - close it by clicking the Close DB button
+    const closeButton = page.getByRole('button', { name: /close.*db/i });
+    if (await closeButton.isVisible().catch(() => false)) {
+      // Dismiss any unsaved prompt that might appear
+      await dismissUnsavedPromptIfVisible(page, 500);
+      await closeButton.click();
+      // Wait for welcome screen to appear
+      await expect(welcomeScreen).toBeVisible({ timeout });
+      return;
+    }
+  }
+
+  // If we got here and welcome screen is not visible, reload the page
+  // This handles edge cases where the UI is in an unexpected state
+  await page.reload();
+  await expect(welcomeScreen).toBeVisible({ timeout });
+}
+
 export async function waitForReady(page: Page) {
   await page.waitForLoadState('networkidle');
   const statusBar = page.locator('[data-testid="status-bar"]');
@@ -41,7 +74,8 @@ async function waitForWorkerReady(page: Page) {
 
 export async function createAndOpenDatabase(page: Page, dbName: string) {
   await page.goto('/');
-  await expect(page.locator('[data-testid="welcome-screen"]')).toBeVisible();
+  // Handle the case where a database might already be open from a previous test
+  await ensureWelcomeScreen(page);
   // Ensure OPFS directories exist (may have been deleted by test fixtures)
   await page.evaluate(async () => {
     if (navigator.storage?.getDirectory) {
@@ -96,8 +130,9 @@ export async function createAndOpenDatabase(page: Page, dbName: string) {
 }
 
 export async function openDatabaseFromWelcome(page: Page, dbName: string) {
+  // Ensure we're on the welcome screen (close any open database first)
+  await ensureWelcomeScreen(page);
   await waitForWorkerReady(page);
-  await expect(page.getByTestId('welcome-screen')).toBeVisible({ timeout: 15000 });
   await page.waitForFunction(async (name: string) => {
     const api = (window as Window & { __sqliteEditorTest?: { getRegistry?: () => Promise<unknown> } }).__sqliteEditorTest;
     if (!api?.getRegistry) return false;
