@@ -839,7 +839,7 @@ function App() {
   const renderMainContent = () => {
     if (!activeDbId) {
       return (
-        <div className="relative flex-1 flex">
+        <div className="relative flex-1 flex min-h-0">
           {isLoading && (
             <div
               className="absolute inset-0 z-10 flex items-center justify-center bg-navy-50/80"
