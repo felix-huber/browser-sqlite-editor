@@ -245,7 +245,7 @@ export const AddRowDialog = memo(function AddRowDialog({
     >
       <div
         ref={focusTrapRef as React.RefObject<HTMLDivElement>}
-        className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[80vh] overflow-hidden flex flex-col"
+        className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[80vh] min-h-0 overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

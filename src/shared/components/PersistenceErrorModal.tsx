@@ -193,7 +193,7 @@ export function PersistenceErrorModal({
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
           {/* Warning message */}
           <div
             className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg"

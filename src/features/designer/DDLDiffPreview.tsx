@@ -639,7 +639,7 @@ export function DDLDiffPreview({
         <div className="px-4 py-3 border-b bg-white">
           <h3 className="text-sm font-semibold text-gray-900">SQL Preview</h3>
         </div>
-        <div className="flex-1 overflow-auto p-4">
+        <div className="flex-1 min-h-0 overflow-auto p-4">
           <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
             <div className="px-3 py-2 bg-gray-50 border-b text-xs font-medium text-gray-600">
               CREATE TABLE Statement

@@ -497,7 +497,7 @@ export const SqlResultsDisplay = memo(function SqlResultsDisplay({
     return (
       <div className={`flex flex-col ${className}`} style={{ height }} data-testid="sql-results-display">
         <StatusBar result={result} />
-        <div className="flex-1 overflow-auto">
+        <div className="flex-1 min-h-0 overflow-auto">
           {result.error ? (
             <ErrorDisplay result={result} />
           ) : result.type === 'select' ? (

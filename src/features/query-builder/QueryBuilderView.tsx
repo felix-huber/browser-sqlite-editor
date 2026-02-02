@@ -298,7 +298,7 @@ export function QueryBuilderView({
           <div className="p-4 border-b border-navy-200">
             <h3 className="text-sm font-semibold text-navy-700">Filters</h3>
           </div>
-          <div className="flex-1 overflow-auto p-4 space-y-6">
+          <div className="flex-1 min-h-0 overflow-auto p-4 space-y-6">
             <WhereBuilder
               columns={whereColumns}
               conditions={whereConditions}

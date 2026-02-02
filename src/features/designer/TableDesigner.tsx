@@ -525,7 +525,7 @@ export function TableDesigner({
       </div>
 
       {/* Columns Section */}
-      <div className="flex-1 overflow-auto px-4 py-3">
+      <div className="flex-1 min-h-0 overflow-auto px-4 py-3">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-medium text-gray-700">Columns</h3>
           <button

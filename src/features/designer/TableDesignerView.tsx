@@ -314,7 +314,7 @@ export function TableDesignerView({
       )}
 
       <div className={`flex-1 flex ${isEditing ? 'overflow-hidden' : ''}`}>
-        <div className={`${isEditing ? 'flex-[3]' : 'flex-1'} overflow-auto`}>
+        <div className={`${isEditing ? 'flex-[3]' : 'flex-1'} min-h-0 overflow-auto`}>
           <TableDesigner
             isReadOnly={isReadOnly}
             existingTable={existingTable}
