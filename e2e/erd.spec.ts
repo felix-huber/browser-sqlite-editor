@@ -2,10 +2,12 @@ import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
 import {
   createAndOpenDatabase,
+  createAndOpenOpfsDatabase,
   openDatabaseFromWelcome,
   runSql,
   waitForReady,
   ensureWelcomeScreen,
+  isOpfsAvailable,
 } from './helpers/app';
 
 /**
@@ -122,18 +124,22 @@ test.describe('ERD', () => {
     await expect(page.locator('[data-testid^="fk-edge-hitbox-"]')).toHaveCount(2);
   });
 
-  /**
-   * NOTE: This test is skipped because the current implementation always uses
-   * IndexedDB for database storage, not OPFS. Since IDB is inherently multi-tab safe,
-   * both tabs get write access and read-only mode is never triggered.
-   *
-   * See: src/worker/handlers/import-export.ts line 72-75
-   * See: src/worker/handlers/registry.ts handleCreateDbRequest
-   */
-  test.skip('read-only mode blocks FK creation', async ({ page }) => {
+  test('read-only mode blocks FK creation', async ({ page }) => {
+    const opfsAvailable = await isOpfsAvailable(page);
+    if (!opfsAvailable) {
+      test.skip();
+      return;
+    }
+
+    const dbName = 'erd-readonly-db';
+    await createAndOpenOpfsDatabase(page, dbName);
+    await runSql(page, BASE_SQL);
+    await page.getByTestId('tab-erd').click();
+    await expect(page.getByTestId('erd-view')).toBeVisible();
+
     const reader = await page.context().newPage();
     await reader.goto('/');
-    await openDatabaseFromWelcome(reader, DB_NAME);
+    await openDatabaseFromWelcome(reader, dbName);
     await reader.getByTestId('tab-erd').click();
     await expect(reader.getByTestId('erd-view')).toBeVisible();
     await connectTables(reader, 'tasks', 'project_id', 'projects', 'id');

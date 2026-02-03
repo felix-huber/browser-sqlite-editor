@@ -1,9 +1,11 @@
 import { test, expect, type Page } from '@playwright/test';
 import {
   createAndOpenDatabase,
+  createAndOpenOpfsDatabase,
   openDatabaseFromWelcome,
   openTable,
   runSql,
+  isOpfsAvailable,
 } from './helpers/app';
 
 /**
@@ -79,27 +81,47 @@ async function clearAllStorage(page: Page): Promise<void> {
       }
     }
 
-    // Clear ALL OPFS directories (not just known ones)
+    // Clear OPFS app contents but keep directory handles intact
     try {
       if (navigator.storage?.getDirectory) {
         const root = await navigator.storage.getDirectory();
-
-        // Collect all directory names first (can't modify while iterating)
-        const dirsToDelete: string[] = [];
+        const appDir = await root.getDirectoryHandle('wasm-sqlite-editor', { create: true });
+        const dbDir = await appDir.getDirectoryHandle('databases', { create: true });
+        const dbFiles: string[] = [];
         // @ts-expect-error - entries() is available
-        for await (const [name, handle] of root.entries()) {
-          if (handle.kind === 'directory') {
-            dirsToDelete.push(name);
+        for await (const [name] of dbDir.entries()) {
+          dbFiles.push(name);
+        }
+        for (const name of dbFiles) {
+          try {
+            await dbDir.removeEntry(name, { recursive: true });
+          } catch {
+            // Ignore locked files
           }
         }
+        try {
+          await appDir.removeEntry('registry.json');
+        } catch {
+          // registry might not exist
+        }
 
-        // Delete each directory
-        for (const name of dirsToDelete) {
-          try {
-            await root.removeEntry(name, { recursive: true });
-          } catch {
-            // Ignore errors - directory might be locked
+        // Best-effort cleanup for legacy layout without deleting root dir
+        try {
+          const legacyDir = await root.getDirectoryHandle('sqlite-editor');
+          const legacyFiles: string[] = [];
+          // @ts-expect-error - entries() is available
+          for await (const [name] of legacyDir.entries()) {
+            legacyFiles.push(name);
           }
+          for (const name of legacyFiles) {
+            try {
+              await legacyDir.removeEntry(name, { recursive: true });
+            } catch {
+              // Ignore locked files
+            }
+          }
+        } catch {
+          // legacy dir might not exist
         }
       }
     } catch {
@@ -654,10 +676,7 @@ test.describe('Two Page Tests (Same Context = Shared localStorage)', () => {
     }
   });
 
-  // NOTE: This test requires OPFS storage for single-writer locking.
-  // createAndOpenDatabase() creates IDB databases which are multi-tab safe
-  // and don't use Web Locks. Skip until we have a way to create OPFS databases in tests.
-  test.skip('crash recovery: Tab B takes over after Tab A crashes', async ({ context }) => {
+  test('crash recovery: Tab B takes over after Tab A crashes', async ({ context }) => {
     const pageA = await context.newPage();
     const pageB = await context.newPage();
 
@@ -668,9 +687,11 @@ test.describe('Two Page Tests (Same Context = Shared localStorage)', () => {
       await expect(pageA).toHaveTitle(/SQLite Editor/);
       await clearAllStorage(pageA);
       await pageA.reload();
+      const opfsAvailable = await isOpfsAvailable(pageA);
+      test.skip(!opfsAvailable, 'OPFS not available');
 
       // Tab A: Create DB and open as writer
-      await createAndOpenDatabase(pageA, dbName);
+      await createAndOpenOpfsDatabase(pageA, dbName);
       await runSql(pageA, `CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO users (name) VALUES ('Alice');`);
       await openTable(pageA, dbName, 'users');
 
@@ -699,10 +720,7 @@ test.describe('Two Page Tests (Same Context = Shared localStorage)', () => {
 // Single-Writer Lock + SQLITE_OPEN_READONLY Enforcement Tests
 // =============================================================================
 
-// NOTE: These tests require OPFS storage for single-writer locking.
-// createAndOpenDatabase() creates IDB databases which are multi-tab safe
-// and don't use Web Locks. Skip until we have a way to create OPFS databases in tests.
-test.describe.skip('Single-Writer Lock Integration', () => {
+test.describe('Single-Writer Lock Integration', () => {
   test('multi-tab: writer takeover allows writes after stale lock', async ({ context }) => {
     /**
      * This test verifies the complete single-writer lock takeover flow:
@@ -726,9 +744,11 @@ test.describe.skip('Single-Writer Lock Integration', () => {
       // Clear all storage for fresh test state - same pattern as crash recovery test
       await clearAllStorage(pageA);
       await pageA.reload();
+      const opfsAvailable = await isOpfsAvailable(pageA);
+      test.skip(!opfsAvailable, 'OPFS not available');
 
       // Tab A: Create DB with test table as writer
-      await createAndOpenDatabase(pageA, dbName);
+      await createAndOpenOpfsDatabase(pageA, dbName);
       await runSql(pageA, `CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT); INSERT INTO items (value) VALUES ('from_tab_a');`);
       await openTable(pageA, dbName, 'items');
 
@@ -788,9 +808,11 @@ test.describe.skip('Single-Writer Lock Integration', () => {
       // Clear all storage for fresh test state
       await clearAllStorage(pageA);
       await pageA.reload();
+      const opfsAvailable = await isOpfsAvailable(pageA);
+      test.skip(!opfsAvailable, 'OPFS not available');
 
       // Tab A: Create DB with test table as writer
-      await createAndOpenDatabase(pageA, dbName);
+      await createAndOpenOpfsDatabase(pageA, dbName);
       await runSql(pageA, `CREATE TABLE data (id INTEGER PRIMARY KEY, val TEXT);`);
 
       // Tab B: Navigate and open same database (will be read-only)

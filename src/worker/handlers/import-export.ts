@@ -2,7 +2,7 @@
  * Import/export and snapshot handlers.
  */
 
-import type { WorkerRequest, WorkerResponse } from '../../types';
+import type { StorageMode, WorkerRequest, WorkerResponse } from '../../types';
 import { getIDBStorage } from '../idb-storage';
 import { importDatabase } from '../file-import';
 import { getRegistry } from '../db-registry';
@@ -57,22 +57,18 @@ export async function handleExportRequest(
   }
 }
 
-export async function handleImportRequest(
-  request: Extract<WorkerRequest, { type: 'import' }>,
+async function handleImportRequestWithMode(
+  request: Extract<WorkerRequest, { type: 'import' | 'importOpfs' }>,
   id: number,
   postResponse: PostResponse,
-  postBroadcast: PostBroadcast
+  postBroadcast: PostBroadcast,
+  storageMode: StorageMode
 ): Promise<void> {
   try {
     const registry = getRegistry();
     if (!registry.isInitialized()) {
       await registry.init();
     }
-
-    // Always use IDB for imports to avoid OPFS multi-tab lock conflicts.
-    // OPFS uses exclusive createSyncAccessHandle() locks that conflict across tabs.
-    // IDB is multi-tab safe and has negligible performance difference for typical use.
-    const storageMode = 'idb' as const;
 
     const importResult = await importDatabase(request.file, {
       nameHint: request.nameHint,
@@ -107,6 +103,27 @@ export async function handleImportRequest(
       code: 'UNKNOWN',
     }, id);
   }
+}
+
+export async function handleImportRequest(
+  request: Extract<WorkerRequest, { type: 'import' }>,
+  id: number,
+  postResponse: PostResponse,
+  postBroadcast: PostBroadcast
+): Promise<void> {
+  // Always use IDB for imports to avoid OPFS multi-tab lock conflicts.
+  // OPFS uses exclusive createSyncAccessHandle() locks that conflict across tabs.
+  // IDB is multi-tab safe and has negligible performance difference for typical use.
+  return handleImportRequestWithMode(request, id, postResponse, postBroadcast, 'idb');
+}
+
+export async function handleImportOpfsRequest(
+  request: Extract<WorkerRequest, { type: 'importOpfs' }>,
+  id: number,
+  postResponse: PostResponse,
+  postBroadcast: PostBroadcast
+): Promise<void> {
+  return handleImportRequestWithMode(request, id, postResponse, postBroadcast, 'opfs');
 }
 
 export async function handleFlushAndCloseRequest(

@@ -1,5 +1,13 @@
 import { test, expect } from '@playwright/test';
-import { createAndOpenDatabase, runSqlStatements, runSql, openTable, openDatabaseFromWelcome, waitForReady } from './helpers/app';
+import {
+  createAndOpenDatabase,
+  createAndOpenOpfsDatabase,
+  runSqlStatements,
+  runSql,
+  openTable,
+  openDatabaseFromWelcome,
+  waitForReady,
+} from './helpers/app';
 
 const DB_NAME = 'sql-editor-db';
 
@@ -176,11 +184,34 @@ test.describe('SQL editor (real UI)', () => {
     await expect(page.getByTestId('results-table')).toBeVisible();
   });
 
+  /**
+   * Test read-only warning when second tab opens database held by first tab.
+   * This test uses OPFS storage which supports single-writer locking.
+   * The first tab (created in beforeEach) uses IDB, so we create a separate OPFS database.
+   */
   test('read-only warning appears when database is opened read-only', async ({ context }) => {
+    // Create a fresh OPFS database for this test (separate from DB_NAME which uses IDB)
+    const opfsDbName = 'opfs-readonly-test';
+    const firstPage = await context.newPage();
+
+    // Tab 1: Create and open an OPFS database with test data
+    await createAndOpenOpfsDatabase(firstPage, opfsDbName);
+    await runSqlStatements(firstPage, [
+      `CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)`,
+      `INSERT INTO users (name, age) VALUES ('Ada', 31), ('Bob', 42)`,
+    ]);
+    await waitForReady(firstPage);
+
+    // Give the lock time to establish (localStorage heartbeat)
+    await firstPage.waitForTimeout(500);
+
+    // Tab 2: Open the same database - should be read-only
     const secondPage = await context.newPage();
     await secondPage.goto('/');
-    await openDatabaseFromWelcome(secondPage, DB_NAME);
+    await openDatabaseFromWelcome(secondPage, opfsDbName);
     await secondPage.getByTestId('tab-sql').click();
+
+    // Try to run an UPDATE query
     const editor = secondPage.getByTestId('sql-input');
     if (await editor.count()) {
       await editor.fill("UPDATE users SET age = 50 WHERE name = 'Ada'", { force: true });
@@ -192,6 +223,14 @@ test.describe('SQL editor (real UI)', () => {
       await secondPage.keyboard.type("UPDATE users SET age = 50 WHERE name = 'Ada'");
     }
     await secondPage.getByTestId('run-button').click();
-    await expect(secondPage.getByTestId('readonly-warning')).toBeVisible();
+
+    // Should show read-only warning (either in the ReadOnlyBanner or as an error)
+    const readonlyWarning = secondPage.getByTestId('readonly-warning');
+    const readonlyBanner = secondPage.getByTestId('readonly-banner');
+    await expect(readonlyWarning.or(readonlyBanner)).toBeVisible({ timeout: 10000 });
+
+    // Cleanup
+    await firstPage.close();
+    await secondPage.close();
   });
 });

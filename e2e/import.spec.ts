@@ -175,8 +175,34 @@ async function clearAllStorage(page: Page): Promise<void> {
     try {
       if (navigator.storage?.getDirectory) {
         const root = await navigator.storage.getDirectory();
+        const appDir = await root.getDirectoryHandle('wasm-sqlite-editor', { create: true });
+        const dbDir = await appDir.getDirectoryHandle('databases', { create: true });
+        const dbFiles: string[] = [];
+        // @ts-expect-error - entries() is available
+        for await (const [name] of dbDir.entries()) {
+          dbFiles.push(name);
+        }
+        for (const name of dbFiles) {
+          try {
+            await dbDir.removeEntry(name, { recursive: true });
+          } catch { /* ignore locked files */ }
+        }
         try {
-          await root.removeEntry('sqlite-editor', { recursive: true });
+          await appDir.removeEntry('registry.json');
+        } catch { /* ignore */ }
+
+        try {
+          const legacyDir = await root.getDirectoryHandle('sqlite-editor');
+          const legacyFiles: string[] = [];
+          // @ts-expect-error - entries() is available
+          for await (const [name] of legacyDir.entries()) {
+            legacyFiles.push(name);
+          }
+          for (const name of legacyFiles) {
+            try {
+              await legacyDir.removeEntry(name, { recursive: true });
+            } catch { /* ignore locked files */ }
+          }
         } catch { /* ignore */ }
       }
     } catch { /* ignore */ }

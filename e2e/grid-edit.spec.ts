@@ -2,11 +2,13 @@ import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
 import {
   createAndOpenDatabase,
+  createAndOpenOpfsDatabase,
   openDatabaseFromWelcome,
   openTable,
   runSql,
   waitForReady,
   ensureWelcomeScreen,
+  isOpfsAvailable,
 } from './helpers/app';
 
 /**
@@ -14,6 +16,7 @@ import {
  */
 
 const DB_NAME = 'grid-edit-db';
+const READONLY_DB_NAME = 'grid-edit-ro';
 
 const BASE_SQL = `
 PRAGMA foreign_keys = ON;
@@ -75,11 +78,11 @@ async function setupGridDb(page: Page) {
   await openTable(page, DB_NAME, 'users');
 }
 
-async function openReadOnlyPage(writer: Page) {
+async function openReadOnlyPage(writer: Page, dbName = DB_NAME) {
   const reader = await writer.context().newPage();
   await reader.goto('/');
-  await openDatabaseFromWelcome(reader, DB_NAME);
-  await openTable(reader, DB_NAME, 'users');
+  await openDatabaseFromWelcome(reader, dbName);
+  await openTable(reader, dbName, 'users');
   return reader;
 }
 
@@ -144,67 +147,6 @@ test.describe('Grid Editing Tests', () => {
       await input.fill('Bobby');
       await page.getByTestId('cell-1-age').click();
       await expect(page.getByTestId('cell-1-name')).toContainText('Bobby');
-    });
-  });
-
-  /**
-   * NOTE: Read-Only Mode tests are skipped because the current implementation always uses
-   * IndexedDB for database storage, not OPFS:
-   * - New databases: Created in IDB (OPFSCoopSyncVFS can't create files)
-   * - Imported databases: Stored in IDB (to avoid OPFS multi-tab conflicts during import)
-   *
-   * Since IDB is inherently multi-tab safe, the Web Locks mechanism is not needed
-   * and both tabs get write access. Read-only mode only applies to OPFS databases
-   * where one tab holds the exclusive write lock.
-   *
-   * See: src/worker/handlers/import-export.ts line 72-75
-   * See: src/worker/handlers/registry.ts handleCreateDbRequest
-   */
-  test.describe.skip('Read-Only Mode', () => {
-    test('edit attempt on read-only database shows tooltip', async ({ page }) => {
-      const reader = await openReadOnlyPage(page);
-      await reader.getByTestId('cell-0-name').dblclick();
-      await expect(reader.getByTestId('edit-blocked-tooltip')).toContainText('read-only');
-      await reader.close();
-    });
-
-    test('add row button is disabled in read-only mode', async ({ page }) => {
-      const reader = await openReadOnlyPage(page);
-      await expect(reader.getByTestId('add-row-button')).toBeDisabled();
-      await reader.close();
-    });
-
-    test('delete button is disabled in read-only mode', async ({ page }) => {
-      const reader = await openReadOnlyPage(page);
-      await expect(reader.getByTestId('delete-rows-button')).toBeDisabled();
-      await reader.close();
-    });
-
-    test('row checkboxes are disabled in read-only mode', async ({ page }) => {
-      const reader = await openReadOnlyPage(page);
-      await expect(reader.getByTestId('row-checkbox-0')).toBeDisabled();
-      await reader.close();
-    });
-
-    test('context menu paste is disabled in read-only mode', async ({ page }) => {
-      const reader = await openReadOnlyPage(page);
-      await reader.getByTestId('cell-0-name').click({ button: 'right' });
-      await expect(reader.getByTestId('cell-context-menu-item-paste')).toHaveAttribute('aria-disabled', 'true');
-      await reader.close();
-    });
-
-    test('context menu Set NULL is disabled in read-only mode', async ({ page }) => {
-      const reader = await openReadOnlyPage(page);
-      await reader.getByTestId('cell-0-name').click({ button: 'right' });
-      await expect(reader.getByTestId('cell-context-menu-item-set-null')).toHaveAttribute('aria-disabled', 'true');
-      await reader.close();
-    });
-
-    test('context menu Delete Row is disabled in read-only mode', async ({ page }) => {
-      const reader = await openReadOnlyPage(page);
-      await reader.getByTestId('cell-0-name').click({ button: 'right' });
-      await expect(reader.getByTestId('cell-context-menu-item-delete-row')).toHaveAttribute('aria-disabled', 'true');
-      await reader.close();
     });
   });
 
@@ -559,6 +501,66 @@ test.describe('Grid Editing Tests', () => {
       await input.fill('Alicia');
       await expect(input).toHaveClass(/bg-yellow-50/);
     });
+  });
+});
+
+// =============================================================================
+// Read-Only Mode (OPFS)
+// =============================================================================
+
+test.describe('Grid Editing Tests - Read-Only Mode', () => {
+  test.beforeEach(async ({ page }) => {
+    const opfsAvailable = await isOpfsAvailable(page);
+    test.skip(!opfsAvailable, 'OPFS not available');
+    await createAndOpenOpfsDatabase(page, READONLY_DB_NAME);
+    await runSql(page, BASE_SQL);
+    await openTable(page, READONLY_DB_NAME, 'users');
+  });
+
+  test('edit attempt on read-only database shows tooltip', async ({ page }) => {
+    const reader = await openReadOnlyPage(page, READONLY_DB_NAME);
+    await reader.getByTestId('cell-0-name').dblclick();
+    await expect(reader.getByTestId('edit-blocked-tooltip')).toContainText('read-only');
+    await reader.close();
+  });
+
+  test('add row button is disabled in read-only mode', async ({ page }) => {
+    const reader = await openReadOnlyPage(page, READONLY_DB_NAME);
+    await expect(reader.getByTestId('add-row-button')).toBeDisabled();
+    await reader.close();
+  });
+
+  test('delete button is disabled in read-only mode', async ({ page }) => {
+    const reader = await openReadOnlyPage(page, READONLY_DB_NAME);
+    await expect(reader.getByTestId('delete-rows-button')).toBeDisabled();
+    await reader.close();
+  });
+
+  test('row checkboxes are disabled in read-only mode', async ({ page }) => {
+    const reader = await openReadOnlyPage(page, READONLY_DB_NAME);
+    await expect(reader.getByTestId('row-checkbox-0')).toBeDisabled();
+    await reader.close();
+  });
+
+  test('context menu paste is disabled in read-only mode', async ({ page }) => {
+    const reader = await openReadOnlyPage(page, READONLY_DB_NAME);
+    await reader.getByTestId('cell-0-name').click({ button: 'right' });
+    await expect(reader.getByTestId('cell-context-menu-item-paste')).toHaveAttribute('aria-disabled', 'true');
+    await reader.close();
+  });
+
+  test('context menu Set NULL is disabled in read-only mode', async ({ page }) => {
+    const reader = await openReadOnlyPage(page, READONLY_DB_NAME);
+    await reader.getByTestId('cell-0-name').click({ button: 'right' });
+    await expect(reader.getByTestId('cell-context-menu-item-set-null')).toHaveAttribute('aria-disabled', 'true');
+    await reader.close();
+  });
+
+  test('context menu Delete Row is disabled in read-only mode', async ({ page }) => {
+    const reader = await openReadOnlyPage(page, READONLY_DB_NAME);
+    await reader.getByTestId('cell-0-name').click({ button: 'right' });
+    await expect(reader.getByTestId('cell-context-menu-item-delete-row')).toHaveAttribute('aria-disabled', 'true');
+    await reader.close();
   });
 });
 

@@ -513,6 +513,25 @@ export class WorkerClient {
   }
 
   /**
+   * Import a file into OPFS storage (test-only path)
+   */
+  async importOpfsFile(
+    file: File,
+    nameHint: string
+  ): Promise<{ dbId: string; dbName: string; storageType: StorageMode; fileSize: number }> {
+    const response = await this.request<{
+      type: 'success';
+      data?: { dbId: string; dbName: string; storageType: StorageMode; fileSize: number };
+    }>({ type: 'importOpfs', file, nameHint });
+
+    if (!response.data) {
+      throw new WorkerError('Import completed without result data');
+    }
+
+    return response.data;
+  }
+
+  /**
    * Export a database to a file
    */
   async exportDb(dbName: string): Promise<Blob> {

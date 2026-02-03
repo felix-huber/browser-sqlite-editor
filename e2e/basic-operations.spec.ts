@@ -67,19 +67,43 @@ async function clearAllStorage(page: Page): Promise<void> {
     try {
       if (navigator.storage?.getDirectory) {
         const root = await navigator.storage.getDirectory();
-        const dirsToDelete: string[] = [];
+        const appDir = await root.getDirectoryHandle('wasm-sqlite-editor', { create: true });
+        const dbDir = await appDir.getDirectoryHandle('databases', { create: true });
+        const dbFiles: string[] = [];
         // @ts-expect-error - entries() is available
-        for await (const [name, handle] of root.entries()) {
-          if (handle.kind === 'directory') {
-            dirsToDelete.push(name);
+        for await (const [name] of dbDir.entries()) {
+          dbFiles.push(name);
+        }
+        for (const name of dbFiles) {
+          try {
+            await dbDir.removeEntry(name, { recursive: true });
+          } catch {
+            // ignore locked files
           }
         }
-        for (const dirName of dirsToDelete) {
-          try {
-            await root.removeEntry(dirName, { recursive: true });
-          } catch {
-            // ignore locked dirs
+        try {
+          await appDir.removeEntry('registry.json');
+        } catch {
+          // registry might not exist
+        }
+
+        // Best-effort cleanup for legacy layout without deleting root dir
+        try {
+          const legacyDir = await root.getDirectoryHandle('sqlite-editor');
+          const legacyFiles: string[] = [];
+          // @ts-expect-error - entries() is available
+          for await (const [name] of legacyDir.entries()) {
+            legacyFiles.push(name);
           }
+          for (const name of legacyFiles) {
+            try {
+              await legacyDir.removeEntry(name, { recursive: true });
+            } catch {
+              // ignore locked files
+            }
+          }
+        } catch {
+          // legacy dir might not exist
         }
       }
     } catch {
@@ -480,15 +504,9 @@ test.describe('Basic Database Operations', () => {
         }
       });
 
-      // Check if drop zone is visible
+      // Drop zone should always be visible on the welcome screen
       const dropZone = page.locator('[data-testid="drop-zone"]');
-      const dropZoneVisible = await dropZone.isVisible().catch(() => false);
-
-      if (!dropZoneVisible) {
-        debug('Drop zone not visible, skipping UI import test');
-        test.skip();
-        return;
-      }
+      await expect(dropZone).toBeVisible({ timeout: 5000 });
 
       // Step 1: Create a valid SQLite file and drop it
       await step('Import via drop zone', async () => {
@@ -687,20 +705,14 @@ test.describe('Basic Database Operations', () => {
       await step('Reset app via button', async () => {
         const resetButton = page.getByTestId('reset-app-button');
 
-        if (await resetButton.isVisible().catch(() => false)) {
-          await resetButton.click();
-          await page.waitForSelector('[data-testid="reset-confirm-dialog"]', { timeout: 5000 });
-          await page.getByTestId('reset-confirm-button').click();
+        await expect(resetButton).toBeVisible({ timeout: 5000 });
+        await resetButton.click();
+        await page.waitForSelector('[data-testid="reset-confirm-dialog"]', { timeout: 5000 });
+        await page.getByTestId('reset-confirm-button').click();
 
-          // Wait for page to reload
-          await page.waitForURL(/\?reset=/, { timeout: 30000 });
-          await page.waitForSelector('[data-testid="welcome-screen"]', { timeout: 30000 });
-        } else {
-          // If reset button not visible, skip test
-          debug('Reset button not visible, skipping');
-          test.skip();
-          return;
-        }
+        // Wait for page to reload
+        await page.waitForURL(/\?reset=/, { timeout: 30000 });
+        await page.waitForSelector('[data-testid="welcome-screen"]', { timeout: 30000 });
       });
 
       // Step 5: Verify database is gone

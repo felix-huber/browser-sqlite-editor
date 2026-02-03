@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { createAndOpenDatabase, openDatabaseFromWelcome } from './helpers/app';
 
 /**
  * E2E Tests for Database Rename/Delete Persistence
@@ -53,21 +54,47 @@ async function clearAllStorage(page: Page): Promise<void> {
     await deleteIdb('idb-sqlite');
     await deleteIdb('idb-batch-atomic'); // VFS storage
 
-    // Clear OPFS if available
+    // Clear OPFS contents without deleting root directories
     try {
       if (navigator.storage?.getDirectory) {
         const root = await navigator.storage.getDirectory();
-        // Clear new layout
-        try {
-          await root.removeEntry('wasm-sqlite-editor', { recursive: true });
-        } catch {
-          // Directory might not exist
+        const appDir = await root.getDirectoryHandle('wasm-sqlite-editor', { create: true });
+        const dbDir = await appDir.getDirectoryHandle('databases', { create: true });
+        const dbFiles: string[] = [];
+        // @ts-expect-error - entries() is available
+        for await (const [name] of dbDir.entries()) {
+          dbFiles.push(name);
         }
-        // Clear legacy layout
+        for (const name of dbFiles) {
+          try {
+            await dbDir.removeEntry(name, { recursive: true });
+          } catch {
+            // ignore locked files
+          }
+        }
         try {
-          await root.removeEntry('sqlite-editor', { recursive: true });
+          await appDir.removeEntry('registry.json');
         } catch {
-          // Directory might not exist
+          // registry might not exist
+        }
+
+        // Legacy layout cleanup without deleting root dir
+        try {
+          const legacyDir = await root.getDirectoryHandle('sqlite-editor');
+          const legacyFiles: string[] = [];
+          // @ts-expect-error - entries() is available
+          for await (const [name] of legacyDir.entries()) {
+            legacyFiles.push(name);
+          }
+          for (const name of legacyFiles) {
+            try {
+              await legacyDir.removeEntry(name, { recursive: true });
+            } catch {
+              // ignore locked files
+            }
+          }
+        } catch {
+          // legacy dir might not exist
         }
       }
     } catch {
@@ -196,6 +223,215 @@ async function reloadRegistry(page: Page): Promise<boolean> {
     }
     return false;
   });
+}
+
+/**
+ * Rename a database using the app's rename path (worker + registry).
+ */
+async function renameDatabaseViaApp(
+  page: Page,
+  oldName: string,
+  newName: string
+): Promise<{ success: boolean; error?: string }> {
+  return page.evaluate(
+    async ({ old: oldN, new: newN }) => {
+      try {
+        const testApi = (
+          window as Window & {
+            __sqliteEditorTest?: { renameDatabase?: (oldName: string, newName: string) => Promise<void> };
+          }
+        ).__sqliteEditorTest;
+
+        if (!testApi?.renameDatabase) {
+          return { success: false, error: 'Test API renameDatabase not available' };
+        }
+
+        await testApi.renameDatabase(oldN, newN);
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    { old: oldName, new: newName }
+  );
+}
+
+/**
+ * Rename an IDB VFS database and update registry (idb-batch-atomic).
+ * This avoids legacy idb-sqlite storage while keeping registry consistent.
+ */
+async function renameDatabaseInIdbVfs(
+  page: Page,
+  oldName: string,
+  newName: string
+): Promise<{ success: boolean; error?: string }> {
+  return page.evaluate(
+    async ({ old: oldN, new: newN }) => {
+      try {
+        const updateRegistry = async (): Promise<void> => {
+          let updated = false;
+          if (navigator.storage?.getDirectory) {
+            try {
+              const root = await navigator.storage.getDirectory();
+              const appDir = await root.getDirectoryHandle('wasm-sqlite-editor');
+              const file = await appDir.getFileHandle('registry.json');
+              const blob = await file.getFile();
+              const data = JSON.parse(await blob.text()) as { databases?: Array<{ name: string }> };
+              if (data?.databases) {
+                if (data.databases.some((db) => db.name.toLowerCase() === newN.toLowerCase())) {
+                  throw new Error(`A database named "${newN}" already exists`);
+                }
+                const entry = data.databases.find((db) => db.name === oldN);
+                if (!entry) {
+                  throw new Error(`Database "${oldN}" not found`);
+                }
+                entry.name = newN;
+                const writable = await file.createWritable();
+                try {
+                  await writable.write(JSON.stringify(data, null, 2));
+                } finally {
+                  await writable.close();
+                }
+                updated = true;
+              }
+            } catch {
+              // Ignore and fall back to IDB registry update.
+            }
+          }
+
+          try {
+            const registryDb = await new Promise<IDBDatabase>((resolve, reject) => {
+              const req = indexedDB.open('sqlite-editor-registry', 1);
+              req.onerror = () => reject(req.error);
+              req.onsuccess = () => resolve(req.result);
+              req.onupgradeneeded = (event) => {
+                const database = (event.target as IDBOpenDBRequest).result;
+                if (!database.objectStoreNames.contains('registry')) {
+                  database.createObjectStore('registry', { keyPath: 'key' });
+                }
+              };
+            });
+
+            const tx = registryDb.transaction('registry', 'readonly');
+            const store = tx.objectStore('registry');
+            const result = await new Promise<{ key: string; data: { databases: Array<{ name: string }> } } | undefined>(
+              (resolve, reject) => {
+                const req = store.get('registry');
+                req.onsuccess = () => resolve(req.result as typeof result);
+                req.onerror = () => reject(req.error);
+              }
+            );
+
+            if (result?.data) {
+              if (result.data.databases.some((db) => db.name.toLowerCase() === newN.toLowerCase())) {
+                registryDb.close();
+                throw new Error(`A database named "${newN}" already exists`);
+              }
+
+              const entry = result.data.databases.find((db) => db.name === oldN);
+              if (!entry) {
+                registryDb.close();
+                throw new Error(`Database "${oldN}" not found`);
+              }
+              entry.name = newN;
+
+              const writeTx = registryDb.transaction('registry', 'readwrite');
+              const writeStore = writeTx.objectStore('registry');
+              await new Promise<void>((resolve, reject) => {
+                const req = writeStore.put({ key: 'registry', data: result.data });
+                req.onsuccess = () => resolve();
+                req.onerror = () => reject(req.error);
+              });
+              updated = true;
+            }
+
+            registryDb.close();
+          } catch {
+            // ignore IDB registry update errors
+          }
+
+          if (!updated) {
+            throw new Error('Registry not found');
+          }
+        };
+
+        await updateRegistry();
+
+        const request = indexedDB.open('idb-batch-atomic', 6);
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => resolve(request.result);
+          request.onupgradeneeded = () => resolve(request.result);
+        });
+
+        try {
+          const tx = db.transaction(['metadata', 'blocks'], 'readwrite');
+          const metadata = tx.objectStore('metadata');
+          const blocks = tx.objectStore('blocks');
+          const oldPath = new URL(oldN, 'file://').pathname;
+          const newPath = new URL(newN, 'file://').pathname;
+
+          const oldEntry = await new Promise<{ name: string; fileSize: number; version: number; pendingVersion?: number } | undefined>(
+            (resolve, reject) => {
+              const req = metadata.get(oldPath);
+              req.onsuccess = () => resolve(req.result);
+              req.onerror = () => reject(req.error);
+            }
+          );
+
+          if (!oldEntry) {
+            throw new Error(`Database "${oldN}" not found`);
+          }
+
+          await new Promise<void>((resolve, reject) => {
+            const req = metadata.put({ ...oldEntry, name: newPath });
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+          });
+
+          await new Promise<void>((resolve, reject) => {
+            const req = metadata.delete(oldPath);
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+          });
+
+          await new Promise<void>((resolve, reject) => {
+            const range = IDBKeyRange.bound([oldPath, -Infinity], [oldPath, Infinity]);
+            const req = blocks.openCursor(range);
+            req.onerror = () => reject(req.error);
+            req.onsuccess = () => {
+              const cursor = req.result;
+              if (!cursor) {
+                resolve();
+                return;
+              }
+              const value = cursor.value as { path: string; offset: number; version: number; data: Uint8Array };
+              const putRequest = blocks.put({ ...value, path: newPath });
+              putRequest.onerror = () => reject(putRequest.error);
+              putRequest.onsuccess = () => {
+                const deleteRequest = cursor.delete();
+                deleteRequest.onerror = () => reject(deleteRequest.error);
+                deleteRequest.onsuccess = () => cursor.continue();
+              };
+            };
+          });
+
+          await new Promise<void>((resolve, reject) => {
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+          });
+        } finally {
+          db.close();
+        }
+
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    { old: oldName, new: newName }
+  );
 }
 
 /**
@@ -1267,29 +1503,35 @@ test.describe('Database Lifecycle Tests', () => {
       expect(registryAfter?.databases.some((db) => db.name === 'same-name-test')).toBe(true);
     });
 
-    /**
-     * NOTE: This test is skipped because the renameDatabase helper uses the old
-     * idb-sqlite storage format but databases are now stored in idb-batch-atomic
-     * with a different schema (metadata + blocks stores vs single blob).
-     *
-     * The test bypasses the app's rename mechanism and directly manipulates IndexedDB,
-     * but it's looking in the wrong IDB store. To fix, either:
-     * 1. Update renameDatabase helper to use the new idb-batch-atomic format, or
-     * 2. Use the app's context menu rename functionality via UI interactions
-     */
-    test.skip('special characters in database names are handled', async ({ page }) => {
-      // Create database with spaces
-      await createTestDatabase(page, 'test with spaces');
+    test('special characters in database names are handled', async ({ page }) => {
+      // Create database with spaces via app flow (idb-batch-atomic storage)
+      await createAndOpenDatabase(page, 'test with spaces');
+
+      // Close the database to avoid open-handle rename edge cases
+      await page.evaluate(async () => {
+        const testApi = (
+          window as Window & {
+            __sqliteEditorTest?: { closeDatabase?: () => Promise<void> };
+          }
+        ).__sqliteEditorTest;
+        if (testApi?.closeDatabase) {
+          await testApi.closeDatabase();
+        }
+      });
+      await page.waitForTimeout(200);
 
       // Verify it exists
       const registry = await readRegistry(page);
       expect(registry?.databases.some((db) => db.name === 'test with spaces')).toBe(true);
 
-      // Rename to another name with special chars
-      await renameDatabase(page, 'test with spaces', 'test-renamed-db');
+      // Rename using IDB VFS path (idb-batch-atomic) to avoid legacy idb-sqlite helper
+      const renameResult = await renameDatabaseInIdbVfs(page, 'test with spaces', 'test-renamed-db');
+      expect(renameResult.success, renameResult.error ?? 'rename failed').toBe(true);
+      await reloadRegistry(page);
 
-      const registryAfter = await readRegistry(page);
-      expect(registryAfter?.databases.some((db) => db.name === 'test-renamed-db')).toBe(true);
+      // Verify the renamed database can be opened
+      await openDatabaseFromWelcome(page, 'test-renamed-db');
+      await expect(page.getByTestId('tab-sql')).toBeVisible({ timeout: 15000 });
     });
 
     test('rapid create-delete cycles maintain consistency', async ({ page }) => {

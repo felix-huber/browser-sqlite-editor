@@ -37,20 +37,39 @@ test.describe('Read-Only Mode - Multi-Tab', () => {
     // Clear storage first to ensure clean state
     await writer.goto('/');
     await writer.evaluate(async () => {
-      // Clear OPFS directories to start fresh
+      // Clear OPFS contents without deleting root directories
       if (navigator.storage?.getDirectory) {
         try {
           const root = await navigator.storage.getDirectory();
-          const dirsToDelete: string[] = [];
+          const appDir = await root.getDirectoryHandle('wasm-sqlite-editor', { create: true });
+          const dbDir = await appDir.getDirectoryHandle('databases', { create: true });
+          const dbFiles: string[] = [];
           // @ts-expect-error - entries() is available
-          for await (const [name, handle] of root.entries()) {
-            if (handle.kind === 'directory') dirsToDelete.push(name);
+          for await (const [name] of dbDir.entries()) {
+            dbFiles.push(name);
           }
-          for (const name of dirsToDelete) {
+          for (const name of dbFiles) {
             try {
-              await root.removeEntry(name, { recursive: true });
-            } catch { /* ignore locked dirs */ }
+              await dbDir.removeEntry(name, { recursive: true });
+            } catch { /* ignore locked files */ }
           }
+          try {
+            await appDir.removeEntry('registry.json');
+          } catch { /* ignore missing */ }
+
+          try {
+            const legacyDir = await root.getDirectoryHandle('sqlite-editor');
+            const legacyFiles: string[] = [];
+            // @ts-expect-error - entries() is available
+            for await (const [name] of legacyDir.entries()) {
+              legacyFiles.push(name);
+            }
+            for (const name of legacyFiles) {
+              try {
+                await legacyDir.removeEntry(name, { recursive: true });
+              } catch { /* ignore locked files */ }
+            }
+          } catch { /* ignore missing legacy */ }
         } catch { /* ignore OPFS errors */ }
       }
       // Clear IndexedDB

@@ -28,6 +28,7 @@ export type WorkerRequest =
       offset?: number;
     }
   | { type: 'import'; file: File; nameHint: string }
+  | { type: 'importOpfs'; file: File; nameHint: string }
   | { type: 'export'; dbName: string }
   | { type: 'schema' }
   | { type: 'tableInfo'; table: string }

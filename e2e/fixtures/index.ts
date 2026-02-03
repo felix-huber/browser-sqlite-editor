@@ -81,23 +81,47 @@ export const test = base.extend<{
         }
       }
 
-      // Clear ALL OPFS directories (not just known ones)
+      // Clear OPFS app contents but keep directory handles intact
       if (navigator.storage?.getDirectory) {
         try {
           const root = await navigator.storage.getDirectory();
-          const dirsToDelete: string[] = [];
+          const appDir = await root.getDirectoryHandle('wasm-sqlite-editor', { create: true });
+          const dbDir = await appDir.getDirectoryHandle('databases', { create: true });
+          const dbFiles: string[] = [];
           // @ts-expect-error - entries() is available
-          for await (const [name, handle] of root.entries()) {
-            if (handle.kind === 'directory') {
-              dirsToDelete.push(name);
+          for await (const [name] of dbDir.entries()) {
+            dbFiles.push(name);
+          }
+          for (const name of dbFiles) {
+            try {
+              await dbDir.removeEntry(name, { recursive: true });
+            } catch {
+              // ignore locked files
             }
           }
-          for (const name of dirsToDelete) {
-            try {
-              await root.removeEntry(name, { recursive: true });
-            } catch {
-              // ignore locked dirs
+          try {
+            await appDir.removeEntry('registry.json');
+          } catch {
+            // registry might not exist
+          }
+
+          // Best-effort cleanup for legacy layout without deleting root dir
+          try {
+            const legacyDir = await root.getDirectoryHandle('sqlite-editor');
+            const legacyFiles: string[] = [];
+            // @ts-expect-error - entries() is available
+            for await (const [name] of legacyDir.entries()) {
+              legacyFiles.push(name);
             }
+            for (const name of legacyFiles) {
+              try {
+                await legacyDir.removeEntry(name, { recursive: true });
+              } catch {
+                // ignore locked files
+              }
+            }
+          } catch {
+            // legacy dir might not exist
           }
         } catch {
           // ignore OPFS errors

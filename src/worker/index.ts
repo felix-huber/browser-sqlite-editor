@@ -35,6 +35,7 @@ import {
   handleFlushSnapshotRequest,
   handleExportRequest,
   handleImportRequest,
+  handleImportOpfsRequest,
   handleFlushAndCloseRequest,
 } from './handlers/import-export';
 import {
@@ -279,6 +280,9 @@ async function handleMessage(event: WorkerMessageEvent): Promise<void> {
 
     case 'import':
       await handleImportRequest(request, id, postResponse, postBroadcast);
+      break;
+    case 'importOpfs':
+      await handleImportOpfsRequest(request, id, postResponse, postBroadcast);
       break;
 
     case 'createTable':

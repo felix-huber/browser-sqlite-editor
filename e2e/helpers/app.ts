@@ -63,6 +63,23 @@ export async function waitForReady(page: Page) {
   });
 }
 
+export async function isOpfsAvailable(page: Page): Promise<boolean> {
+  return page.evaluate(async (): Promise<boolean> => {
+    try {
+      if (!navigator.storage?.getDirectory) {
+        return false;
+      }
+      const root = await navigator.storage.getDirectory();
+      const testDirName = `__opfs_test_${Date.now()}`;
+      await root.getDirectoryHandle(testDirName, { create: true });
+      await root.removeEntry(testDirName, { recursive: true });
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 async function waitForWorkerReady(page: Page) {
   await page.waitForFunction(async () => {
     const api = (window as Window & { __sqliteEditorTest?: { getRegistry?: () => Promise<unknown> } }).__sqliteEditorTest;
@@ -127,6 +144,68 @@ export async function createAndOpenDatabase(page: Page, dbName: string) {
   }
   await waitForReady(page);
   await expect(page.getByTestId('tab-sql')).toBeVisible({ timeout: 15000 });
+}
+
+/**
+ * Create a database in OPFS storage for testing multi-tab locking.
+ * This bypasses the normal creation flow which uses IDB.
+ *
+ * Unlike IDB databases, OPFS databases use Web Locks for single-writer guarantee.
+ * When a second tab opens an OPFS database while the first tab holds the lock,
+ * it will open in read-only mode.
+ */
+export async function createOpfsDatabase(page: Page, dbName: string) {
+  await waitForWorkerReady(page);
+
+  // Use the test API to create the OPFS database
+  await page.evaluate(async (name: string) => {
+    type TestApi = {
+      createOpfsDatabase: (name: string, sqliteBytes?: Uint8Array) => Promise<void>;
+    };
+    const api = (window as Window & { __sqliteEditorTest?: TestApi }).__sqliteEditorTest;
+    if (!api?.createOpfsDatabase) {
+      throw new Error('Test API createOpfsDatabase not available');
+    }
+    await api.createOpfsDatabase(name);
+  }, dbName);
+
+  // Wait for the database to appear in the registry
+  await page.waitForFunction(async (name: string) => {
+    type TestApi = {
+      getRegistry: () => Promise<{ databases: Array<{ name: string }> } | null>;
+    };
+    const api = (window as Window & { __sqliteEditorTest?: TestApi }).__sqliteEditorTest;
+    if (!api?.getRegistry) return false;
+    const registry = await api.getRegistry();
+    if (!registry?.databases) return false;
+    return registry.databases.some((db) => db.name === name);
+  }, dbName, { timeout: 15000 });
+}
+
+/**
+ * Create and open an OPFS database for testing multi-tab locking.
+ * This is the OPFS equivalent of createAndOpenDatabase().
+ */
+export async function createAndOpenOpfsDatabase(page: Page, dbName: string) {
+  await page.goto('/');
+  await ensureWelcomeScreen(page);
+  await createOpfsDatabase(page, dbName);
+
+  // Open via test API to avoid UI timing issues
+  await page.evaluate(async (name: string) => {
+    type TestApi = {
+      openDatabase?: (dbName: string) => Promise<void>;
+    };
+    const api = (window as Window & { __sqliteEditorTest?: TestApi }).__sqliteEditorTest;
+    if (!api?.openDatabase) {
+      throw new Error('Test API openDatabase not available');
+    }
+    await api.openDatabase(name);
+  }, dbName);
+
+  // Wait for SQL tab to be visible (indicates database is open)
+  await expect(page.getByTestId('tab-sql')).toBeVisible({ timeout: 30000 });
+  await waitForReady(page);
 }
 
 export async function openDatabaseFromWelcome(page: Page, dbName: string) {
