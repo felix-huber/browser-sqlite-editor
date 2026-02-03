@@ -226,37 +226,6 @@ async function reloadRegistry(page: Page): Promise<boolean> {
 }
 
 /**
- * Rename a database using the app's rename path (worker + registry).
- */
-async function renameDatabaseViaApp(
-  page: Page,
-  oldName: string,
-  newName: string
-): Promise<{ success: boolean; error?: string }> {
-  return page.evaluate(
-    async ({ old: oldN, new: newN }) => {
-      try {
-        const testApi = (
-          window as Window & {
-            __sqliteEditorTest?: { renameDatabase?: (oldName: string, newName: string) => Promise<void> };
-          }
-        ).__sqliteEditorTest;
-
-        if (!testApi?.renameDatabase) {
-          return { success: false, error: 'Test API renameDatabase not available' };
-        }
-
-        await testApi.renameDatabase(oldN, newN);
-        return { success: true };
-      } catch (err) {
-        return { success: false, error: err instanceof Error ? err.message : String(err) };
-      }
-    },
-    { old: oldName, new: newName }
-  );
-}
-
-/**
  * Rename an IDB VFS database and update registry (idb-batch-atomic).
  * This avoids legacy idb-sqlite storage while keeping registry consistent.
  */

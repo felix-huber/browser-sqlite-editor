@@ -368,7 +368,7 @@ function App() {
         delete win.__sqliteEditorTest;
       }
     };
-  }, []);
+  }, [handleResetApp]);
 
   // Reset view and load history when active database changes
   useEffect(() => {

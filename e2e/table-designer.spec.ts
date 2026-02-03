@@ -2,11 +2,8 @@ import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
 import {
   createAndOpenDatabase,
-  createAndOpenOpfsDatabase,
-  openDatabaseFromWelcome,
   openTable,
   runSql,
-  runSqlStatements,
   waitForReady,
   expandDatabaseInSidebar,
 } from './helpers/app';

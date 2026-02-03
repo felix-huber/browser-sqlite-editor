@@ -1,12 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import {
-  createAndOpenDatabase,
-  createAndOpenOpfsDatabase,
-  openDatabaseFromWelcome,
-  openTable,
-  runSql,
-  isOpfsAvailable,
-} from './helpers/app';
+import { createAndOpenOpfsDatabase, openDatabaseFromWelcome, openTable, runSql, isOpfsAvailable } from './helpers/app';
 
 /**
  * Multi-Tab Locking E2E Tests
