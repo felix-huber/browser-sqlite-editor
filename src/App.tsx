@@ -64,6 +64,59 @@ interface ActiveView {
   viewName?: string;
 }
 
+/**
+ * Create a minimal valid SQLite database (for testing OPFS storage)
+ */
+function createMinimalSqlite(): Uint8Array {
+  const header = new Uint8Array(4096); // One page
+
+  // "SQLite format 3\0" magic header
+  const magic = 'SQLite format 3\0';
+  for (let i = 0; i < magic.length; i++) {
+    header[i] = magic.charCodeAt(i);
+  }
+
+  // Page size: 4096 (big-endian)
+  header[16] = 0x10;
+  header[17] = 0x00;
+
+  // File format versions
+  header[18] = 1;
+  header[19] = 1;
+
+  // Payload fractions
+  header[21] = 64;
+  header[22] = 32;
+  header[23] = 32;
+
+  // File change counter
+  header[27] = 1;
+
+  // Database size in pages
+  header[31] = 1;
+
+  // Schema format number
+  header[47] = 4;
+
+  // Text encoding: UTF-8
+  header[59] = 1;
+
+  // Version valid for
+  header[95] = 1;
+
+  // SQLite version (3.39.0)
+  header[96] = 0x00;
+  header[97] = 0x2e;
+  header[98] = 0x5e;
+  header[99] = 0x68;
+
+  // Page 1 content: leaf table b-tree page
+  header[100] = 0x0d;
+  header[105] = 0x10;
+
+  return header;
+}
+
 type TestApi = {
   getRegistry: () => Promise<DatabaseRegistry | null>;
   refreshSizeWarning: () => Promise<void>;
@@ -79,6 +132,13 @@ type TestApi = {
   hasActiveDatabase: () => boolean;
   /** Force reload registry from storage (for tests that modify storage directly) */
   reloadRegistry: () => Promise<void>;
+  /**
+   * Create a database in OPFS storage for testing multi-tab locking.
+   * This bypasses the normal import flow which uses IDB.
+   * @param name - Database name
+   * @param sqliteBytes - SQLite file bytes (or undefined for minimal empty db)
+   */
+  createOpfsDatabase: (name: string, sqliteBytes?: Uint8Array) => Promise<void>;
 };
 
 function App() {
@@ -297,6 +357,82 @@ function App() {
         await client.forceReinitRegistry();
         // Then reload the store from the worker
         await loadRegistry();
+      },
+      createOpfsDatabase: async (name: string, sqliteBytes?: Uint8Array) => {
+        // Create a minimal SQLite file if no bytes provided
+        const bytes = sqliteBytes ?? createMinimalSqlite();
+
+        // Get OPFS root and create directories
+        const root = await navigator.storage.getDirectory();
+        const appDir = await root.getDirectoryHandle('wasm-sqlite-editor', { create: true });
+        const dbDir = await appDir.getDirectoryHandle('databases', { create: true });
+
+        // Write SQLite file to OPFS
+        // Use same sanitization as toFilename() in db-registry.ts to ensure consistency
+        const sanitizedName = name
+          .replace(/[<>:"/\\|?*()]/g, '_')
+          .replace(/\s+/g, '_')
+          .toLowerCase();
+        const filename = `${sanitizedName}.sqlite`;
+        const fileHandle = await dbDir.getFileHandle(filename, { create: true });
+        const writable = await fileHandle.createWritable();
+        try {
+          // Write bytes as Blob - use type assertion for TypeScript compatibility
+          await writable.write(new Blob([bytes as unknown as BlobPart]));
+        } finally {
+          await writable.close();
+        }
+
+        // Read existing registry or create new one
+        // Registry entry format: { id, name, createdAt, lastOpenedAt, storageType }
+        type RegistryEntry = {
+          id: string;
+          name: string;
+          createdAt: string;
+          lastOpenedAt: string;
+          storageType: string;
+        };
+        let registry: { databases: RegistryEntry[] };
+        try {
+          const regFile = await appDir.getFileHandle('registry.json');
+          const regBlob = await regFile.getFile();
+          const regText = await regBlob.text();
+          registry = JSON.parse(regText);
+        } catch {
+          registry = { databases: [] };
+        }
+
+        // Add database to registry with OPFS storage type
+        const now = new Date().toISOString();
+        const existingIdx = registry.databases.findIndex((d) => d.name === name);
+        if (existingIdx >= 0) {
+          registry.databases[existingIdx].storageType = 'opfs';
+          registry.databases[existingIdx].lastOpenedAt = now;
+        } else {
+          registry.databases.push({
+            id: name, // Use name as ID for simplicity in tests
+            name,
+            createdAt: now,
+            lastOpenedAt: now,
+            storageType: 'opfs',
+          });
+        }
+
+        // Write updated registry
+        const regHandle = await appDir.getFileHandle('registry.json', { create: true });
+        const regWritable = await regHandle.createWritable();
+        try {
+          await regWritable.write(JSON.stringify(registry, null, 2));
+        } finally {
+          await regWritable.close();
+        }
+
+        // Reload registry in the worker and store
+        const client = workerClientRef.current;
+        if (client) {
+          await client.forceReinitRegistry();
+          await loadRegistry();
+        }
       },
     };
 
