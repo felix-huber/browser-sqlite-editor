@@ -148,7 +148,7 @@ describe('validateColumnName', () => {
 // =============================================================================
 
 describe('handleCreateTable', () => {
-  it('rejects in read-only mode', async () => {
+  it('handleCreateTable rejects in read-only mode', async () => {
     const { executor } = createMockQueryExecutor()
 
     const result = await handleCreateTable({
@@ -274,7 +274,7 @@ describe('handleCreateTable', () => {
 
 describe('handleAlterTable', () => {
   describe('addColumn', () => {
-    it('rejects in read-only mode', async () => {
+    it('handleAlterTable addColumn rejects in read-only mode', async () => {
       const { executor } = createMockQueryExecutor()
 
       const result = await handleAlterTable({
@@ -313,7 +313,7 @@ describe('handleAlterTable', () => {
       expect(sqlStatements.some((s) => s.includes('ADD COLUMN'))).toBe(true)
     })
 
-    it('rejects when table does not exist', async () => {
+    it('handleAlterTable addColumn rejects when table does not exist', async () => {
       const { executor } = createMockQueryExecutor({
         'SELECT 1 FROM sqlite_master': tableNotExistsResult,
       })
@@ -487,7 +487,7 @@ describe('handleAlterTable', () => {
 // =============================================================================
 
 describe('handleDropTable', () => {
-  it('rejects in read-only mode', async () => {
+  it('handleDropTable rejects in read-only mode', async () => {
     const { executor } = createMockQueryExecutor()
 
     const result = await handleDropTable({
@@ -524,7 +524,7 @@ describe('handleDropTable', () => {
     expect(sqlStatements.some((s) => s.includes('DROP TABLE'))).toBe(true)
   })
 
-  it('rejects when table does not exist', async () => {
+  it('handleDropTable rejects when table does not exist', async () => {
     const { executor } = createMockQueryExecutor({
       'SELECT 1 FROM sqlite_master': tableNotExistsResult,
     })
@@ -593,7 +593,7 @@ describe('handleDropTable', () => {
 // =============================================================================
 
 describe('handleDropColumn', () => {
-  it('rejects in read-only mode', async () => {
+  it('handleDropColumn rejects in read-only mode', async () => {
     const { executor } = createMockQueryExecutor()
 
     const result = await handleDropColumn({
@@ -636,7 +636,7 @@ describe('handleDropColumn', () => {
     expect(sqlStatements.some((s) => s.includes('age'))).toBe(true)
   })
 
-  it('rejects when table does not exist', async () => {
+  it('handleDropColumn rejects when table does not exist', async () => {
     const { executor } = createMockQueryExecutor({
       'SELECT 1 FROM sqlite_master': tableNotExistsResult,
     })

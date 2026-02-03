@@ -74,7 +74,7 @@ describe('quoteIdentifier', () => {
     expect(quoteIdentifier('Column1')).toBe('Column1')
   })
 
-  it('escapes embedded double quotes', () => {
+  it('quoteIdentifier escapes embedded double quotes', () => {
     expect(quoteIdentifier('col"name')).toBe('"col""name"')
     expect(quoteIdentifier('a"b"c')).toBe('"a""b""c"')
   })
@@ -90,7 +90,7 @@ describe('forceQuoteIdentifier', () => {
     expect(forceQuoteIdentifier('simple')).toBe('"simple"')
   })
 
-  it('escapes embedded double quotes', () => {
+  it('forceQuoteIdentifier escapes embedded double quotes', () => {
     expect(forceQuoteIdentifier('a"b')).toBe('"a""b"')
   })
 })
@@ -290,7 +290,7 @@ describe('generateForeignKeyConstraint', () => {
     )
   })
 
-  it('quotes reserved word table and column names', () => {
+  it('generateForeignKeyConstraint quotes reserved word table and column names', () => {
     const fk: ForeignKeyConstraint = {
       columns: ['order'],
       references: 'table',
@@ -523,7 +523,7 @@ describe('alterTableAddColumn', () => {
     ).toBe("ALTER TABLE items ADD COLUMN status TEXT NOT NULL DEFAULT 'new'")
   })
 
-  it('quotes reserved word table and column names', () => {
+  it('alterTableAddColumn quotes reserved word table and column names', () => {
     expect(
       alterTableAddColumn({
         table: 'order',
@@ -563,7 +563,7 @@ describe('alterTableRenameColumn', () => {
     ).toBe('ALTER TABLE users RENAME COLUMN old_col TO new_col')
   })
 
-  it('quotes reserved word names', () => {
+  it('alterTableRenameColumn quotes reserved word names', () => {
     expect(
       alterTableRenameColumn({ table: 'order', from: 'select', to: 'from' })
     ).toBe('ALTER TABLE "order" RENAME COLUMN "select" TO "from"')
@@ -577,7 +577,7 @@ describe('alterTableDropColumn', () => {
     )
   })
 
-  it('quotes reserved word names', () => {
+  it('alterTableDropColumn quotes reserved word names', () => {
     expect(alterTableDropColumn({ table: 'order', column: 'select' })).toBe(
       'ALTER TABLE "order" DROP COLUMN "select"'
     )

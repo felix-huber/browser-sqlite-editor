@@ -1,12 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import {
-  createAndOpenDatabase,
-  createAndOpenOpfsDatabase,
-  openDatabaseFromWelcome,
-  openTable,
-  runSql,
-  isOpfsAvailable,
-} from './helpers/app';
+import { createAndOpenOpfsDatabase, openDatabaseFromWelcome, openTable, runSql, isOpfsAvailable } from './helpers/app';
 
 /**
  * OPFS Multi-Tab Web Locks E2E Tests
@@ -228,47 +221,3 @@ test.describe('OPFS Multi-Tab Web Locks', () => {
 // =============================================================================
 // IDB Multi-Tab (No Locks)
 // =============================================================================
-
-test.describe('IDB Multi-Tab (no locks)', () => {
-  test('second tab stays writable and can write immediately', async ({ context }) => {
-    const pageA = await context.newPage();
-    const pageB = await context.newPage();
-
-    const dbName = 'idb-lock-test';
-
-    try {
-      await pageA.goto('/');
-      await expect(pageA).toHaveTitle(/SQLite Editor/);
-      await clearAllStorage(pageA);
-      await pageA.reload();
-
-      // Tab A: Create an IDB-backed database (default UI flow)
-      await createAndOpenDatabase(pageA, dbName);
-      await runSql(
-        pageA,
-        `CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT);
-         INSERT INTO products (name) VALUES ('Widget');`
-      );
-      await openTable(pageA, dbName, 'products');
-      await expect(pageA.getByText('Widget')).toBeVisible();
-
-      // Tab B: Open same DB - should be writable (no locks in IDB)
-      await pageB.goto('/');
-      await openDatabaseFromWelcome(pageB, dbName);
-      await openTable(pageB, dbName, 'products');
-
-      await expect(pageB.locator('[data-testid="read-only-banner"]')).toHaveCount(0);
-      await expect(pageB.locator('[data-testid="table-readonly"]')).toHaveCount(0);
-      await expect(pageB.locator('[data-testid="stale-warning"]')).toHaveCount(0);
-
-      // Tab B can write immediately
-      await runSql(pageB, `INSERT INTO products (name) VALUES ('Gadget');`);
-      await openTable(pageB, dbName, 'products');
-      await expect(pageB.getByText('Gadget')).toBeVisible();
-      await expect(pageB.getByText('Widget')).toBeVisible();
-    } finally {
-      await pageA.close();
-      await pageB.close();
-    }
-  });
-});

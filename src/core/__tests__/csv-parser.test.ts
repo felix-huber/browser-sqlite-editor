@@ -212,7 +212,7 @@ Alice,30`
       expect(result.columns[0].originalName).toBe('name')
     })
 
-    it('should handle empty file', () => {
+    it('should handle empty CSV string', () => {
       const csv = ''
 
       const result = parseCSVString(csv)
@@ -343,7 +343,7 @@ Alice,30`
       expect(result.rows[9999]).toEqual([9999, 19998])
     })
 
-    it('should handle empty file', async () => {
+    it('should handle empty CSV file', async () => {
       const file = new File([''], 'empty.csv', { type: 'text/csv' })
       const result = await parseCSVFile(file)
 

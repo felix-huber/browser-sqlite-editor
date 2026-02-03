@@ -264,12 +264,12 @@ test.describe('Table Designer - Edit Mode', () => {
 // =============================================================================
 
 test.describe('Table Designer Integration Checks', () => {
-  test('welcome screen visible on load', async ({ page }) => {
+  test('table designer: welcome screen visible on load', async ({ page }) => {
     await page.goto('/');
     await expect(page.getByTestId('welcome-screen')).toBeVisible();
   });
 
-  test('status bar ready state', async ({ page }) => {
+  test('table designer: status bar ready state', async ({ page }) => {
     await page.goto('/');
     await waitForReady(page);
   });

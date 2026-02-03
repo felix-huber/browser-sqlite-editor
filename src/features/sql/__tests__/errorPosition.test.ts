@@ -140,7 +140,7 @@ describe('byteOffsetToPosition', () => {
 });
 
 describe('computeErrorPosition', () => {
-  describe('single statement', () => {
+  describe('computeErrorPosition: single statement', () => {
     it('maps error at start of statement', () => {
       const sql = 'SELEC * FROM users';
       const span: StatementSpan = { start: 0, end: 18, sql: 'SELEC * FROM users' };
@@ -157,7 +157,7 @@ describe('computeErrorPosition', () => {
     });
   });
 
-  describe('multi-statement', () => {
+  describe('computeErrorPosition: multi-statement', () => {
     it('maps error in second statement to correct line', () => {
       const sql = 'SELECT 1;\nSELECT FORM users';
       // Second statement starts at offset 10
@@ -167,7 +167,7 @@ describe('computeErrorPosition', () => {
       expect(pos).toEqual({ line: 2, column: 8 }); // SELECT[space]F = column 8
     });
 
-    it('maps error in third statement across multiple lines', () => {
+    it('computeErrorPosition maps error in third statement across multiple lines', () => {
       const sql = `CREATE TABLE t (id INT);
 INSERT INTO t VALUES (1);
 SELEC * FROM t`;
@@ -342,7 +342,7 @@ describe('findTokenByteOffset', () => {
 });
 
 describe('mapSqlErrorPosition', () => {
-  describe('single statement', () => {
+  describe('mapSqlErrorPosition: single statement', () => {
     it('maps error with near token', () => {
       const sql = 'SELECT * FORM users';
       const error = 'near "FORM": syntax error';
@@ -359,7 +359,7 @@ describe('mapSqlErrorPosition', () => {
     });
   });
 
-  describe('multi-statement', () => {
+  describe('mapSqlErrorPosition: multi-statement', () => {
     it('maps error in second statement', () => {
       const sql = `SELECT 1;
 SELECT * FORM users`;
@@ -369,7 +369,7 @@ SELECT * FORM users`;
       expect(pos).toEqual({ line: 2, column: 10 });
     });
 
-    it('maps error in third statement across multiple lines', () => {
+    it('mapSqlErrorPosition maps error in third statement across multiple lines', () => {
       const sql = `CREATE TABLE t (id INT);
 INSERT INTO t VALUES (1);
 SELEC * FROM t`;

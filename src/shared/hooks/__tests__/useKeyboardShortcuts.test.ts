@@ -530,7 +530,7 @@ describe('useSqlEditorShortcuts', () => {
     unmount();
   });
 
-  it('does not register shortcuts when not active', () => {
+  it('useSqlEditorShortcuts does not register shortcuts when not active', () => {
     const onExecute = vi.fn();
 
     const { unmount } = renderHook(() =>
@@ -579,7 +579,7 @@ describe('useDataGridShortcuts', () => {
     unmount();
   });
 
-  it('does not register shortcuts when not active', () => {
+  it('useDataGridShortcuts does not register shortcuts when not active', () => {
     const onStartEdit = vi.fn();
 
     const { unmount } = renderHook(() =>

@@ -1450,7 +1450,7 @@ test.describe('Database Lifecycle Tests', () => {
     });
   });
 
-  test.describe('Edge Cases', () => {
+  test.describe('DB Lifecycle: Edge Cases', () => {
     test('rename to same name is no-op', async ({ page }) => {
       await createTestDatabase(page, 'same-name-test');
 

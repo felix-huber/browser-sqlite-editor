@@ -64,7 +64,7 @@ describe('escapeIdentifier', () => {
     expect(escapeIdentifier('col"name')).toBe('"col""name"');
   });
 
-  it('handles empty string', () => {
+  it('escapeIdentifier handles empty string', () => {
     expect(escapeIdentifier('')).toBe('""');
   });
 
@@ -151,7 +151,7 @@ describe('decodeBase64', () => {
     expect(Array.from(result)).toEqual([72, 101, 108, 108, 111]); // "Hello"
   });
 
-  it('handles empty string', () => {
+  it('decodeBase64 handles empty string', () => {
     const result = decodeBase64('');
 
     expect(result).toBeInstanceOf(Uint8Array);

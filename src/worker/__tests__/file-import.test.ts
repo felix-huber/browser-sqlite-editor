@@ -320,7 +320,7 @@ describe('validateSqliteFile', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('should reject zero-byte file', async () => {
+  it('validateSqliteFile rejects zero-byte file', async () => {
     const result = await validateSqliteFile(new Uint8Array(0));
     expect(result.valid).toBe(false);
     expect(result.error).toContain('empty');
@@ -512,7 +512,7 @@ describe('importDatabase', () => {
       }
     });
 
-    it('should reject zero-byte file', async () => {
+    it('importDatabase rejects zero-byte file', async () => {
       mockState.validationError = 'File is empty (zero bytes)';
       const file = createMockFile(new Uint8Array(0));
 

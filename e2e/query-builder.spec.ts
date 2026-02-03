@@ -458,12 +458,12 @@ test.describe('Query Builder PRD Scenarios', () => {
 // =============================================================================
 
 test.describe('Query Builder Integration Checks', () => {
-  test('welcome screen visible on load', async ({ page }) => {
+  test('query builder: welcome screen visible on load', async ({ page }) => {
     await page.goto('/');
     await expect(page.getByTestId('welcome-screen')).toBeVisible();
   });
 
-  test('status bar ready state', async ({ page }) => {
+  test('query builder: status bar ready state', async ({ page }) => {
     await page.goto('/');
     await waitForReady(page);
   });

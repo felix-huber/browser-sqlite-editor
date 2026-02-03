@@ -73,7 +73,7 @@ describe('buildUpdateStatement', () => {
       expect(result.params).toEqual(['active', BigInt(9007199254740993)])
     })
 
-    it('quotes reserved word table and column names', () => {
+    it('buildUpdateStatement quotes reserved word table and column names', () => {
       const result = buildUpdateStatement({
         tableName: 'order',
         columnName: 'select',
@@ -147,7 +147,7 @@ describe('buildUpdateStatement', () => {
       expect(result.params).toEqual([null, 5])
     })
 
-    it('handles NULL PK column with IS NULL', () => {
+    it('buildUpdateStatement handles NULL PK column with IS NULL', () => {
       const result = buildUpdateStatement({
         tableName: 'data',
         columnName: 'status',
@@ -472,7 +472,7 @@ describe('buildDeleteStatement', () => {
     expect(result.params).toEqual([10, 20])
   })
 
-  it('handles NULL PK column with IS NULL', () => {
+  it('buildDeleteStatement handles NULL PK column with IS NULL', () => {
     const result = buildDeleteStatement('data', {
       type: 'pk',
       columns: new Map([['id', null]]),
@@ -482,7 +482,7 @@ describe('buildDeleteStatement', () => {
     expect(result.params).toEqual([])
   })
 
-  it('quotes reserved word table and column names', () => {
+  it('buildDeleteStatement quotes reserved word table and column names', () => {
     const result = buildDeleteStatement('order', {
       type: 'pk',
       columns: new Map([['select', 'test']]),

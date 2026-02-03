@@ -298,7 +298,7 @@ describe('IDBStorage - Error Normalization', () => {
   });
 });
 
-describe('IDBStorage - Failure Scenarios', () => {
+describe('IDBStorage - Failure Scenarios (fake IndexedDB)', () => {
   afterEach(() => {
     restoreIndexedDB();
     setStorageFull(false);
@@ -715,7 +715,7 @@ describe('IDBStorage - flushAndClose with Debounce', () => {
 // Failure Scenario Tests
 // =============================================================================
 
-describe('IDBStorage - Failure Scenarios', () => {
+describe('IDBStorage - Failure Scenarios (factory IndexedDB)', () => {
   afterEach(() => {
     globalThis.indexedDB = originalIndexedDB;
     resetIDBStorage();

@@ -89,7 +89,7 @@ describe('wrapQueryWithPagination', () => {
     expect(result).toBe('SELECT * FROM users LIMIT 50 OFFSET 10');
   });
 
-  it('should strip trailing semicolons', () => {
+  it('wrapQueryWithPagination strips trailing semicolons', () => {
     const sql = 'SELECT * FROM users;';
     const result = wrapQueryWithPagination(sql, 100, 0, '');
 
@@ -137,7 +137,7 @@ describe('buildCountQuery', () => {
     expect(result).toBe('SELECT COUNT(*) FROM (SELECT id, name FROM users WHERE active = 1)');
   });
 
-  it('should strip trailing semicolons', () => {
+  it('buildCountQuery strips trailing semicolons', () => {
     const sql = 'SELECT * FROM users;';
     const result = buildCountQuery(sql);
 

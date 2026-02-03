@@ -362,7 +362,7 @@ describe('generateOrderByClause', () => {
     expect(result).toBe('"name" ASC, "age" DESC');
   });
 
-  it('escapes column names with quotes', () => {
+  it('generateOrderByClause escapes column names with quotes', () => {
     const sortState: SortState = [{ column: 'column"name', direction: 'asc' }];
     const result = generateOrderByClause(sortState);
     expect(result).toBe('"column""name" ASC');
@@ -793,7 +793,7 @@ describe('generateFilterClause', () => {
     });
   });
 
-  it('escapes column names with quotes', () => {
+  it('generateFilterClause escapes column names with quotes', () => {
     const filter: ColumnFilter = { column: 'column"name', operator: 'eq', value: 1 };
     const result = generateFilterClause(filter);
 

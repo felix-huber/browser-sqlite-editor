@@ -301,7 +301,7 @@ describe('DBTree', () => {
 
   // Context Menu Tests
   describe('Database Context Menu', () => {
-    it('shows context menu on right-click', () => {
+    it('shows database context menu on right-click', () => {
       render(<DBTree {...defaultProps} />);
 
       const dbRow = screen.getByTestId('db-row-test-db');
@@ -366,7 +366,7 @@ describe('DBTree', () => {
   });
 
   describe('Table Context Menu', () => {
-    it('shows context menu on right-click', () => {
+    it('shows table context menu on right-click', () => {
       render(
         <DBTree
           {...defaultProps}

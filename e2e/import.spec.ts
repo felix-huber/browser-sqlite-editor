@@ -591,7 +591,7 @@ test.describe('File Import Tests', () => {
     });
   });
 
-  test.describe('Edge Cases', () => {
+  test.describe('Import: Edge Cases', () => {
     test('file with spaces in name is handled correctly', async ({ page }) => {
       const bytes = createValidSqliteBytes();
 

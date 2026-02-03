@@ -42,7 +42,7 @@ describe('escapeLike', () => {
     )
   })
 
-  it('supports custom escape character', () => {
+  it('escapeLike supports custom escape character', () => {
     expect(escapeLike('100%', '!')).toBe('100!%')
     expect(escapeLike('a_b', '!')).toBe('a!_b')
     expect(escapeLike('a!b', '!')).toBe('a!!b')
@@ -54,7 +54,7 @@ describe('getEscapeClause', () => {
     expect(getEscapeClause()).toBe("ESCAPE '\\'")
   })
 
-  it('supports custom escape character', () => {
+  it('getEscapeClause supports custom escape character', () => {
     expect(getEscapeClause('!')).toBe("ESCAPE '!'")
   })
 

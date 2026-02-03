@@ -8,7 +8,7 @@ import {
 } from '../io/export';
 
 describe('exportToCSV', () => {
-  describe('basic functionality', () => {
+  describe('exportToCSV: basic functionality', () => {
     it('exports simple data with header', () => {
       const columns = ['name', 'age'];
       const rows = [
@@ -48,7 +48,7 @@ describe('exportToCSV', () => {
       expect(csv).toBe('name\r\nAlice');
     });
 
-    it('handles empty rows', () => {
+    it('exportToCSV handles empty rows', () => {
       const columns = ['name', 'age'];
       const rows: unknown[][] = [];
 
@@ -143,7 +143,7 @@ describe('exportToCSV', () => {
     });
   });
 
-  describe('BLOB handling', () => {
+  describe('exportToCSV: BLOB handling', () => {
     it('converts BLOB to hex string when blobHandling is hex', () => {
       const columns = ['id', 'data'];
       const rows = [[1, new Uint8Array([0xde, 0xad, 0xbe, 0xef])]];
@@ -279,7 +279,7 @@ describe('exportToCSV', () => {
 });
 
 describe('exportToJSON', () => {
-  describe('basic functionality', () => {
+  describe('exportToJSON: basic functionality', () => {
     it('exports data as array of objects', () => {
       const columns = ['name', 'age'];
       const rows = [
@@ -325,7 +325,7 @@ describe('exportToJSON', () => {
       expect(parsed[0]).toEqual({ name: null, age: 30 });
     });
 
-    it('handles empty rows', () => {
+    it('exportToJSON handles empty rows', () => {
       const columns = ['name'];
       const rows: unknown[][] = [];
 
@@ -336,7 +336,7 @@ describe('exportToJSON', () => {
     });
   });
 
-  describe('BLOB handling', () => {
+  describe('exportToJSON: BLOB handling', () => {
     it('encodes BLOB as object placeholder with base64 and byte count', () => {
       const columns = ['id', 'data'];
       const rows = [[1, new Uint8Array([72, 101, 108, 108, 111])]]; // "Hello" (5 bytes)

@@ -253,7 +253,7 @@ describe('DatabaseRegistry - CRUD Operations', () => {
       expect(result).toBe(true);
     });
 
-    it('should return false when ID not found', async () => {
+    it('updateDatabase returns false when ID not found', async () => {
       const adapter = createMockAdapter(mockState);
       const registry = new DatabaseRegistry(adapter);
       await registry.init();
@@ -279,7 +279,7 @@ describe('DatabaseRegistry - CRUD Operations', () => {
       expect(registry.getDatabaseById(id)).toBeNull();
     });
 
-    it('should return false when ID not found', async () => {
+    it('removeDatabase returns false when ID not found', async () => {
       const adapter = createMockAdapter(mockState);
       const registry = new DatabaseRegistry(adapter);
       await registry.init();
@@ -349,7 +349,7 @@ describe('DatabaseRegistry - CRUD Operations', () => {
   });
 
   describe('getDatabaseById', () => {
-    it('should return entry when found', async () => {
+    it('getDatabaseById returns entry when found', async () => {
       const adapter = createMockAdapter(mockState);
       const registry = new DatabaseRegistry(adapter);
       await registry.init();
@@ -361,7 +361,7 @@ describe('DatabaseRegistry - CRUD Operations', () => {
       expect(entry?.name).toBe('Find Me');
     });
 
-    it('should return null when not found', async () => {
+    it('getDatabaseById returns null when not found', async () => {
       const adapter = createMockAdapter(mockState);
       const registry = new DatabaseRegistry(adapter);
       await registry.init();
@@ -372,7 +372,7 @@ describe('DatabaseRegistry - CRUD Operations', () => {
   });
 
   describe('getDatabaseByName', () => {
-    it('should return entry when found', async () => {
+    it('getDatabaseByName returns entry when found', async () => {
       const adapter = createMockAdapter(mockState);
       const registry = new DatabaseRegistry(adapter);
       await registry.init();
@@ -384,7 +384,7 @@ describe('DatabaseRegistry - CRUD Operations', () => {
       expect(entry?.name).toBe('Named DB');
     });
 
-    it('should return null when not found', async () => {
+    it('getDatabaseByName returns null when not found', async () => {
       const adapter = createMockAdapter(mockState);
       const registry = new DatabaseRegistry(adapter);
       await registry.init();

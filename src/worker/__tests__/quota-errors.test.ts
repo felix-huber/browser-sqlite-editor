@@ -45,7 +45,7 @@ describe('isQuotaExceededError', () => {
     expect(isQuotaExceededError(err)).toBe(true);
   });
 
-  it('should not detect other DOMExceptions', () => {
+  it('isQuotaExceededError ignores other DOMExceptions', () => {
     const err = new DOMException('Not found', 'NotFoundError');
     expect(isQuotaExceededError(err)).toBe(false);
   });
@@ -63,12 +63,12 @@ describe('isQuotaExceededError', () => {
 });
 
 describe('isStorageAbortError', () => {
-  it('should detect AbortError', () => {
+  it('isStorageAbortError detects AbortError', () => {
     const err = new DOMException('Aborted', 'AbortError');
     expect(isStorageAbortError(err)).toBe(true);
   });
 
-  it('should not detect other DOMExceptions', () => {
+  it('isStorageAbortError ignores other DOMExceptions', () => {
     const err = new DOMException('Not found', 'NotFoundError');
     expect(isStorageAbortError(err)).toBe(false);
   });
@@ -121,7 +121,7 @@ describe('isStorageError', () => {
     expect(isStorageError(err)).toBe(true);
   });
 
-  it('should detect AbortError', () => {
+  it('isStorageError detects AbortError', () => {
     const err = new DOMException('Aborted', 'AbortError');
     expect(isStorageError(err)).toBe(true);
   });

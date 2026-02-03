@@ -722,7 +722,7 @@ test.describe('Persistence Tests', () => {
     });
   });
 
-  test.describe('Edge Cases', () => {
+  test.describe('Persistence: Edge Cases', () => {
     test('handles empty database name edge case', async ({ page }) => {
       // Attempt to create an entry with empty name (edge case)
       // The app should handle this gracefully

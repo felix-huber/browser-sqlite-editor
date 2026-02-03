@@ -6,7 +6,7 @@ import {
 } from '../sql/helpers'
 
 describe('quoteIdentifier', () => {
-  describe('basic functionality', () => {
+  describe('quoteIdentifier: basic functionality', () => {
     it('wraps simple identifier in double quotes', () => {
       expect(quoteIdentifier('name')).toBe('"name"')
     })
@@ -94,8 +94,8 @@ describe('quoteIdentifier', () => {
     })
   })
 
-  describe('edge cases', () => {
-    it('handles empty string', () => {
+  describe('quoteIdentifier: edge cases', () => {
+    it('quoteIdentifier handles empty string', () => {
       expect(quoteIdentifier('')).toBe('""')
     })
 
@@ -114,7 +114,7 @@ describe('quoteIdentifier', () => {
 })
 
 describe('escapeLikePattern', () => {
-  describe('basic functionality', () => {
+  describe('escapeLikePattern: basic functionality', () => {
     it('returns unchanged string when no special characters', () => {
       expect(escapeLikePattern('hello')).toBe('hello')
     })
@@ -160,8 +160,8 @@ describe('escapeLikePattern', () => {
     })
   })
 
-  describe('edge cases', () => {
-    it('handles empty string', () => {
+  describe('escapeLikePattern: edge cases', () => {
+    it('escapeLikePattern handles empty string', () => {
       expect(escapeLikePattern('')).toBe('')
     })
 
@@ -247,4 +247,3 @@ describe('makeColumnsUnique', () => {
     })
   })
 })
-

@@ -450,7 +450,7 @@ describe('Zustand Store - Selectors', () => {
   });
 
   describe('useTables', () => {
-    it('should return empty array when schema is null', () => {
+    it('useTables returns empty array when schema is null', () => {
       const { result } = renderHook(() => useTables());
       expect(result.current).toEqual([]);
     });
@@ -486,7 +486,7 @@ describe('Zustand Store - Selectors', () => {
   });
 
   describe('useViews', () => {
-    it('should return empty array when schema is null', () => {
+    it('useViews returns empty array when schema is null', () => {
       const { result } = renderHook(() => useViews());
       expect(result.current).toEqual([]);
     });
@@ -504,7 +504,7 @@ describe('Zustand Store - Selectors', () => {
   });
 
   describe('useIndexes', () => {
-    it('should return empty array when schema is null', () => {
+    it('useIndexes returns empty array when schema is null', () => {
       const { result } = renderHook(() => useIndexes());
       expect(result.current).toEqual([]);
     });
@@ -522,7 +522,7 @@ describe('Zustand Store - Selectors', () => {
   });
 
   describe('useStorageMode', () => {
-    it('should return null initially', () => {
+    it('useStorageMode returns null initially', () => {
       const { result } = renderHook(() => useStorageMode());
       expect(result.current).toBeNull();
     });
@@ -540,7 +540,7 @@ describe('Zustand Store - Selectors', () => {
   });
 
   describe('useLockHolder', () => {
-    it('should return null initially', () => {
+    it('useLockHolder returns null initially', () => {
       const { result } = renderHook(() => useLockHolder());
       expect(result.current).toBeNull();
     });
@@ -1004,7 +1004,7 @@ describe('Database Actions', () => {
       });
     });
 
-    it('should do nothing when no active database', async () => {
+    it('closeDb does nothing when no active database', async () => {
       await closeDb();
 
       expect(mockLockManager.releaseLock).not.toHaveBeenCalled();
@@ -1184,7 +1184,7 @@ describe('Database Actions', () => {
       });
     });
 
-    it('should do nothing when no active database', async () => {
+    it('refreshSchema does nothing when no active database', async () => {
       await refreshSchema();
 
       expect(mockWorkerClient.getSchema).not.toHaveBeenCalled();

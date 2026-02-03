@@ -72,7 +72,7 @@ describe('SqlPreviewPanel', () => {
   })
 
   describe('Run button', () => {
-    it('is disabled when sql is empty', () => {
+    it('run button is disabled when sql is empty', () => {
       render(<SqlPreviewPanel sql="" onExecute={vi.fn()} />)
       expect(screen.getByTestId('run-button')).toBeDisabled()
     })
@@ -190,7 +190,7 @@ describe('SqlPreviewPanel', () => {
   })
 
   describe('Copy button', () => {
-    it('is disabled when sql is empty', () => {
+    it('copy button is disabled when sql is empty', () => {
       render(<SqlPreviewPanel sql="" />)
       expect(screen.getByTestId('copy-button')).toHaveClass('cursor-not-allowed')
     })
@@ -252,7 +252,7 @@ describe('SqlPreviewPanel', () => {
       expect(onOpenInEditor).toHaveBeenCalledWith(sql)
     })
 
-    it('is disabled when sql is empty', () => {
+    it('open-in-editor button is disabled when sql is empty', () => {
       render(<SqlPreviewPanel sql="" onOpenInEditor={vi.fn()} />)
       expect(screen.getByTestId('open-in-editor-button')).toHaveClass('cursor-not-allowed')
     })

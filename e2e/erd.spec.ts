@@ -459,13 +459,13 @@ CREATE INDEX idx_books_title ON books(title);
 // =============================================================================
 
 test.describe('ERD Integration Checks', () => {
-  test('welcome screen visible on load', async ({ page }) => {
+  test('erd: welcome screen visible on load', async ({ page }) => {
     await page.goto('/');
     await ensureWelcomeScreen(page);
     await expect(page.getByTestId('welcome-screen')).toBeVisible();
   });
 
-  test('status bar ready state', async ({ page }) => {
+  test('erd: status bar ready state', async ({ page }) => {
     await page.goto('/');
     await ensureWelcomeScreen(page);
     await waitForReady(page);

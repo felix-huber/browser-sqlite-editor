@@ -56,7 +56,7 @@ describe('AST Patch: addColumn', () => {
   })
 
   describe('preserves existing clauses after addColumn', () => {
-    it('preserves CHECK constraint', () => {
+    it('addColumn preserves CHECK constraint', () => {
       const sql = 'CREATE TABLE t (x INTEGER CHECK (x > 0))'
       const ast = parseCreateTable(sql)
       const newColumn: ColumnNode = { name: 'y', type: 'INTEGER' }
@@ -68,7 +68,7 @@ describe('AST Patch: addColumn', () => {
       expect(serialized).toContain('x > 0')
     })
 
-    it('preserves table-level CHECK constraint', () => {
+    it('addColumn preserves table-level CHECK constraint', () => {
       const sql = 'CREATE TABLE t (a INTEGER, b INTEGER, CHECK (a < b))'
       const ast = parseCreateTable(sql)
       const newColumn: ColumnNode = { name: 'c', type: 'INTEGER' }
@@ -80,7 +80,7 @@ describe('AST Patch: addColumn', () => {
       expect(serialized).toContain('a < b')
     })
 
-    it('preserves GENERATED column', () => {
+    it('addColumn preserves GENERATED column', () => {
       const sql =
         'CREATE TABLE t (a INTEGER, b INTEGER GENERATED ALWAYS AS (a * 2) STORED)'
       const ast = parseCreateTable(sql)
@@ -94,7 +94,7 @@ describe('AST Patch: addColumn', () => {
       expect(serialized).toContain('a * 2')
     })
 
-    it('preserves WITHOUT ROWID', () => {
+    it('addColumn preserves WITHOUT ROWID', () => {
       const sql = 'CREATE TABLE t (k TEXT PRIMARY KEY, v BLOB) WITHOUT ROWID'
       const ast = parseCreateTable(sql)
       const newColumn: ColumnNode = { name: 'extra', type: 'TEXT' }
@@ -105,7 +105,7 @@ describe('AST Patch: addColumn', () => {
       expect(serialized.toUpperCase()).toContain('WITHOUT ROWID')
     })
 
-    it('preserves STRICT', () => {
+    it('addColumn preserves STRICT', () => {
       const sql = 'CREATE TABLE t (id INTEGER PRIMARY KEY, data TEXT) STRICT'
       const ast = parseCreateTable(sql)
       const newColumn: ColumnNode = { name: 'extra', type: 'TEXT' }
@@ -116,7 +116,7 @@ describe('AST Patch: addColumn', () => {
       expect(serialized.toUpperCase()).toContain('STRICT')
     })
 
-    it('preserves STRICT and WITHOUT ROWID combined', () => {
+    it('addColumn preserves STRICT and WITHOUT ROWID combined', () => {
       const sql =
         'CREATE TABLE t (k TEXT PRIMARY KEY, v BLOB) STRICT, WITHOUT ROWID'
       const ast = parseCreateTable(sql)
@@ -129,7 +129,7 @@ describe('AST Patch: addColumn', () => {
       expect(serialized.toUpperCase()).toContain('WITHOUT ROWID')
     })
 
-    it('preserves AUTOINCREMENT', () => {
+    it('addColumn preserves AUTOINCREMENT', () => {
       const sql = 'CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)'
       const ast = parseCreateTable(sql)
       const newColumn: ColumnNode = { name: 'extra', type: 'TEXT' }
@@ -140,7 +140,7 @@ describe('AST Patch: addColumn', () => {
       expect(serialized.toUpperCase()).toContain('AUTOINCREMENT')
     })
 
-    it('preserves FOREIGN KEY constraint', () => {
+    it('addColumn preserves FOREIGN KEY constraint', () => {
       const sql =
         'CREATE TABLE t (user_id INTEGER, FOREIGN KEY (user_id) REFERENCES users(id))'
       const ast = parseCreateTable(sql)
@@ -153,7 +153,7 @@ describe('AST Patch: addColumn', () => {
       expect(serialized.toUpperCase()).toContain('REFERENCES')
     })
 
-    it('preserves column-level REFERENCES', () => {
+    it('addColumn preserves column-level REFERENCES', () => {
       const sql = 'CREATE TABLE t (user_id INTEGER REFERENCES users(id))'
       const ast = parseCreateTable(sql)
       const newColumn: ColumnNode = { name: 'extra', type: 'TEXT' }
@@ -164,7 +164,7 @@ describe('AST Patch: addColumn', () => {
       expect(serialized.toUpperCase()).toContain('REFERENCES')
     })
 
-    it('preserves COLLATE', () => {
+    it('addColumn preserves COLLATE', () => {
       const sql = 'CREATE TABLE t (name TEXT COLLATE NOCASE)'
       const ast = parseCreateTable(sql)
       const newColumn: ColumnNode = { name: 'extra', type: 'TEXT' }
@@ -175,7 +175,7 @@ describe('AST Patch: addColumn', () => {
       expect(serialized.toUpperCase()).toContain('COLLATE NOCASE')
     })
 
-    it('preserves ON CONFLICT', () => {
+    it('addColumn preserves ON CONFLICT', () => {
       const sql = 'CREATE TABLE t (id INTEGER PRIMARY KEY ON CONFLICT REPLACE)'
       const ast = parseCreateTable(sql)
       const newColumn: ColumnNode = { name: 'extra', type: 'TEXT' }
@@ -186,7 +186,7 @@ describe('AST Patch: addColumn', () => {
       expect(serialized.toUpperCase()).toContain('ON CONFLICT REPLACE')
     })
 
-    it('preserves table-level PRIMARY KEY', () => {
+    it('addColumn preserves table-level PRIMARY KEY', () => {
       const sql = 'CREATE TABLE t (a INTEGER, b INTEGER, PRIMARY KEY (a, b))'
       const ast = parseCreateTable(sql)
       const newColumn: ColumnNode = { name: 'c', type: 'TEXT' }
@@ -197,7 +197,7 @@ describe('AST Patch: addColumn', () => {
       expect(serialized.toUpperCase()).toContain('PRIMARY KEY (')
     })
 
-    it('preserves UNIQUE table constraint', () => {
+    it('addColumn preserves UNIQUE table constraint', () => {
       const sql = 'CREATE TABLE t (a INTEGER, b INTEGER, UNIQUE (a, b))'
       const ast = parseCreateTable(sql)
       const newColumn: ColumnNode = { name: 'c', type: 'TEXT' }
@@ -208,7 +208,7 @@ describe('AST Patch: addColumn', () => {
       expect(serialized.toUpperCase()).toContain('UNIQUE (')
     })
 
-    it('preserves named constraint', () => {
+    it('addColumn preserves named constraint', () => {
       const sql = 'CREATE TABLE t (x INTEGER, CONSTRAINT chk_x CHECK (x > 0))'
       const ast = parseCreateTable(sql)
       const newColumn: ColumnNode = { name: 'y', type: 'INTEGER' }
@@ -222,7 +222,7 @@ describe('AST Patch: addColumn', () => {
   })
 
   describe('immutability', () => {
-    it('does not mutate original AST', () => {
+    it('addColumn does not mutate original AST', () => {
       const sql = 'CREATE TABLE users (id INTEGER)'
       const ast = parseCreateTable(sql)
       const originalLength = ast.columns.length
@@ -274,7 +274,7 @@ describe('AST Patch: renameColumn', () => {
   })
 
   describe('preserves existing clauses after renameColumn', () => {
-    it('preserves CHECK constraint', () => {
+    it('renameColumn preserves CHECK constraint', () => {
       const sql = 'CREATE TABLE t (x INTEGER CHECK (x > 0), y TEXT)'
       const ast = parseCreateTable(sql)
 
@@ -285,7 +285,7 @@ describe('AST Patch: renameColumn', () => {
       expect(serialized).toContain('x > 0')
     })
 
-    it('preserves CHECK constraint on renamed column', () => {
+    it('renameColumn preserves CHECK constraint on renamed column', () => {
       const sql = 'CREATE TABLE t (x INTEGER CHECK (x > 0))'
       const ast = parseCreateTable(sql)
 
@@ -298,7 +298,7 @@ describe('AST Patch: renameColumn', () => {
       expect(serialized).toContain('x > 0')
     })
 
-    it('preserves table-level CHECK constraint', () => {
+    it('renameColumn preserves table-level CHECK constraint', () => {
       const sql = 'CREATE TABLE t (a INTEGER, b INTEGER, CHECK (a < b))'
       const ast = parseCreateTable(sql)
 
@@ -309,7 +309,7 @@ describe('AST Patch: renameColumn', () => {
       expect(serialized).toContain('a < b')
     })
 
-    it('preserves GENERATED column', () => {
+    it('renameColumn preserves GENERATED column', () => {
       const sql =
         'CREATE TABLE t (a INTEGER, b INTEGER GENERATED ALWAYS AS (a * 2) STORED)'
       const ast = parseCreateTable(sql)
@@ -322,7 +322,7 @@ describe('AST Patch: renameColumn', () => {
       expect(serialized).toContain('a * 2')
     })
 
-    it('preserves WITHOUT ROWID', () => {
+    it('renameColumn preserves WITHOUT ROWID', () => {
       const sql = 'CREATE TABLE t (k TEXT PRIMARY KEY, v BLOB) WITHOUT ROWID'
       const ast = parseCreateTable(sql)
 
@@ -332,7 +332,7 @@ describe('AST Patch: renameColumn', () => {
       expect(serialized.toUpperCase()).toContain('WITHOUT ROWID')
     })
 
-    it('preserves STRICT', () => {
+    it('renameColumn preserves STRICT', () => {
       const sql = 'CREATE TABLE t (id INTEGER PRIMARY KEY, data TEXT) STRICT'
       const ast = parseCreateTable(sql)
 
@@ -342,7 +342,7 @@ describe('AST Patch: renameColumn', () => {
       expect(serialized.toUpperCase()).toContain('STRICT')
     })
 
-    it('preserves STRICT and WITHOUT ROWID combined', () => {
+    it('renameColumn preserves STRICT and WITHOUT ROWID combined', () => {
       const sql =
         'CREATE TABLE t (k TEXT PRIMARY KEY, v BLOB) STRICT, WITHOUT ROWID'
       const ast = parseCreateTable(sql)
@@ -354,7 +354,7 @@ describe('AST Patch: renameColumn', () => {
       expect(serialized.toUpperCase()).toContain('WITHOUT ROWID')
     })
 
-    it('preserves AUTOINCREMENT', () => {
+    it('renameColumn preserves AUTOINCREMENT', () => {
       const sql =
         'CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)'
       const ast = parseCreateTable(sql)
@@ -365,7 +365,7 @@ describe('AST Patch: renameColumn', () => {
       expect(serialized.toUpperCase()).toContain('AUTOINCREMENT')
     })
 
-    it('preserves FOREIGN KEY constraint', () => {
+    it('renameColumn preserves FOREIGN KEY constraint', () => {
       const sql =
         'CREATE TABLE t (user_id INTEGER, extra TEXT, FOREIGN KEY (user_id) REFERENCES users(id))'
       const ast = parseCreateTable(sql)
@@ -377,7 +377,7 @@ describe('AST Patch: renameColumn', () => {
       expect(serialized.toUpperCase()).toContain('REFERENCES')
     })
 
-    it('preserves column-level REFERENCES', () => {
+    it('renameColumn preserves column-level REFERENCES', () => {
       const sql =
         'CREATE TABLE t (user_id INTEGER REFERENCES users(id), extra TEXT)'
       const ast = parseCreateTable(sql)
@@ -388,7 +388,7 @@ describe('AST Patch: renameColumn', () => {
       expect(serialized.toUpperCase()).toContain('REFERENCES')
     })
 
-    it('preserves COLLATE', () => {
+    it('renameColumn preserves COLLATE', () => {
       const sql = 'CREATE TABLE t (name TEXT COLLATE NOCASE, extra TEXT)'
       const ast = parseCreateTable(sql)
 
@@ -398,7 +398,7 @@ describe('AST Patch: renameColumn', () => {
       expect(serialized.toUpperCase()).toContain('COLLATE NOCASE')
     })
 
-    it('preserves ON CONFLICT', () => {
+    it('renameColumn preserves ON CONFLICT', () => {
       const sql =
         'CREATE TABLE t (id INTEGER PRIMARY KEY ON CONFLICT REPLACE, extra TEXT)'
       const ast = parseCreateTable(sql)
@@ -409,7 +409,7 @@ describe('AST Patch: renameColumn', () => {
       expect(serialized.toUpperCase()).toContain('ON CONFLICT REPLACE')
     })
 
-    it('preserves table-level PRIMARY KEY', () => {
+    it('renameColumn preserves table-level PRIMARY KEY', () => {
       const sql = 'CREATE TABLE t (a INTEGER, b INTEGER, c TEXT, PRIMARY KEY (a, b))'
       const ast = parseCreateTable(sql)
 
@@ -419,7 +419,7 @@ describe('AST Patch: renameColumn', () => {
       expect(serialized.toUpperCase()).toContain('PRIMARY KEY (')
     })
 
-    it('preserves UNIQUE table constraint', () => {
+    it('renameColumn preserves UNIQUE table constraint', () => {
       const sql = 'CREATE TABLE t (a INTEGER, b INTEGER, c TEXT, UNIQUE (a, b))'
       const ast = parseCreateTable(sql)
 
@@ -429,7 +429,7 @@ describe('AST Patch: renameColumn', () => {
       expect(serialized.toUpperCase()).toContain('UNIQUE (')
     })
 
-    it('preserves named constraint', () => {
+    it('renameColumn preserves named constraint', () => {
       const sql =
         'CREATE TABLE t (x INTEGER, y TEXT, CONSTRAINT chk_x CHECK (x > 0))'
       const ast = parseCreateTable(sql)
@@ -443,7 +443,7 @@ describe('AST Patch: renameColumn', () => {
   })
 
   describe('immutability', () => {
-    it('does not mutate original AST', () => {
+    it('renameColumn does not mutate original AST', () => {
       const sql = 'CREATE TABLE users (id INTEGER, name TEXT)'
       const ast = parseCreateTable(sql)
       const originalName = ast.columns[1].name

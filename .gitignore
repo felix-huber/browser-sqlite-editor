@@ -43,3 +43,10 @@ learnings.md
 # Local beads (regenerated)
 .beads/
 
+# Local tooling / scratch artifacts
+.claude/
+artifacts/
+reference-specs/
+to_send/
+to_send_v2/
+tasks/

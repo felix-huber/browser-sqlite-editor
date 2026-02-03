@@ -139,7 +139,7 @@ describe('extractCreateTableSql', () => {
     expect(sql).toBeNull()
   })
 
-  it('matches case-insensitively', () => {
+  it('extractCreateTableSql matches case-insensitively', () => {
     const sql = extractCreateTableSql('USERS', [createSimpleTable])
     expect(sql).toBe('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)')
   })
@@ -168,7 +168,7 @@ describe('extractIndexes', () => {
     expect(indexes).toHaveLength(0)
   })
 
-  it('matches case-insensitively', () => {
+  it('extractIndexes matches case-insensitively', () => {
     const indexes = extractIndexes('PRODUCTS', createTableWithIndexes)
     expect(indexes).toHaveLength(3)
   })
@@ -189,7 +189,7 @@ describe('extractTriggers', () => {
     expect(triggers).toHaveLength(0)
   })
 
-  it('matches case-insensitively', () => {
+  it('extractTriggers matches case-insensitively', () => {
     const triggers = extractTriggers('ORDERS', createTableWithTriggers)
     expect(triggers).toHaveLength(2)
   })
@@ -700,7 +700,7 @@ describe('generateColumnMappedCopyDataSql', () => {
     )
   })
 
-  it('handles case-insensitive column matching', () => {
+  it('generateColumnMappedCopyDataSql handles case-insensitive column matching', () => {
     const sql = generateColumnMappedCopyDataSql(
       'old_table',
       'new_table',
@@ -1353,7 +1353,7 @@ describe('verifyTableSchema', () => {
     expect(failures[0].message).toContain('Unexpected')
   })
 
-  it('handles case-insensitive column matching', async () => {
+  it('verifyTableSchema handles case-insensitive column matching', async () => {
     const engine = createMockEngine({
       queryResults: new Map([
         ['PRAGMA table_info', {
