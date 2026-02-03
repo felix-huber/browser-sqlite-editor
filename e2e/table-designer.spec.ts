@@ -2,9 +2,11 @@ import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
 import {
   createAndOpenDatabase,
+  createAndOpenOpfsDatabase,
   openDatabaseFromWelcome,
   openTable,
   runSql,
+  runSqlStatements,
   waitForReady,
   expandDatabaseInSidebar,
 } from './helpers/app';
@@ -256,18 +258,9 @@ test.describe('Table Designer - Edit Mode', () => {
   });
 });
 
-test.describe('Table Designer - Read Only Mode', () => {
-  test('read-only mode blocks edits', async ({ page }) => {
-    const dbName = await setupDbWithTables(page);
-    const reader = await page.context().newPage();
-    await reader.goto('/');
-    await openDatabaseFromWelcome(reader, dbName);
-    await openDesignerForTable(reader, dbName, 'people');
-    await expect(reader.getByTestId('readonly-notice')).toBeVisible();
-    await expect(reader.getByTestId('table-name-input')).toBeDisabled();
-    await reader.close();
-  });
-});
+// NOTE: Table Designer read-only mode test has been moved to e2e/readonly-mode.spec.ts
+// to avoid fixture conflicts. The test requires bypassing the clearStorage fixture
+// which interferes with OPFS database creation in multi-tab scenarios.
 
 // =============================================================================
 // Basic UI Checks
