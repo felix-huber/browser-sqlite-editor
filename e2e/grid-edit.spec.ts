@@ -17,6 +17,7 @@ import {
 
 const DB_NAME = 'grid-edit-db';
 const READONLY_DB_NAME = 'grid-edit-ro';
+const IDB_MULTI_DB_NAME = 'grid-edit-idb';
 
 const BASE_SQL = `
 PRAGMA foreign_keys = ON;
@@ -560,6 +561,66 @@ test.describe('Grid Editing Tests - Read-Only Mode', () => {
     const reader = await openReadOnlyPage(page, READONLY_DB_NAME);
     await reader.getByTestId('cell-0-name').click({ button: 'right' });
     await expect(reader.getByTestId('cell-context-menu-item-delete-row')).toHaveAttribute('aria-disabled', 'true');
+    await reader.close();
+  });
+});
+
+// =============================================================================
+// Multi-Tab IDB (Writable)
+// =============================================================================
+
+test.describe('Grid Editing Tests - IDB Multi-Tab (Writable)', () => {
+  test.beforeEach(async ({ page }) => {
+    await createAndOpenDatabase(page, IDB_MULTI_DB_NAME);
+    await runSql(page, BASE_SQL);
+    await openTable(page, IDB_MULTI_DB_NAME, 'users');
+  });
+
+  test('edit attempt on IDB database allows edits', async ({ page }) => {
+    const reader = await openReadOnlyPage(page, IDB_MULTI_DB_NAME);
+    const input = await openCellEditor(reader, 0, 'name');
+    await expect(reader.locator('[data-testid="edit-blocked-tooltip"]')).toHaveCount(0);
+    await expect(input).toBeVisible();
+    await reader.close();
+  });
+
+  test('add row button is enabled in IDB mode', async ({ page }) => {
+    const reader = await openReadOnlyPage(page, IDB_MULTI_DB_NAME);
+    await expect(reader.getByTestId('add-row-button')).toBeEnabled();
+    await reader.close();
+  });
+
+  test('delete button enables when a row is selected in IDB mode', async ({ page }) => {
+    const reader = await openReadOnlyPage(page, IDB_MULTI_DB_NAME);
+    await reader.getByTestId('row-checkbox-0').check();
+    await expect(reader.getByTestId('delete-rows-button')).toBeEnabled();
+    await reader.close();
+  });
+
+  test('row checkboxes are enabled in IDB mode', async ({ page }) => {
+    const reader = await openReadOnlyPage(page, IDB_MULTI_DB_NAME);
+    await expect(reader.getByTestId('row-checkbox-0')).toBeEnabled();
+    await reader.close();
+  });
+
+  test('context menu paste is enabled in IDB mode', async ({ page }) => {
+    const reader = await openReadOnlyPage(page, IDB_MULTI_DB_NAME);
+    await reader.getByTestId('cell-0-name').click({ button: 'right' });
+    await expect(reader.getByTestId('cell-context-menu-item-paste')).not.toHaveAttribute('aria-disabled', 'true');
+    await reader.close();
+  });
+
+  test('context menu Set NULL is enabled in IDB mode', async ({ page }) => {
+    const reader = await openReadOnlyPage(page, IDB_MULTI_DB_NAME);
+    await reader.getByTestId('cell-0-name').click({ button: 'right' });
+    await expect(reader.getByTestId('cell-context-menu-item-set-null')).not.toHaveAttribute('aria-disabled', 'true');
+    await reader.close();
+  });
+
+  test('context menu Delete Row is enabled in IDB mode', async ({ page }) => {
+    const reader = await openReadOnlyPage(page, IDB_MULTI_DB_NAME);
+    await reader.getByTestId('cell-0-name').click({ button: 'right' });
+    await expect(reader.getByTestId('cell-context-menu-item-delete-row')).not.toHaveAttribute('aria-disabled', 'true');
     await reader.close();
   });
 });

@@ -146,6 +146,28 @@ test.describe('ERD', () => {
     await expect(reader.getByTestId('erd-toast-error')).toBeVisible();
     await reader.close();
   });
+
+  test('IDB mode allows FK creation in second tab', async ({ page }) => {
+    const dbName = 'erd-idb-multitab';
+    await createAndOpenDatabase(page, dbName);
+    await runSql(page, BASE_SQL);
+    await page.getByTestId('tab-erd').click();
+    await expect(page.getByTestId('erd-view')).toBeVisible();
+
+    const reader = await page.context().newPage();
+    await reader.goto('/');
+    await openDatabaseFromWelcome(reader, dbName);
+    await reader.getByTestId('tab-erd').click();
+    await expect(reader.getByTestId('erd-view')).toBeVisible();
+
+    const edgesBefore = await reader.locator('[data-testid^="fk-edge-hitbox-"]').count();
+    await connectTables(reader, 'tasks', 'project_id', 'projects', 'id');
+    await reader.getByTestId('fk-create-button').click();
+    await expect(reader.getByTestId('erd-toast-error')).toHaveCount(0);
+    await expect(reader.locator('[data-testid^="fk-edge-hitbox-"]')).toHaveCount(edgesBefore + 1);
+
+    await reader.close();
+  });
 });
 
 // =============================================================================

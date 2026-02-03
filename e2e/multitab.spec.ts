@@ -1,5 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
-import { createAndOpenOpfsDatabase, openDatabaseFromWelcome, openTable, runSql, isOpfsAvailable } from './helpers/app';
+import {
+  createAndOpenDatabase,
+  createAndOpenOpfsDatabase,
+  openDatabaseFromWelcome,
+  openTable,
+  runSql,
+  isOpfsAvailable,
+} from './helpers/app';
 
 /**
  * Multi-Tab Locking E2E Tests
@@ -817,6 +824,103 @@ test.describe('Single-Writer Lock Integration', () => {
 
       // Verify lock holder info is shown (using specific test ID)
       await expect(pageB.getByTestId('lock-holder-info')).toBeVisible();
+    } finally {
+      await pageA.close();
+      await pageB.close();
+    }
+  });
+});
+
+// =============================================================================
+// IDB Multi-Tab (No Locks)
+// =============================================================================
+
+test.describe('IDB Multi-Tab (no locks)', () => {
+  test('second tab stays writable and can write immediately', async ({ context }) => {
+    const pageA = await context.newPage();
+    const pageB = await context.newPage();
+    const dbName = 'idb-multitab-writable';
+
+    try {
+      await pageA.goto('/');
+      await expect(pageA).toHaveTitle(/SQLite Editor/);
+      await clearAllStorage(pageA);
+      await pageA.reload();
+
+      await createAndOpenDatabase(pageA, dbName);
+      await runSql(pageA, `CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT); INSERT INTO items (value) VALUES ('from_tab_a');`);
+      await openTable(pageA, dbName, 'items');
+
+      await pageB.goto('/');
+      await openDatabaseFromWelcome(pageB, dbName);
+      await openTable(pageB, dbName, 'items');
+
+      await expect(pageB.locator('[data-testid="read-only-banner"]')).toHaveCount(0);
+      await expect(pageB.locator('[data-testid="lock-holder-info"]')).toHaveCount(0);
+
+      await runSql(pageB, `INSERT INTO items (value) VALUES ('from_tab_b');`);
+      await openTable(pageB, dbName, 'items');
+      await expect(pageB.getByText('from_tab_a')).toBeVisible();
+      await expect(pageB.getByText('from_tab_b')).toBeVisible();
+    } finally {
+      await pageA.close();
+      await pageB.close();
+    }
+  });
+
+  test('closing writer does not require takeover', async ({ context }) => {
+    const pageA = await context.newPage();
+    const pageB = await context.newPage();
+    const dbName = 'idb-crash-recovery';
+
+    try {
+      await pageA.goto('/');
+      await expect(pageA).toHaveTitle(/SQLite Editor/);
+      await clearAllStorage(pageA);
+      await pageA.reload();
+
+      await createAndOpenDatabase(pageA, dbName);
+      await runSql(pageA, `CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO users (name) VALUES ('Alice');`);
+      await openTable(pageA, dbName, 'users');
+
+      await pageB.goto('/');
+      await openDatabaseFromWelcome(pageB, dbName);
+      await openTable(pageB, dbName, 'users');
+
+      await expect(pageB.locator('[data-testid="read-only-banner"]')).toHaveCount(0);
+      await expect(pageB.locator('[data-testid="stale-warning"]')).toHaveCount(0);
+
+      await pageA.close();
+
+      // Still writable after writer closes
+      await runSql(pageB, `INSERT INTO users (name) VALUES ('Bob');`);
+      await openTable(pageB, dbName, 'users');
+      await expect(pageB.getByText('Bob')).toBeVisible();
+    } finally {
+      await pageB.close();
+    }
+  });
+
+  test('no takeover UI is shown in IDB mode', async ({ context }) => {
+    const pageA = await context.newPage();
+    const pageB = await context.newPage();
+    const dbName = 'idb-no-takeover';
+
+    try {
+      await pageA.goto('/');
+      await expect(pageA).toHaveTitle(/SQLite Editor/);
+      await clearAllStorage(pageA);
+      await pageA.reload();
+
+      await createAndOpenDatabase(pageA, dbName);
+      await runSql(pageA, `CREATE TABLE data (id INTEGER PRIMARY KEY, val TEXT);`);
+
+      await pageB.goto('/');
+      await openDatabaseFromWelcome(pageB, dbName);
+
+      await expect(pageB.locator('[data-testid="take-over-button"]')).toHaveCount(0);
+      await expect(pageB.locator('[data-testid="stale-warning"]')).toHaveCount(0);
+      await expect(pageB.locator('[data-testid="read-only-banner"]')).toHaveCount(0);
     } finally {
       await pageA.close();
       await pageB.close();
