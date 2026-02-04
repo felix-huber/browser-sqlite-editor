@@ -25,6 +25,9 @@ npm-debug.log*
 # Test coverage
 coverage/
 
+# Lighthouse CI artifacts (regenerated)
+.lighthouseci/
+
 # Performance test results (regenerated)
 e2e/perf/results/
 

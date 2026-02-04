@@ -22,7 +22,7 @@ Offline SQLite editor in your browser. Visual table designer, ERD diagrams, SQL 
 - **Query Builder** - Build queries visually with JOIN support
 - **Sample Database** - Load the Sakila sample database to explore features
 - **Import/Export** - Load `.sqlite`/`.db` files, import CSV/JSON, export databases and query results
-- **Multi-Tab Support** - Open the same database in multiple tabs with single-writer/multi-reader locking
+- **Multi-Tab Support** - OPFS uses single-writer/multi-reader locks; IndexedDB fallback allows multi-tab writes
 - **Offline Support** - PWA with service worker for full offline functionality
 - **Zero Server** - Runs entirely in your browser with no backend required
 
@@ -138,12 +138,14 @@ Databases are stored in the Origin Private File System under:
 
 ### Multi-Tab Locking
 
-When opening a database, the app uses the **Web Locks API** to ensure single-writer/multi-reader access:
+When opening an OPFS database, the app uses the **Web Locks API** to ensure single-writer/multi-reader access:
 
 - **First tab to open a database** acquires an exclusive write lock
 - **Subsequent tabs** open the database in **read-only mode** and see a banner indicating another tab holds the write lock
 - When the writer tab closes the database, another tab can acquire the lock
 - **Fallback**: Safari (<16.4) and older browsers use a localStorage heartbeat mechanism
+
+In **IndexedDB fallback mode**, the browser handles multi-tab concurrency. Locks are **not** acquired and all tabs remain writable, so no read-only banner is shown.
 
 This prevents data corruption from concurrent writes while still allowing you to view the database in multiple tabs.
 
